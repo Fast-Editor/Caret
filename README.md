@@ -50,15 +50,6 @@ Verified end to end on macOS against a local OpenAI-compatible proxy and Ollama 
 
 Not implemented (needs cloud services or OS automation): voice dictation, computer use, cloud/remote agents, design mode, extension marketplace. SSE-only MCP servers and OAuth-protected MCP servers report a clear error. Browser automation exposes DOM snapshots, not pixel screenshots.
 
-## Wave 1 (2026-10-26): verification, safety, terminal, external agents
-
-- **Verified Diff** — after any agent turn that edits files, seven checks run (diagnostics, project check, dependency grounding against registries and OSV, 55 security rules with safe rewrites, tests, diff-scoped mutation score, lint) and the chat shows a **proof panel** with a risk tier, verified facts versus agent claims, findings with one-click fixes. `docs/VERIFIED_DIFF.md`.
-- **Review by concern** — changes grouped by the intent that produced them, tests/docs/config collapsed, logical hunk order, inline review comments in the diff editor that are sent back to the agent as a structured follow-up.
-- **Sandbox and command safety** — every agent command is parsed into a shell AST (through `sh -c`, `eval`, subshells, substitutions) and classified deterministically below the model; destructive commands always ask, blocked ones never run; macOS Seatbelt / Linux bubblewrap confinement with optional network isolation; MCP tool descriptions pinned by hash. `docs/SANDBOX.md`.
-- **`caret` command line** — `caret .`, `caret src/app.ts:12:4`; installs like VS Code's `code` (palette → *Shell Command: Install 'caret' command in PATH*). See [docs/CLI.md](docs/CLI.md).
-- **Semantic terminal** — shell integration for zsh/bash/fish emits OSC 133 blocks and OSC 7501 program status: exit-status gutter, block navigation, add-a-block-to-chat, "waiting for input" badges and summary. `docs/TERMINAL.md`.
-- **Any agent via ACP** — run Claude Code (under your own Claude login), Codex, Gemini CLI, OpenCode and other Agent Client Protocol agents inside the same chat, approvals, review bar and proof panel; adapters install into `~/.caret/acp`, never globally. `docs/ACP.md`.
-
 ## Configure models
 
 Open **Settings → Models** (⌘,): paste an API key for Anthropic / OpenAI / OpenRouter / Gemini, or point the
