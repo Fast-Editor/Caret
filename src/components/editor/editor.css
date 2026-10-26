@@ -1,0 +1,28 @@
+/* Monaco decorations & editor chrome */
+.caret-gutter-added { border-left: 3px solid var(--success); margin-left: 3px; }
+.caret-gutter-modified { border-left: 3px solid var(--info); margin-left: 3px; }
+.caret-gutter-deleted { border-left: 3px solid var(--danger); margin-left: 3px; height: 50% !important; }
+.caret-blame-inline { color: var(--fg-faint); font-style: italic; opacity: .85; pointer-events: none; }
+.caret-inline-target { background: var(--bg-selected); }
+.caret-inline-added { background: var(--diff-add-bg); }
+.caret-inline-added-gutter { border-left: 3px solid var(--success); margin-left: 3px; }
+.caret-inline-removed { background: var(--diff-del-bg); color: var(--diff-del-fg); overflow: hidden; }
+.caret-inline-removed pre { margin: 0; padding: 0 0 0 16px; font: inherit; font-family: inherit; white-space: pre; text-decoration: line-through; opacity: .85; }
+.caret-inline-edit-zone { z-index: 20; }
+.caret-inline-edit-zone * { -webkit-app-region: no-drag; }
+.monaco-editor .caret-inline-edit-zone { pointer-events: auto; }
+.caret-editor-notice { background: color-mix(in srgb, var(--warning) 18%, transparent); color: var(--fg); }
+.tabbar::-webkit-scrollbar { height: 3px; }
+.tabbar { scrollbar-width: thin; }
+.caret-md { user-select: text; line-height: 1.6; }
+.caret-md h1, .caret-md h2, .caret-md h3 { font-weight: 600; margin: 1.2em 0 .5em; }
+.caret-md h1 { font-size: 1.6em; } .caret-md h2 { font-size: 1.3em; border-bottom: 1px solid var(--border); padding-bottom: .2em } .caret-md h3 { font-size: 1.1em; }
+.caret-md p { margin: .6em 0; } .caret-md ul, .caret-md ol { padding-left: 1.4em; margin: .5em 0; } .caret-md li { margin: .2em 0; }
+.caret-md code { font-family: var(--font-mono); font-size: .92em; background: var(--bg-input); padding: .1em .35em; border-radius: 4px; }
+.caret-md pre { background: var(--bg-input); border: 1px solid var(--border); border-radius: 6px; padding: 10px 12px; overflow: auto; margin: .7em 0; }
+.caret-md pre code { background: transparent; padding: 0; font-size: 12px; }
+.caret-md blockquote { border-left: 3px solid var(--border-strong); margin: .6em 0; padding: .1em .8em; color: var(--fg-muted); }
+.caret-md table { border-collapse: collapse; margin: .7em 0; } .caret-md th, .caret-md td { border: 1px solid var(--border); padding: 4px 8px; }
+.caret-md a { color: var(--info); } .caret-md hr { border: 0; border-top: 1px solid var(--border); margin: 1em 0; }
+.caret-md input[type=checkbox] { margin-right: 6px; }
+.monaco-editor .suggest-widget, .monaco-editor .monaco-hover { border-radius: 6px; }

@@ -1,0 +1,109 @@
+@import "tailwindcss";
+
+/* ───────── Caret theme tokens (Cursor-like dark by default) ───────── */
+:root, .theme-caret-dark {
+  /* Neutral grays (equal RGB channels — no blue cast), white emphasis, blue only for links/info. */
+  --bg-app: #141414;
+  --bg-sidebar: #181818;
+  --bg-panel: #181818;
+  --bg-editor: #1a1a1a;
+  --bg-titlebar: #181818;
+  --bg-input: #1f1f1f;
+  --bg-hover: rgba(255, 255, 255, 0.05);
+  --bg-active: rgba(255, 255, 255, 0.1);
+  --bg-selected: rgba(255, 255, 255, 0.1);
+  --bg-chat-user: #202020;
+  --bg-tooltip: #1f1f1f;
+  --border: #2a2a2a;
+  --border-strong: #3a3a3a;
+  --fg: #cccccc;
+  --fg-muted: #9a9a9a;
+  --fg-faint: #6a6a6a;
+  --fg-inverse: #111;
+  --accent: #ececec;
+  --accent-hover: #ffffff;
+  --accent-fg: #111111;
+  --danger: #f14c4c;
+  --warning: #e2b35b;
+  --success: #6fcf97;
+  --info: #4daafc;
+  --diff-add-bg: rgba(111, 207, 151, 0.14);
+  --diff-del-bg: rgba(241, 76, 76, 0.14);
+  --diff-add-fg: #9fe6bd;
+  --diff-del-fg: #ff9a95;
+  --scrollbar: rgba(255,255,255,0.14);
+  --shadow: 0 8px 28px rgba(0,0,0,0.5);
+  --radius: 6px;
+  --font-ui: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", Inter, Roboto, sans-serif;
+  --font-mono: "JetBrains Mono", Menlo, Monaco, "SF Mono", "Courier New", monospace;
+  color-scheme: dark;
+}
+.theme-caret-midnight {
+  --bg-app: #0d1117; --bg-sidebar: #0f141b; --bg-panel: #0f141b; --bg-editor: #0d1117; --bg-titlebar: #0f141b; --bg-input: #161c25;
+  --bg-chat-user: #161c25; --bg-tooltip: #1b2230; --border: #1f2733; --border-strong: #2c3747; --fg: #d7dee8; --fg-muted: #8a94a3; --fg-faint: #5a6473;
+  --accent: #79b8ff; --accent-hover: #93c6ff;
+}
+.theme-caret-light {
+  --bg-app: #f6f6f8; --bg-sidebar: #f0f0f3; --bg-panel: #f0f0f3; --bg-editor: #ffffff; --bg-titlebar: #ececf0; --bg-input: #ffffff;
+  --bg-hover: rgba(0,0,0,0.05); --bg-active: rgba(0,0,0,0.09); --bg-selected: rgba(60,120,255,0.14); --bg-chat-user: #e9ecf3; --bg-tooltip: #ffffff;
+  --border: #dcdce2; --border-strong: #c6c6cf; --fg: #1f2328; --fg-muted: #656d76; --fg-faint: #9a9fa8; --fg-inverse: #fff;
+  --accent: #2f6fed; --accent-hover: #1f5fe0; --accent-fg: #ffffff; --danger: #d1242f; --warning: #9a6700; --success: #1a7f37; --info: #0969da;
+  --diff-add-bg: rgba(26,127,55,0.12); --diff-del-bg: rgba(209,36,47,0.12); --diff-add-fg: #116329; --diff-del-fg: #a40e26;
+  --scrollbar: rgba(0,0,0,0.2); --shadow: 0 8px 28px rgba(0,0,0,0.15); color-scheme: light;
+}
+.theme-caret-high-contrast {
+  --bg-app: #000; --bg-sidebar: #000; --bg-panel: #000; --bg-editor: #000; --bg-titlebar: #000; --bg-input: #0a0a0a; --bg-hover: rgba(255,255,255,0.12); --bg-active: rgba(255,255,255,0.2);
+  --border: #6f6f6f; --border-strong: #fff; --fg: #fff; --fg-muted: #d0d0d0; --fg-faint: #a0a0a0; --accent: #4cc2ff; --accent-hover: #7fd4ff;
+}
+
+@theme inline {
+  --color-app: var(--bg-app); --color-sidebar: var(--bg-sidebar); --color-panel: var(--bg-panel); --color-editor: var(--bg-editor);
+  --color-titlebar: var(--bg-titlebar); --color-input: var(--bg-input); --color-hover: var(--bg-hover); --color-active: var(--bg-active); --color-selected: var(--bg-selected);
+  --color-chat-user: var(--bg-chat-user); --color-tooltip: var(--bg-tooltip);
+  --color-border: var(--border); --color-border-strong: var(--border-strong);
+  --color-fg: var(--fg); --color-muted: var(--fg-muted); --color-faint: var(--fg-faint); --color-inverse: var(--fg-inverse);
+  --color-accent: var(--accent); --color-accent-hover: var(--accent-hover); --color-accent-fg: var(--accent-fg);
+  --color-danger: var(--danger); --color-warning: var(--warning); --color-success: var(--success); --color-info: var(--info);
+  --color-diff-add: var(--diff-add-bg); --color-diff-del: var(--diff-del-bg); --color-diff-add-fg: var(--diff-add-fg); --color-diff-del-fg: var(--diff-del-fg);
+  --font-ui: var(--font-ui); --font-mono: var(--font-mono);
+  --radius-md: var(--radius);
+}
+
+html, body, #root { height: 100%; margin: 0; overflow: hidden; }
+body { background: var(--bg-app); color: var(--fg); font-family: var(--font-ui); font-size: 13px; -webkit-font-smoothing: antialiased; user-select: none; }
+.selectable { user-select: text; }
+* { box-sizing: border-box; }
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-thumb { background: transparent; border-radius: 10px; border: 2px solid transparent; background-clip: padding-box; }
+*:hover > ::-webkit-scrollbar-thumb, ::-webkit-scrollbar-thumb:hover { background-color: var(--scrollbar); }
+::-webkit-scrollbar-corner { background: transparent; }
+button, input, textarea, select { font: inherit; color: inherit; }
+button { cursor: default; }
+input, textarea { user-select: text; }
+:focus-visible { outline: 1px solid var(--accent); outline-offset: -1px; }
+/* Pickers, menus and tabs: hand cursor on anything that opens or selects (Radix triggers carry aria-haspopup). */
+button[aria-haspopup], [role=menuitem], [role=menuitemcheckbox], [role=menuitemradio], [role=option], [role=tab], [data-radix-collection-item] { cursor: pointer; }
+[data-tauri-drag-region] { -webkit-app-region: drag; }
+[data-tauri-drag-region] button, [data-tauri-drag-region] input { -webkit-app-region: no-drag; }
+.mono { font-family: var(--font-mono); }
+.truncate-1 { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+@keyframes caret-pulse { 0%,100% { opacity: .35 } 50% { opacity: 1 } }
+.pulse { animation: caret-pulse 1.4s ease-in-out infinite; }
+@keyframes caret-spin { to { transform: rotate(360deg) } }
+.spin { animation: caret-spin 1s linear infinite; }
+
+/* ───── review: gutter comments + verification glyphs (DiffEditor) ───── */
+.caret-comment-add-glyph { cursor: pointer; }
+.caret-comment-add-glyph::after { content: '+'; display: block; width: 14px; height: 14px; margin: 2px auto; border-radius: 3px; background: var(--color-accent); color: var(--color-accent-fg); font: 600 12px/14px ui-sans-serif, system-ui; text-align: center; opacity: .9; }
+.caret-comment-line { background: color-mix(in srgb, var(--color-accent) 10%, transparent); }
+.caret-comment-glyph::after { content: ''; display: block; width: 8px; height: 8px; margin: 5px auto; border-radius: 50%; background: var(--color-accent); }
+.caret-verify-glyph::after { content: '!'; display: block; width: 12px; height: 12px; margin: 3px auto; border-radius: 50%; font: 700 10px/12px ui-sans-serif, system-ui; text-align: center; color: var(--color-inverse); background: var(--color-warning); }
+.caret-verify-critical::after, .caret-verify-high::after { background: var(--color-danger); content: '✕'; font-size: 9px; }
+.caret-verify-low::after, .caret-verify-info::after { background: var(--color-info); content: 'i'; }
+.caret-verify-line-high { background: color-mix(in srgb, var(--color-danger) 8%, transparent); }
+.caret-verify-line { background: color-mix(in srgb, var(--color-warning) 8%, transparent); }
+.caret-fold-zone { display: flex; align-items: center; gap: 8px; height: 100%; padding: 0 12px; font: 11px ui-sans-serif, system-ui; color: var(--color-muted); background: color-mix(in srgb, var(--color-diff-add) 50%, var(--color-editor)); border-top: 1px dashed var(--color-border); border-bottom: 1px dashed var(--color-border); overflow: hidden; }
+.caret-fold-zone button { color: var(--color-accent); background: none; border: 0; padding: 0; cursor: pointer; font: inherit; }
+.caret-fold-zone button:hover { text-decoration: underline; }
+.caret-fold-zone pre { margin: 0; white-space: pre-wrap; font: 11px/16px var(--font-mono, ui-monospace); color: var(--color-fg); max-height: 100%; overflow: auto; flex: 1; }
+.caret-comment-zone { height: 100%; padding: 4px 8px 4px 12px; font: 12px ui-sans-serif, system-ui; color: var(--color-fg); background: var(--color-panel); border-top: 1px solid var(--color-border); border-bottom: 1px solid var(--color-border); overflow: hidden; }

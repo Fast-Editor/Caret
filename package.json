@@ -1,50 +1,58 @@
 {
-  "name": "fast-editor",
-  "version": "1.0.0",
-  "description": "Blazingly fast Monaco-based code editor",
-  "main": "main.js",
-  "scripts": {
-    "start": "electron .",
-    "build": "electron-builder",
-    "dev": "NODE_ENV=development electron ."
-  },
-  "keywords": [
-    "editor",
-    "monaco",
-    "electron"
-  ],
-  "author": "",
+  "name": "caret",
+  "productName": "Caret",
+  "version": "0.1.0",
+  "description": "Caret — a memory-efficient, Rust-powered AI code editor (Tauri + Monaco)",
+  "private": true,
+  "type": "module",
   "license": "MIT",
-  "devDependencies": {
-    "electron": "^28.0.0",
-    "electron-builder": "^24.9.1",
-    "electron-rebuild": "^3.2.9",
-    "electron-reload": "^2.0.0-alpha.1"
+  "scripts": {
+    "dev": "tauri dev",
+    "build": "tauri build",
+    "tauri": "tauri",
+    "dev:web": "vite",
+    "build:web": "tsc --noEmit -p tsconfig.json && vite build",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "test": "vitest run"
   },
   "dependencies": {
-    "@xterm/addon-fit": "^0.10.0",
-    "@xterm/addon-web-links": "^0.11.0",
-    "@xterm/xterm": "^5.5.0",
-    "highlight.js": "^11.11.1",
-    "marked": "^17.0.1",
-    "monaco-editor": "^0.45.0",
-    "node-pty": "^1.0.0",
-    "vscode-languageclient": "^9.0.1"
+    "@tauri-apps/api": "^2.12.4",
+    "@tauri-apps/plugin-clipboard-manager": "^2.5.0",
+    "@tauri-apps/plugin-dialog": "^2.8.3",
+    "@tauri-apps/plugin-opener": "^2.7.2",
+    "@tauri-apps/plugin-os": "^2.4.0",
+    "@tauri-apps/plugin-process": "^2.4.0",
+    "@tauri-apps/plugin-window-state": "^2.5.0",
+    "@xterm/addon-fit": "^0.11.0",
+    "@xterm/addon-search": "^0.16.0",
+    "@xterm/addon-web-links": "^0.12.0",
+    "@xterm/addon-webgl": "^0.19.0",
+    "@xterm/xterm": "^6.0.0",
+    "clsx": "^2.1.1",
+    "cmdk": "^1.1.1",
+    "fuse.js": "^7.5.0",
+    "lucide-react": "^1.61.0",
+    "monaco-editor": "^0.57.0",
+    "radix-ui": "^1.8.1",
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1",
+    "react-markdown": "^10.1.0",
+    "react-resizable-panels": "^4.15.0",
+    "remark-gfm": "^4.0.1",
+    "tailwind-merge": "^3.7.0",
+    "zustand": "^5.0.16"
   },
-  "build": {
-    "appId": "com.fasteditor.app",
-    "mac": {
-      "category": "public.app-category.developer-tools"
-    },
-    "linux": {
-      "target": [
-        "AppImage"
-      ]
-    },
-    "win": {
-      "target": [
-        "nsis"
-      ]
-    }
+  "devDependencies": {
+    "@tailwindcss/vite": "^4.3.3",
+    "@tauri-apps/cli": "^2.12.4",
+    "@types/node": "^26.6.5",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "@vitejs/plugin-react": "^6.1.2",
+    "esbuild": "^0.28.2",
+    "tailwindcss": "^4.3.3",
+    "typescript": "^5.9.0",
+    "vite": "^8.3.5",
+    "vitest": "^5.0.5"
   }
 }

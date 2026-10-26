@@ -1,0 +1,6 @@
+echo caret-ok
+(exit 3)
+echo caret-ok
+(exit 3)
+echo ZD=[$ZDOTDIR] LOADED=$CARET_SHELL_INTEGRATION_LOADED
+exit

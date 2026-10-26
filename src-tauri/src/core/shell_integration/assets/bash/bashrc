@@ -1,0 +1,12 @@
+# Caret bash init file (used with `bash --init-file`): emulate the login/interactive startup, then load integration.
+if [[ -n "$CARET_BASH_LOGIN" ]] && [[ -z "$CARET_BASH_LOGIN_DONE" ]]; then
+  export CARET_BASH_LOGIN_DONE=1
+  if [[ -f /etc/profile ]]; then . /etc/profile; fi
+  for __caret_f in "$HOME/.bash_profile" "$HOME/.bash_login" "$HOME/.profile"; do
+    if [[ -f "$__caret_f" ]]; then . "$__caret_f"; break; fi
+  done
+  unset __caret_f
+elif [[ -f "$HOME/.bashrc" ]]; then
+  . "$HOME/.bashrc"
+fi
+. "${BASH_SOURCE[0]%/*}/caret-integration.bash"
