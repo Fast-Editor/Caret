@@ -55,7 +55,7 @@ Not implemented (needs cloud services or OS automation): voice dictation, comput
 Open **Settings → Models** (⌘,): paste an API key for Anthropic / OpenAI / OpenRouter / Gemini, or point the
 "OpenAI-compatible (custom)" provider at any `/v1` endpoint (Ollama, LM Studio, vLLM, a proxy). "Import API
 keys from environment" picks up `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `OPENROUTER_API_KEY`, `GEMINI_API_KEY`.
-Pick a default model, a fast model for Tab, and (optionally) an embeddings provider under **Indexing & Docs**.
+Pick a default model, a fast model for Tab, and (optionally) an embeddings provider under **Indexing & Docs**. Full reference, every provider type (Azure OpenAI, Anthropic-compatible gateways, Ollama, LM Studio, vLLM, OpenRouter, Gemini), key storage and recipes: [docs/PROVIDERS.md](docs/PROVIDERS.md).
 
 ## Where the code lives
 
@@ -102,7 +102,7 @@ The project is a single repository: locally at **`~/caret`**, published at **htt
 │       └── dev/automation.rs localhost bridge used by scripts/e2e.mjs for scripted UI checks
 ├── scripts/                  e2e.mjs (bridge client), wave1-check.mjs (smoke checks)
 ├── docs/                     ARCHITECTURE, UI_COMMANDS, VERIFIED_DIFF, SANDBOX, TERMINAL, ACP, CLI,
-│                             PERFORMANCE, INNOVATION_PLAN
+│                             PROVIDERS, PERFORMANCE, INNOVATION_PLAN
 ├── dist/                     built frontend (output of `npm run build:web`; generated)
 └── node_modules/             npm dependencies (generated)
 ```
@@ -251,7 +251,7 @@ Details and the transport (`open -b dev.caret.editor`, `caret://open?path=…`) 
 
 ## Architecture
 
-See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the module map, IPC conventions and memory rules, [docs/UI_COMMANDS.md](docs/UI_COMMANDS.md) for the UI command registry. Feature docs: [VERIFIED_DIFF](docs/VERIFIED_DIFF.md), [SANDBOX](docs/SANDBOX.md), [TERMINAL](docs/TERMINAL.md), [ACP](docs/ACP.md), [CLI](docs/CLI.md), [PERFORMANCE](docs/PERFORMANCE.md).
+See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the module map, IPC conventions and memory rules, [docs/UI_COMMANDS.md](docs/UI_COMMANDS.md) for the UI command registry. Feature docs: [PROVIDERS](docs/PROVIDERS.md), [VERIFIED_DIFF](docs/VERIFIED_DIFF.md), [SANDBOX](docs/SANDBOX.md), [TERMINAL](docs/TERMINAL.md), [ACP](docs/ACP.md), [CLI](docs/CLI.md), [PERFORMANCE](docs/PERFORMANCE.md).
 
 ## License
 
