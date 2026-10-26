@@ -68,7 +68,7 @@ Pick a default model, a fast model for Tab, and (optionally) an embeddings provi
 
 ## Where the code lives
 
-The project is a single repository: locally at **`~/caret`**, published at **https://github.com/Fast-Editor/Fast-Editor**
+The project is a single repository: locally at **`~/caret`**, published at **https://github.com/Fast-Editor/Caret**
 (branch `main`; the earlier Electron prototype stays in that repo's git history). Two halves talk over Tauri IPC:
 
 ```
@@ -111,7 +111,7 @@ The project is a single repository: locally at **`~/caret`**, published at **htt
 │       └── dev/automation.rs localhost bridge used by scripts/e2e.mjs for scripted UI checks
 ├── scripts/                  e2e.mjs (bridge client), wave1-check.mjs (smoke checks)
 ├── docs/                     ARCHITECTURE, UI_COMMANDS, VERIFIED_DIFF, SANDBOX, TERMINAL, ACP, CLI,
-│                             PERFORMANCE, REVERSE_ENGINEERING, INNOVATION_PLAN
+│                             PERFORMANCE, INNOVATION_PLAN
 ├── dist/                     built frontend (output of `npm run build:web`; generated)
 └── node_modules/             npm dependencies (generated)
 ```
@@ -260,7 +260,7 @@ Details and the transport (`open -b dev.caret.editor`, `caret://open?path=…`) 
 
 ## Architecture
 
-See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the module map, IPC conventions and memory rules, [docs/UI_COMMANDS.md](docs/UI_COMMANDS.md) for the UI command registry, and [docs/REVERSE_ENGINEERING.md](docs/REVERSE_ENGINEERING.md) for how the feature inventory was derived from Cursor with [REA](https://github.com/morluto/rea). Feature docs: [VERIFIED_DIFF](docs/VERIFIED_DIFF.md), [SANDBOX](docs/SANDBOX.md), [TERMINAL](docs/TERMINAL.md), [ACP](docs/ACP.md), [CLI](docs/CLI.md), [PERFORMANCE](docs/PERFORMANCE.md).
+See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the module map, IPC conventions and memory rules, [docs/UI_COMMANDS.md](docs/UI_COMMANDS.md) for the UI command registry. Feature docs: [VERIFIED_DIFF](docs/VERIFIED_DIFF.md), [SANDBOX](docs/SANDBOX.md), [TERMINAL](docs/TERMINAL.md), [ACP](docs/ACP.md), [CLI](docs/CLI.md), [PERFORMANCE](docs/PERFORMANCE.md).
 
 ## License
 
