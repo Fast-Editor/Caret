@@ -102,7 +102,7 @@ The project is a single repository: locally at **`~/caret`**, published at **htt
 │       └── dev/automation.rs localhost bridge used by scripts/e2e.mjs for scripted UI checks
 ├── scripts/                  e2e.mjs (bridge client), wave1-check.mjs (smoke checks)
 ├── docs/                     ARCHITECTURE, UI_COMMANDS, VERIFIED_DIFF, SANDBOX, TERMINAL, ACP, CLI,
-│                             PROVIDERS, PERFORMANCE, INNOVATION_PLAN
+│                             PROVIDERS, PERFORMANCE
 ├── dist/                     built frontend (output of `npm run build:web`; generated)
 └── node_modules/             npm dependencies (generated)
 ```
