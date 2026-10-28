@@ -1,4 +1,5 @@
 import { useMemo, useState } from 'react'
+import { useShallow } from 'zustand/shallow'
 import { AlertCircle, AlertTriangle, Info, ChevronDown, ChevronRight, Sparkles, Filter } from 'lucide-react'
 import { useProblems } from '@/store/problems'
 import { relPath } from '@/store/workspace'
@@ -9,7 +10,8 @@ function Sev({ s }: { s?: number }) { return s === 2 ? <AlertTriangle size={13} 
 
 export function ProblemsPanel() {
   const byPath = useProblems((s) => s.byPath)
-  const counts = useProblems((s) => ({ e: s.errors, w: s.warnings, i: s.infos }))
+  // useShallow: a selector that returns a fresh object every render makes the store think it changed → infinite loop (React #185).
+  const counts = useProblems(useShallow((s) => ({ e: s.errors, w: s.warnings, i: s.infos })))
   const [filter, setFilter] = useState('')
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({})
   const [sevFilter, setSevFilter] = useState<'all' | 'errors' | 'warnings'>('all')
