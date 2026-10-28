@@ -34,8 +34,9 @@ xattr -dr com.apple.quarantine /Applications/Caret.app
 
 (or System Settings → Privacy & Security → *Open Anyway*). After that, updates install from inside the app: **Settings → About → Check for updates**.
 
-**Windows and Linux** installers (`.msi`/`.exe`, `.deb`/`.AppImage`) are produced by the same release workflow on a best-effort basis
-and attached to each release; see [docs/RELEASING.md](docs/RELEASING.md) for their status.
+**Windows** (`.msi` / `-setup.exe`) and **Linux** (`.deb`, `.rpm`, `.AppImage`) installers are attached to every release too. They are built
+by the same workflow but have not been exercised at runtime yet; expect rough edges and please report them. The Windows installer
+is unsigned, so SmartScreen shows *More info → Run anyway* once.
 
 ## Why Caret
 

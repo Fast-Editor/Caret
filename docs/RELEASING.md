@@ -17,8 +17,8 @@ The workflow builds four targets in parallel and attaches them to a **draft** re
 | --- | --- | --- | --- |
 | macOS Apple Silicon | macos-latest | `Caret_0.2.0_aarch64.dmg`, `Caret.app.tar.gz` + `.sig` (updater) | required |
 | macOS Intel | macos-latest (`--target x86_64-apple-darwin`) | `Caret_0.2.0_x64.dmg`, updater tarball | required |
-| Linux x64 | ubuntu-22.04 | `.deb`, `.rpm`, `.AppImage` + `.sig` | best effort (`continue-on-error`) |
-| Windows x64 | windows-latest | `.msi`, `-setup.exe` + `.sig` | best effort |
+| Linux x64 | ubuntu-22.04 | `Caret_X.Y.Z_amd64.deb`, `Caret-X.Y.Z-1.x86_64.rpm`, `Caret_X.Y.Z_amd64.AppImage` + `.sig` | builds green since v0.1.0; runtime untested (`continue-on-error`) |
+| Windows x64 | windows-latest | `Caret_X.Y.Z_x64_en-US.msi`, `Caret_X.Y.Z_x64-setup.exe` + `.sig` | builds green since v0.1.0; runtime untested (`continue-on-error`) |
 
 Then `tauri-action` writes `latest.json` (the updater manifest) and a final job attaches `SHA256SUMS.txt`. Review the
 draft, edit notes if needed, and **publish** it — the in-app updater only sees published releases.
@@ -65,5 +65,6 @@ then the app relaunches. Dev builds report "updates unavailable".
 | --- | --- |
 | `A public key has been found, but no private key` during a local `npm run build` | export `TAURI_SIGNING_PRIVATE_KEY=~/.tauri/caret.key` and `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` (or temporarily set `bundle.createUpdaterArtifacts` to false) |
 | DMG step fails with `hdiutil: Resource busy` | known flaky step; re-run the job — the `.app` is complete before it |
-| Linux/Windows job fails | expected until those targets are exercised; macOS artifacts still publish |
+| Linux/Windows job fails | they compile today but are not exercised at runtime; macOS artifacts still publish |
+| macOS job fails with `security import -f pkcs12` | an Apple signing variable reached the bundler empty — the export step only forwards secrets that are set; check the secret names |
 | Updater says signature invalid | the release was built with a different private key than the public key in the shipped app |
