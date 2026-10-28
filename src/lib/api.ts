@@ -291,6 +291,16 @@ export const apiWave1 = {
     logs: (agentId: string) => invoke<string[]>('acp_logs', { agentId }),
     sessionInfo: (sessionId: string) => invoke<{ agentId: string; acpSessionId: string; modes?: { currentModeId: string; availableModes: { id: string; name: string; description?: string }[] } | null; configOptions?: T.AcpConfigOption[] | null; commands: { name: string; description?: string }[] } | null>('acp_session_info', { sessionId }),
   },
+  /** Auto routing (managed Lynkr sidecar). */
+  router: {
+    status: () => invoke<T.RouterStatus>('router_status'),
+    install: () => invoke<T.RouterStatus>('router_install'),
+    restart: () => invoke<T.RouterStatus>('router_restart'),
+    stop: () => invoke<T.RouterStatus>('router_stop'),
+    logs: () => invoke<string[]>('router_logs'),
+    previewAssignment: () => invoke<T.RouterAssignment>('router_preview_assignment'),
+    setOverride: (tier: T.RouterTier, modelId: string | null) => invoke<T.RouterStatus>('router_set_override', { tier, modelId }),
+  },
   review: {
     comments: (sessionId: string) => invoke<T.ReviewComment[]>('chat_review_comments', { sessionId }),
     addComment: (sessionId: string, comment: Omit<T.ReviewComment, 'id' | 'createdAt' | 'author'>) => invoke<T.ReviewComment>('chat_add_review_comment', { sessionId, comment }),

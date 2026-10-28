@@ -287,9 +287,11 @@ pub struct ChatMessage {
     #[serde(skip_serializing_if = "Option::is_none")] pub checkpoint_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")] pub turn_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")] pub duration_ms: Option<u64>,
+    /// Auto-routing decision for this assistant message (served model, tier).
+    #[serde(default, skip_serializing_if = "Option::is_none")] pub routing: Option<llm::RoutingInfo>,
 }
 impl ChatMessage {
-    pub fn new(role: MessageRole) -> Self { Self { id: new_id(), role, parts: vec![], created_at: now_ms(), model_id: None, mode: None, usage: None, status: None, checkpoint_id: None, turn_id: None, duration_ms: None } }
+    pub fn new(role: MessageRole) -> Self { Self { id: new_id(), role, parts: vec![], created_at: now_ms(), model_id: None, mode: None, usage: None, status: None, checkpoint_id: None, turn_id: None, duration_ms: None, routing: None } }
     pub fn text(&self) -> String { self.parts.iter().filter_map(|p| if let MessagePart::Text { text } = p { Some(text.as_str()) } else { None }).collect::<Vec<_>>().join("\n") }
     pub fn preview(&self, n: usize) -> String { let t = self.text(); let t = t.trim(); let s: String = t.chars().take(n).collect(); if t.chars().count() > n { format!("{s}…") } else { s } }
 }
@@ -335,6 +337,8 @@ pub enum AgentEvent {
     /// Sent after restore/regenerate/edit so the UI reloads the full session.
     SessionReset { session_id: String },
     Verification { session_id: String, report: crate::verify::VerificationReport },
+    /// Auto router decided which model serves `message_id` (emitted as soon as the stream starts).
+    Routed { session_id: String, message_id: String, routing: llm::RoutingInfo },
     AgentStatus { session_id: String, agent_id: String, status: crate::acp::AcpAgentStatus },
     ReviewComments { session_id: String, comments: Vec<ReviewComment> },
 }

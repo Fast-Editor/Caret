@@ -5,6 +5,7 @@ use tauri::{AppHandle, Emitter};
 pub const FS_CHANGED: &str = "caret://fs/changed";
 pub const GIT_CHANGED: &str = "caret://git/changed";
 pub const SETTINGS_CHANGED: &str = "caret://settings/changed";
+pub const ROUTER_STATUS: &str = "caret://router/status";
 pub const INDEX_STATUS: &str = "caret://index/status";
 pub const MCP_CHANGED: &str = "caret://mcp/changed";
 pub const NOTIFY: &str = "caret://notify";

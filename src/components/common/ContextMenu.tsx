@@ -10,7 +10,7 @@ export type MenuEntry =
   | { type: 'submenu'; label: string; items: MenuEntry[]; icon?: ReactNode; disabled?: boolean; hidden?: boolean }
   | { type: 'label'; label: string; hidden?: boolean }
 
-const itemCls = 'relative flex items-center gap-2 rounded px-2 h-[26px] text-xs outline-none select-none data-[highlighted]:bg-selected data-[disabled]:opacity-40 cursor-default'
+const itemCls = 'relative flex items-center gap-2 rounded px-2 h-[26px] text-xs outline-none select-none data-[highlighted]:bg-selected data-[disabled]:opacity-40 cursor-pointer'
 const contentCls = 'z-[900] min-w-[200px] rounded-md border border-border bg-tooltip p-1 shadow-[var(--shadow)] max-h-[70vh] overflow-y-auto'
 
 function renderEntries(entries: MenuEntry[], M: typeof RC | typeof RD): ReactNode {

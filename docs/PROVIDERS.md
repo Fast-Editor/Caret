@@ -69,7 +69,9 @@ Add a model with the **+** on a provider card, or use **Fetch models** to list w
 
 How Caret chooses a model when you did not pick one explicitly:
 
-1. **Chat / agent**: the per-chat picker, else `agent.defaultModelId`, else the model marked default.
+1. **Chat / agent**: the per-chat picker, else `agent.defaultModelId`, else the model marked default. With
+   **Auto routing** enabled (Settings → Models → Auto routing), "Auto" instead routes each request through the
+   Lynkr sidecar to one of your models per complexity tier — see [AUTO_ROUTING.md](AUTO_ROUTING.md).
 2. **Tab, commit messages, chat titles and other small requests** (`prefer_fast`): Settings → Tab → *Tab model*,
    else the first enabled model marked fast whose provider has a usable key, else the default model.
 3. **Thinking and effort** defaults live in Settings → Agent (*Thinking* auto/on/off, *Effort* low…max) and can be

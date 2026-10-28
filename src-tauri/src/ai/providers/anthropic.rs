@@ -66,6 +66,8 @@ pub fn thinking_cannot_disable(model: &str) -> bool {
 /// `budget_tokens`, which Caret never sends — thinking is omitted for them.
 pub fn supports_adaptive(model: &str) -> bool {
     let m = model;
+    // Auto routing: the Lynkr sidecar forwards `thinking`/`output_config` to whichever Claude-compatible tier model it picks.
+    if m.starts_with("lynkr-") { return true; }
     if m.contains("fable") || m.contains("mythos") { return true; }
     if m.contains("opus-5") || m.contains("sonnet-5") || m.contains("haiku-5") { return true; }
     for v in ["4-6", "4-7", "4-8", "4-9", "4.6", "4.7", "4.8", "4.9"] { if m.contains(&format!("opus-{v}")) || m.contains(&format!("sonnet-{v}")) || m.contains(&format!("haiku-{v}")) { return true; } }
@@ -253,6 +255,15 @@ pub fn classify_http_error(status: u16, body: &str) -> (CaretError, bool) {
     }
 }
 
+/// Lynkr (Auto routing) announces its decision in response headers; surface it as `LlmEvent::Routed` before the body.
+pub(crate) fn routed_event_from_headers(h: &reqwest::header::HeaderMap) -> Option<LlmEvent> {
+    let get = |k: &str| h.get(k).and_then(|v| v.to_str().ok()).map(|s| s.trim()).filter(|s| !s.is_empty()).map(|s| s.to_string());
+    let (model, tier, method) = (get("x-lynkr-model"), get("x-lynkr-tier"), get("x-lynkr-routing-method"));
+    let score = get("x-lynkr-complexity-score").and_then(|s| s.parse::<f64>().ok());
+    if model.is_none() && tier.is_none() && method.is_none() && score.is_none() { return None; }
+    Some(LlmEvent::Routed { model, tier: tier.map(|t| t.to_ascii_uppercase()), score, method })
+}
+
 pub(super) fn retry_delay(resp_headers: &reqwest::header::HeaderMap, attempt: u32) -> std::time::Duration {
     if let Some(ra) = resp_headers.get("retry-after").and_then(|v| v.to_str().ok()).and_then(|s| s.trim().parse::<u64>().ok()) {
         return std::time::Duration::from_secs(ra.min(30));
@@ -300,6 +311,7 @@ impl LlmProvider for AnthropicProvider {
             }
         };
 
+        if let Some(ev) = routed_event_from_headers(resp.headers()) { let _ = tx.send(ev).await; }
         let mut stream = resp.bytes_stream();
         let mut parser = SseParser::new();
         let mut sent_input_usage = false;
@@ -443,4 +455,39 @@ mod tests {
         assert!(!classify_http_error(400, r#"{"error":{"message":"bad"}}"#).1);
         assert!(classify_http_error(400, r#"{"error":{"message":"budget_tokens unsupported"}}"#).0.message.contains("budget_tokens unsupported"));
     }
+}
+
+#[cfg(test)]
+mod routed_header_tests {
+    use super::routed_event_from_headers;
+    use crate::ai::llm::LlmEvent;
+    use reqwest::header::{HeaderMap, HeaderValue};
+
+    #[test]
+    fn parses_lynkr_headers_into_a_routed_event() {
+        let mut h = HeaderMap::new();
+        h.insert("x-lynkr-model", HeaderValue::from_static("claude-sonnet-5-5"));
+        h.insert("x-lynkr-tier", HeaderValue::from_static("complex"));
+        h.insert("x-lynkr-complexity-score", HeaderValue::from_static("61.5"));
+        h.insert("x-lynkr-routing-method", HeaderValue::from_static("native-passthrough-stream"));
+        match routed_event_from_headers(&h) {
+            Some(LlmEvent::Routed { model, tier, score, method }) => {
+                assert_eq!(model.as_deref(), Some("claude-sonnet-5-5")); assert_eq!(tier.as_deref(), Some("COMPLEX"));
+                assert_eq!(score, Some(61.5)); assert_eq!(method.as_deref(), Some("native-passthrough-stream"));
+            }
+            other => panic!("unexpected {other:?}"),
+        }
+    }
+
+    #[test]
+    fn plain_anthropic_responses_produce_no_event() {
+        let mut h = HeaderMap::new();
+        h.insert("request-id", HeaderValue::from_static("req_123"));
+        h.insert("x-lynkr-complexity-score", HeaderValue::from_static("not-a-number"));
+        assert!(routed_event_from_headers(&h).is_none());
+        assert!(routed_event_from_headers(&HeaderMap::new()).is_none());
+    }
+
+    #[test]
+    fn lynkr_virtual_ids_are_adaptive_capable() { assert!(super::supports_adaptive("lynkr-auto")); assert!(super::supports_adaptive("lynkr-reasoning")); }
 }

@@ -37,7 +37,7 @@ export function OutlineView() {
           const inside = s.range.startLineNumber <= cursorLine && s.range.endLineNumber >= cursorLine
           const hasChildren = s.children.length > 0
           return (
-            <div key={s.id} className={`flex items-center gap-1 h-[22px] pr-2 hover:bg-hover cursor-default ${inside ? 'bg-selected' : ''}`} style={{ paddingLeft: 6 + s.depth * 12 }} onClick={() => go(s)}>
+            <div key={s.id} className={`flex items-center gap-1 h-[22px] pr-2 hover:bg-hover cursor-pointer ${inside ? 'bg-selected' : ''}`} style={{ paddingLeft: 6 + s.depth * 12 }} onClick={() => go(s)}>
               <button className="w-4 h-4 flex items-center justify-center text-muted" onClick={(e) => { e.stopPropagation(); setCollapsed((c) => { const n = new Set(c); n.has(s.id) ? n.delete(s.id) : n.add(s.id); return n }) }}>{hasChildren ? (collapsed.has(s.id) ? <ChevronRight size={11} /> : <ChevronDown size={11} />) : null}</button>
               <SymbolIcon kind={s.kind} />
               <span className="truncate">{s.name}</span>

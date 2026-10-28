@@ -255,7 +255,7 @@ function Row({ r, style, deco, dropTarget, setDropTarget, rowPaths, onOpen, onCo
   return (
     <ContextMenu items={() => menuFor(r)} onOpenChange={(o) => { if (o && !selected) ex.select(r.nodePath) }}>
       <div style={{ ...style, paddingLeft: 8 + r.depth * 12 }} draggable={!editing} title={r.entry.path}
-        className={cn('flex items-center gap-1 pr-2 text-xs cursor-default select-none group/row', selected ? 'bg-selected' : 'hover:bg-hover', focused && 'outline-1 -outline-offset-1 outline-accent/60', dropTarget === r.nodePath && isDir && 'bg-selected/60', dimmed && 'opacity-50')}
+        className={cn('flex items-center gap-1 pr-2 text-xs cursor-pointer select-none group/row', selected ? 'bg-selected' : 'hover:bg-hover', focused && 'outline-1 -outline-offset-1 outline-accent/60', dropTarget === r.nodePath && isDir && 'bg-selected/60', dimmed && 'opacity-50')}
         onClick={(e) => { ex.select(r.nodePath, { toggle: e.metaKey || e.ctrlKey, range: e.shiftKey, rows: rowPaths }); if (!e.metaKey && !e.ctrlKey && !e.shiftKey) onOpen(r, true) }}
         onDoubleClick={() => { if (!isDir) onOpen(r, false) }}
         onDragStart={(e) => { const paths = selected ? Object.keys(ex.selected) : [r.entry.path]; e.dataTransfer.setData('application/x-caret-path', r.entry.path); e.dataTransfer.setData('application/x-caret-paths', paths.join('\n')); e.dataTransfer.setData('text/plain', r.entry.path); e.dataTransfer.effectAllowed = 'copyMove' }}

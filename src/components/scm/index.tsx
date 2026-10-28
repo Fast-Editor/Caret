@@ -82,7 +82,7 @@ export function ScmView() {
         <ChangesList />
         <Worktrees />
         <History />
-        {lastRemoteOutput && <details className="border-t border-border px-2 py-1 text-[10px] text-muted"><summary className="cursor-default">Last remote output</summary><pre className="mono whitespace-pre-wrap max-h-32 overflow-auto selectable">{lastRemoteOutput}</pre></details>}
+        {lastRemoteOutput && <details className="border-t border-border px-2 py-1 text-[10px] text-muted"><summary className="cursor-pointer">Last remote output</summary><pre className="mono whitespace-pre-wrap max-h-32 overflow-auto selectable">{lastRemoteOutput}</pre></details>}
       </div>
       <BranchPicker open={pickerOpen} onOpenChange={setPickerOpen} />
     </div>

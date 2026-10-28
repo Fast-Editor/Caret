@@ -22,6 +22,14 @@ fn resolve(mgr: &AgentManager, settings: &Settings, model_id: Option<&str>) -> R
     match mgr.app_opt() { Some(app) => { let secrets = app.state::<SettingsState>(); llm::resolve_model(settings, &secrets, model_id) } None => llm::resolve_model(settings, &SettingsState::load(), model_id) }
 }
 
+/// Build the per-message routing record from Lynkr's header decision and the model the bridge actually served.
+/// `fallback` is set when the header announced a different model than the one that answered (tier climb/demotion).
+pub(crate) fn routing_info_from(header_model: Option<&str>, header_tier: Option<&str>, score: Option<f64>, method: Option<&str>, served_model_id: &str, assignment: &crate::ai::router::Assignment) -> llm::RoutingInfo {
+    let served_tier = assignment.tier_of(served_model_id).map(|t| t.upper().to_string());
+    let fallback = header_model.map(|m| m != served_model_id).unwrap_or(false);
+    llm::RoutingInfo { via: "auto".into(), requested_tier: header_tier.map(|t| t.to_ascii_uppercase()), served_tier, served_model_id: served_model_id.to_string(), score, method: method.map(|m| m.to_string()), fallback }
+}
+
 fn lint_summary(app: &Option<tauri::AppHandle>, paths: Option<&[String]>, max: usize) -> String {
     match app { Some(a) => a.state::<DiagnosticsStore>().summary(paths, max), None => String::new() }
 }
@@ -142,7 +150,10 @@ pub async fn run_turn(mgr: Arc<AgentManager>, h: Arc<SessionHandle>, mut req: Se
     let mode: Arc<ModeSpec> = Arc::new(match &mode_override { Some(m) => m.clone(), None => { let id = if req.mode.is_empty() { h.session.lock().mode.clone() } else { req.mode.clone() }; { let mut s = h.session.lock(); s.mode = id.clone(); } modes::resolve(&settings, &id) } });
     if let Some(m) = &req.model_id { if !m.is_empty() { h.session.lock().model_id = Some(m.clone()); } }
     let model_pref = { let s = h.session.lock(); s.model_id.clone() }.or_else(|| mode.model_id.clone());
-    let resolved = match resolve(&mgr, &settings, model_pref.as_deref()) {
+    // Auto → the Lynkr sidecar when routing is enabled and healthy; otherwise the ordinary default.
+    let wants_auto = model_pref.as_deref().map(|m| m.is_empty() || m == "auto").unwrap_or(true);
+    let routed = if wants_auto { crate::ai::router::resolve_auto(app.as_ref(), &settings, Some(&session_id)) } else { None };
+    let resolved = match routed.map(Ok).unwrap_or_else(|| resolve(&mgr, &settings, model_pref.as_deref())) {
         Ok(r) => r,
         Err(e) => { mgr.emit(AgentEvent::Error { session_id: session_id.clone(), message: e.message.clone() }); mgr.set_status(&h, SessionStatus::Error); return Err(e); }
     };
@@ -244,6 +255,12 @@ pub async fn run_turn(mgr: Arc<AgentManager>, h: Arc<SessionHandle>, mut req: Se
 
         let provider = match llm::provider_for(&resolved) { Ok(p) => p, Err(e) => { end_message(&mgr, &h, &message_id, MessageStatus::Error, Some(e.message.clone()), started); mgr.set_status(&h, SessionStatus::Error); return Err(e); } };
         let (mgr2, h2, sid2, mid2, tool_map2) = (mgr.clone(), h.clone(), session_id.clone(), message_id.clone(), tool_map.clone());
+        // Auto routing: remember Lynkr's header decision, then reconcile with the model the bridge actually served
+        // (`message_start.model` is the Caret model id) and publish it immediately so the pill renders while streaming.
+        let is_auto = crate::ai::router::is_auto(&resolved);
+        let assignment = if is_auto { app.as_ref().and_then(crate::ai::router::manager).map(|m| m.current_assignment()).unwrap_or_default() } else { Default::default() };
+        let (settings2, assignment2) = (settings.clone(), assignment.clone());
+        let mut routed_hdr: Option<(Option<String>, Option<String>, Option<f64>, Option<String>)> = None;
         let mut slots: HashMap<u32, usize> = HashMap::new();
         let mut call_ids: HashMap<u32, String> = HashMap::new();
         let on_event = move |ev: &LlmEvent| {
@@ -280,6 +297,14 @@ pub async fn run_turn(mgr: Arc<AgentManager>, h: Arc<SessionHandle>, mut req: Se
                         mgr2.emit(AgentEvent::ToolInputDelta { session_id: sid2.clone(), message_id: mid2.clone(), tool_call_id: cid.clone(), text: partial_json.clone() });
                     }
                 }
+                LlmEvent::Routed { model, tier, score, method } if is_auto => { routed_hdr = Some((model.clone(), tier.clone(), *score, method.clone())); }
+                LlmEvent::MessageStart { model } if is_auto => {
+                    let (hm, ht, sc, me) = routed_hdr.clone().unwrap_or_default();
+                    let served = if settings2.model(model).is_some() { model.clone() } else { hm.clone().unwrap_or_else(|| model.clone()) };
+                    let info = routing_info_from(hm.as_deref(), ht.as_deref(), sc, me.as_deref(), &served, &assignment2);
+                    { let mut s = h2.session.lock(); if let Some(m) = s.message_mut(&mid2) { m.routing = Some(info.clone()); if settings2.model(&served).is_some() { m.model_id = Some(served.clone()); } } }
+                    mgr2.emit(AgentEvent::Routed { session_id: sid2.clone(), message_id: mid2.clone(), routing: info });
+                }
                 _ => {}
             }
         };
@@ -292,10 +317,11 @@ pub async fn run_turn(mgr: Arc<AgentManager>, h: Arc<SessionHandle>, mut req: Se
                 return Err(e);
             }
         };
-        // usage
-        let cost = turn.usage.cost_usd(&resolved.model);
+        // usage — priced with the model that actually served the turn when Auto routing was used
+        let served = if is_auto { settings.model(&turn.model).cloned().or_else(|| turn.routing.as_ref().and_then(|r| settings.model(&r.served_model_id).cloned())) } else { None };
+        let cost = turn.usage.cost_usd(served.as_ref().unwrap_or(&resolved.model));
         let usage = Usage::from_delta(&turn.usage, cost);
-        let (session_usage, ctx_tokens) = { let mut s = h.session.lock(); s.usage.add(&usage); if let Some(m) = s.message_mut(&message_id) { m.usage = Some(usage.clone()); } s.context_tokens = turn.usage.input_tokens + turn.usage.cache_read_tokens + turn.usage.cache_write_tokens + turn.usage.output_tokens; (s.usage.clone(), s.context_tokens) };
+        let (session_usage, ctx_tokens) = { let mut s = h.session.lock(); s.usage.add(&usage); if let Some(m) = s.message_mut(&message_id) { m.usage = Some(usage.clone()); if let Some(sm) = &served { m.model_id = Some(sm.id.clone()); if m.routing.is_none() { m.routing = Some(routing_info_from(None, None, None, None, &sm.id, &assignment)); } } } s.context_tokens = turn.usage.input_tokens + turn.usage.cache_read_tokens + turn.usage.cache_write_tokens + turn.usage.output_tokens; (s.usage.clone(), s.context_tokens) };
         mgr.emit(AgentEvent::Usage { session_id: session_id.clone(), message_id: message_id.clone(), usage, context_tokens: ctx_tokens, session_usage });
 
         let tool_uses = turn.tool_uses();
@@ -436,5 +462,29 @@ mod title_tests {
         assert_eq!(sanitize_title("\"Add retry logic.\"").as_deref(), Some("Add retry logic"));
         assert_eq!(sanitize_title("Title: **Refactor pricing**").as_deref(), Some("Refactor pricing"));
         assert_eq!(sanitize_title("*[X] a -> b*\n"), None);
+    }
+}
+
+#[cfg(test)]
+mod routing_tests {
+    use super::routing_info_from;
+    use crate::ai::router::{Assignment, Tier, TierSlot};
+
+    fn assignment() -> Assignment {
+        let mut a = Assignment::default();
+        for (t, id) in [(Tier::Simple, "haiku"), (Tier::Medium, "sonnet"), (Tier::Complex, "sonnet"), (Tier::Reasoning, "opus")] { a.slots.insert(t.key().into(), TierSlot { model_id: id.into(), source: "auto".into(), reason: None }); }
+        a
+    }
+
+    #[test]
+    fn served_model_maps_to_its_tier_and_fallback_is_detected() {
+        let a = assignment();
+        let r = routing_info_from(Some("sonnet"), Some("complex"), Some(61.0), Some("native-passthrough-stream"), "sonnet", &a);
+        assert_eq!(r.via, "auto"); assert_eq!(r.requested_tier.as_deref(), Some("COMPLEX")); assert_eq!(r.served_tier.as_deref(), Some("MEDIUM"), "lowest tier owning the model");
+        assert!(!r.fallback); assert_eq!(r.score, Some(61.0));
+        let climbed = routing_info_from(Some("haiku"), Some("simple"), None, None, "sonnet", &a);
+        assert!(climbed.fallback); assert_eq!(climbed.served_model_id, "sonnet");
+        let unknown = routing_info_from(None, None, None, None, "mystery", &a);
+        assert!(unknown.served_tier.is_none() && !unknown.fallback);
     }
 }

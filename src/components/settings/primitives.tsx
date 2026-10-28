@@ -139,13 +139,13 @@ export function Select<T extends string>({ value, onChange, options, placeholder
         <RSelect.Content position="popper" sideOffset={4} className="z-[1200] max-h-[320px] min-w-[var(--radix-select-trigger-width)] overflow-hidden rounded-md border border-border bg-panel shadow-[var(--shadow)]">
           <RSelect.Viewport className="p-1">
             {allowEmpty !== undefined && (
-              <RSelect.Item value={EMPTY} className="relative flex items-center gap-2 pl-6 pr-2 py-1 rounded text-xs text-muted cursor-default select-none outline-none data-[highlighted]:bg-hover">
+              <RSelect.Item value={EMPTY} className="relative flex items-center gap-2 pl-6 pr-2 py-1 rounded text-xs text-muted cursor-pointer select-none outline-none data-[highlighted]:bg-hover">
                 <RSelect.ItemIndicator className="absolute left-1.5"><Check size={12} /></RSelect.ItemIndicator>
                 <RSelect.ItemText>{allowEmpty}</RSelect.ItemText>
               </RSelect.Item>
             )}
             {options.map((o) => (
-              <RSelect.Item key={o.value} value={o.value} className="relative flex flex-col items-start pl-6 pr-2 py-1 rounded text-xs cursor-default select-none outline-none data-[highlighted]:bg-hover">
+              <RSelect.Item key={o.value} value={o.value} className="relative flex flex-col items-start pl-6 pr-2 py-1 rounded text-xs cursor-pointer select-none outline-none data-[highlighted]:bg-hover">
                 <RSelect.ItemIndicator className="absolute left-1.5 top-1.5"><Check size={12} /></RSelect.ItemIndicator>
                 <RSelect.ItemText>{o.label}</RSelect.ItemText>
                 {o.description && <span className="text-[10px] text-muted">{o.description}</span>}
@@ -321,7 +321,7 @@ export function Menu({ trigger, items, align = 'end' }: { trigger: ReactNode; it
       <DropdownMenu.Portal>
         <DropdownMenu.Content align={align} sideOffset={4} className="z-[1200] min-w-[180px] rounded-md border border-border bg-panel p-1 shadow-[var(--shadow)] text-xs">
           {items.map((it, i) => it === 'sep' ? <DropdownMenu.Separator key={i} className="my-1 h-px bg-border" /> : (
-            <DropdownMenu.Item key={it.id} disabled={it.disabled} onSelect={it.onSelect} className={cn('flex items-center gap-2 px-2 py-1 rounded outline-none cursor-default select-none data-[highlighted]:bg-hover data-[disabled]:opacity-40', it.danger && 'text-danger')}>
+            <DropdownMenu.Item key={it.id} disabled={it.disabled} onSelect={it.onSelect} className={cn('flex items-center gap-2 px-2 py-1 rounded outline-none cursor-pointer select-none data-[highlighted]:bg-hover data-[disabled]:opacity-40', it.danger && 'text-danger')}>
               {it.icon}<span>{it.label}</span>
             </DropdownMenu.Item>
           ))}

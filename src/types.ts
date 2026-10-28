@@ -183,8 +183,17 @@ export interface Settings {
   userRules: string; lsp: { enabled: boolean; servers: LspServerConfig[] }
   mcp: { enabled: boolean }; customModes: CustomMode[]; beta: BetaSettings
   keybindings: Record<string, string | null>
-  verify: VerifySettings; sandbox: SandboxSettings; acp: AcpSettings; terminal: TerminalSettings
+  verify: VerifySettings; sandbox: SandboxSettings; acp: AcpSettings; terminal: TerminalSettings; router: RouterSettings
 }
+export interface RouterSettings { enabled: boolean; source: 'npm' | 'bundled'; overrides: Record<string, string>; excludedModels: string[]; stickySessions: boolean; routeSingleShot: boolean; tpmLimit?: number; embeddingsProviderId?: string }
+export type RouterTier = 'simple' | 'medium' | 'complex' | 'reasoning'
+export const ROUTER_TIERS: RouterTier[] = ['simple', 'medium', 'complex', 'reasoning']
+export interface TierSlot { modelId: string; source: 'auto' | 'override'; reason?: string }
+export interface RouterAssignment { slots: Partial<Record<RouterTier, TierSlot>>; candidates: number; warnings: string[]; hash: string }
+export type RouterState = 'disabled' | 'not-installed' | 'installing' | 'starting' | 'healthy' | 'degraded' | 'error'
+export interface RouterStatus { state: RouterState; reason?: string; port?: number; bridgePort?: number; version?: string; installed: boolean; nativeOk: boolean; assignment: RouterAssignment; warnings: string[]; pid?: number }
+/** Which model served an Auto-routed assistant message. */
+export interface RoutingInfo { via: string; requestedTier?: string; servedTier?: string; servedModelId: string; score?: number; method?: string; fallback: boolean }
 export type SettingsPatch = DeepPartial<Settings>
 export interface SettingsScopes { user: Settings; workspace: DeepPartial<Settings> | null; effective: Settings; userPath: string; workspacePath: string | null }
 
@@ -246,6 +255,7 @@ export interface Usage {
 export interface ChatMessage {
   id: string; role: MessageRole; parts: MessagePart[]; createdAt: number; modelId?: string; mode?: ModeId
   usage?: Usage; status?: 'streaming' | 'done' | 'error' | 'cancelled'; checkpointId?: string; turnId?: string; durationMs?: number
+  routing?: RoutingInfo
 }
 export interface TodoItem { id: string; content: string; status: 'pending' | 'in_progress' | 'completed' | 'cancelled' }
 export interface QueuedMessage { id: string; text: string; context: ContextItem[]; images: ImageAttachment[]; mode?: ModeId }
@@ -287,6 +297,7 @@ export type AgentEvent =
   | { type: 'session-reset'; sessionId: string }
   | { type: 'verification'; sessionId: string; report: VerificationReport }
   | { type: 'agent-status'; sessionId: string; agentId: string; status: AcpAgentStatus }
+  | { type: 'routed'; sessionId: string; messageId: string; routing: RoutingInfo }
   | { type: 'review-comments'; sessionId: string; comments: ReviewComment[] }
   | { type: 'error'; sessionId: string; message: string }
 export interface PendingChange {

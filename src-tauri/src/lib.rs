@@ -48,6 +48,7 @@ pub fn run() {
         .plugin(tauri_plugin_window_state::Builder::default().build())
         .plugin(tauri_plugin_process::init())
         .plugin(tauri_plugin_os::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(core::settings::SettingsState::load())
         .manage(core::workspace::WorkspaceState::default())
         .manage(commands::app::AppStats::default())
@@ -62,6 +63,7 @@ pub fn run() {
         .manage(core::watcher::WatcherState::default())
         .manage(std::sync::Arc::new(ai::agent::manager::AgentManager::new()))
         // REGISTER:state (each domain adds `.manage(...)` lines here)
+        .manage(ai::router::RouterState::default())
         .manage(core::cli::OpenQueue::default())
         .manage(ai::tab::TabState::default())
         .manage(ai::review::ReviewState::default())
@@ -77,6 +79,7 @@ pub fn run() {
             core::cli::init(&handle);
             app.state::<std::sync::Arc<ai::agent::manager::AgentManager>>().attach(handle.clone());
             // REGISTER:setup (domain initialisation, e.g. watchers, lsp manager, index manager)
+            ai::router::init(&handle);
             { let idx = index::IndexManager::new(handle.clone()); idx.install(); app.manage(idx); app.manage(index::DocsManager::new(handle.clone())); }
             { let m = mcp::McpManager::new(handle.clone()); app.manage(m.clone()); m.install(); }
             { let b = browser::BrowserManager::new(handle.clone()); b.install(); app.manage(b); }
@@ -98,6 +101,8 @@ pub fn run() {
             ai::agent::review_commands::chat_review_comments, ai::agent::review_commands::chat_add_review_comment, ai::agent::review_commands::chat_resolve_review_comment, ai::agent::review_commands::chat_delete_review_comment, ai::agent::review_commands::chat_send_review_comments, ai::agent::review_commands::chat_review_groups,
             // REGISTER:commands:sandbox
             sandbox::sandbox_status, sandbox::sandbox_classify, sandbox::mcp_tool_changes, sandbox::mcp_acknowledge_tool,
+            // REGISTER:commands:router
+            ai::router::router_status, ai::router::router_install, ai::router::router_restart, ai::router::router_stop, ai::router::router_logs, ai::router::router_preview_assignment, ai::router::router_set_override,
             // REGISTER:commands:acp
             acp::acp_list_agents, acp::acp_list_configs, acp::acp_add_agent, acp::acp_remove_agent, acp::acp_toggle_agent, acp::acp_probe, acp::acp_authenticate, acp::acp_set_mode, acp::acp_registry, acp::acp_install, acp::acp_logs, acp::acp_session_info, acp::acp_set_config_option, acp::acp_prepare_session,
             core::fs::fs_read_dir, core::fs::fs_read_file, core::fs::fs_write_file, core::fs::fs_stat, core::fs::fs_exists, core::fs::fs_create, core::fs::fs_rename, core::fs::fs_delete, core::fs::fs_copy, core::fs::fs_move, core::fs::fs_quick_open, core::fs::fs_read_image, core::fs::fs_list_files,
@@ -133,6 +138,7 @@ pub fn run() {
         .build(tauri::generate_context!())
         .expect("error while building Caret")
         .run(|app, event| {
+            if matches!(event, tauri::RunEvent::ExitRequested { .. } | tauri::RunEvent::Exit) { ai::router::shutdown(app); }
             // `caret <path>` / Finder "Open with" / `caret://open?…` arrive here on macOS (also on cold start).
             #[cfg(any(target_os = "macos", target_os = "ios"))]
             if let tauri::RunEvent::Opened { urls } = &event { core::cli::on_opened(app, urls); }

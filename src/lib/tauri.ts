@@ -59,6 +59,7 @@ export const Events = {
   fsChanged: 'caret://fs/changed',
   gitChanged: 'caret://git/changed',
   settingsChanged: 'caret://settings/changed',
+  routerStatus: 'caret://router/status',
   indexStatus: 'caret://index/status',
   mcpChanged: 'caret://mcp/changed',
   notify: 'caret://notify',

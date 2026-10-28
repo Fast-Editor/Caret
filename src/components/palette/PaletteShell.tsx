@@ -27,7 +27,7 @@ export function PaletteShell({ value, onValueChange, placeholder, onClose, child
 
 export function PaletteItem({ value, onSelect, children, className, keywords }: { value: string; onSelect: () => void; children: ReactNode; className?: string; keywords?: string[] }) {
   return (
-    <Command.Item value={value} keywords={keywords} onSelect={onSelect} className={cn('flex items-center gap-2 rounded-md px-2 h-[30px] text-xs cursor-default data-[selected=true]:bg-selected', className)}>
+    <Command.Item value={value} keywords={keywords} onSelect={onSelect} className={cn('flex items-center gap-2 rounded-md px-2 h-[30px] text-xs cursor-pointer data-[selected=true]:bg-selected', className)}>
       {children}
     </Command.Item>
   )

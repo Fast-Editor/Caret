@@ -57,7 +57,7 @@ export const AssistantMessage = memo(function AssistantMessage({ message, sessio
       {message.status === 'cancelled' && <div className="text-[11px] text-faint mt-1">Stopped</div>}
       {!streaming && (
         <div className="flex items-center gap-2 mt-1 h-4">
-          <UsageFooter usage={message.usage} durationMs={message.durationMs} modelId={message.modelId} />
+          <UsageFooter usage={message.usage} durationMs={message.durationMs} modelId={message.modelId} routing={message.routing} />
           <span className="flex-1" />
           <div className="flex items-center gap-2 opacity-0 group-hover/msg:opacity-100 transition-opacity">
             {isLast && <button type="button" onClick={() => void regenerate(sessionId, message.id)} title="Regenerate" className="text-faint hover:text-fg"><RotateCcw size={11} /></button>}

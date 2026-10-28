@@ -28,7 +28,7 @@ export function BrowserTab({ url: initialUrl, tabId }: { url?: string; tabId?: s
         <div className="w-56 shrink-0 border-r border-border overflow-auto p-1">
           <div className="px-2 py-1 text-faint uppercase tracking-wide text-[10px]">Browser windows</div>
           {tabs.map((t) => (
-            <div key={t.id} className={`group flex items-center gap-1 px-2 h-7 rounded cursor-default ${selected === t.id ? 'bg-selected' : 'hover:bg-hover'}`} onClick={() => setSelected(t.id)}>
+            <div key={t.id} className={`group flex items-center gap-1 px-2 h-7 rounded cursor-pointer ${selected === t.id ? 'bg-selected' : 'hover:bg-hover'}`} onClick={() => setSelected(t.id)}>
               <span className="truncate flex-1" title={t.url}>{t.title || t.url}</span>
               <button className="opacity-0 group-hover:opacity-100 p-0.5 rounded hover:bg-active" onClick={(e) => { e.stopPropagation(); void close(t.id) }}><X size={11} /></button>
             </div>

@@ -95,6 +95,7 @@ impl Tool for ListDir {
         if !abs.is_dir() { return Ok(ToolOutput::error(format!("{} is not a directory", p))); }
         let depth = arg_u64(&input, &["depth"]).unwrap_or(1).clamp(1, 3) as usize;
         let mut walker = ignore::WalkBuilder::new(&abs);
+        let depth = if crate::paths::is_broad_root(&abs) { 1 } else { depth }; // never descend into ~ / protected folders
         walker.max_depth(Some(depth)).hidden(false).git_ignore(true).git_global(true).git_exclude(true).add_custom_ignore_filename(".caretignore").add_custom_ignore_filename(".cursorignore").sort_by_file_name(|a, b| a.cmp(b));
         let mut entries: Vec<(String, bool, u64)> = vec![];
         let mut limited = false;

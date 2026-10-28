@@ -207,8 +207,8 @@ fn env_for<'a>(app: &'a AppHandle, mgr: &'a AgentManager, settings: &'a crate::c
 #[tauri::command]
 pub async fn chat_context_preview(app: AppHandle, mgr: Mgr<'_>, items: Vec<ContextItem>) -> Result<ContextPreview> {
     let settings = mgr.settings();
-    let cwd = mgr.workspace_root().unwrap_or_else(crate::paths::home_dir);
-    let files = mgr.file_list(&cwd).await;
+    let root = mgr.workspace_root();
+    let files = match &root { Some(r) => mgr.file_list(r).await, None => Arc::new(vec![]) }; // no folder open → nothing to enumerate
     let env = env_for(&app, &mgr, &settings, files);
     Ok(context::preview(&env, &items).await)
 }
@@ -216,8 +216,8 @@ pub async fn chat_context_preview(app: AppHandle, mgr: Mgr<'_>, items: Vec<Conte
 #[tauri::command]
 pub async fn chat_mention_candidates(app: AppHandle, mgr: Mgr<'_>, kind: String, query: String, limit: Option<usize>) -> Result<Vec<ContextItem>> {
     let settings = mgr.settings();
-    let cwd = mgr.workspace_root().unwrap_or_else(crate::paths::home_dir);
-    let files = mgr.file_list(&cwd).await;
+    let root = mgr.workspace_root();
+    let files = match &root { Some(r) => mgr.file_list(r).await, None => Arc::new(vec![]) };
     let env = env_for(&app, &mgr, &settings, files);
     Ok(context::mention_candidates(&env, &kind, &query, limit.unwrap_or(30)).await)
 }

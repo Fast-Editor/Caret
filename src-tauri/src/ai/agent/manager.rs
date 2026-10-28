@@ -114,7 +114,9 @@ impl AgentManager {
         let root = self.workspace_root();
         let mut s = Session::default();
         s.mode = mode.unwrap_or_else(|| settings.agent.default_mode.clone());
-        s.model_id = model_id.or_else(|| settings.agent.default_model_id.clone());
+        // "Auto" (None/"auto") stays unresolved on the session so every turn can route through the Auto router or the
+        // current default; an explicit pick is pinned. (Previously the default id was baked in at creation time.)
+        s.model_id = model_id.filter(|m| !m.is_empty() && m != "auto");
         if let Some(t) = title { s.title = t; s.title_generated = true; }
         s.workspace_root = root.as_ref().map(|r| r.to_string_lossy().to_string()).unwrap_or_default();
         s.cwd = s.workspace_root.clone();
@@ -336,6 +338,8 @@ impl AgentManager {
 
     // ───────── file list cache ─────────
     pub async fn file_list(&self, cwd: &Path) -> Arc<Vec<String>> {
+        // No workspace → cwd is the home dir: never walk it (privacy prompts + seconds of IO); offer no files instead.
+        if crate::paths::is_broad_root(cwd) { return Arc::new(vec![]); }
         if let Some((p, t, v)) = self.file_cache.lock().as_ref() { if p == cwd && t.elapsed() < std::time::Duration::from_secs(15) { return v.clone(); } }
         let root = cwd.to_path_buf();
         let list = tokio::task::spawn_blocking(move || search_tools::list_files(&root, 30_000)).await.unwrap_or_default();

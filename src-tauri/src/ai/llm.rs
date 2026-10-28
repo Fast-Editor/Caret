@@ -142,6 +142,23 @@ pub enum LlmEvent {
     Usage(UsageDelta),
     Stop { reason: StopReason, detail: Option<String> },
     Error { message: String, retryable: bool },
+    /// Routing decision reported by the Auto router (Lynkr `X-Lynkr-*` response headers).
+    Routed { model: Option<String>, tier: Option<String>, score: Option<f64>, method: Option<String> },
+}
+
+/// Which model actually served a request made through Auto routing.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct RoutingInfo {
+    /// Always "auto" today.
+    pub via: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")] pub requested_tier: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")] pub served_tier: Option<String>,
+    pub served_model_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")] pub score: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")] pub method: Option<String>,
+    /// The router climbed/fell back: the served model differs from the one its headers announced.
+    #[serde(default)] pub fallback: bool,
 }
 
 /// Fully-assembled assistant turn (built from events by `collect_stream`).
@@ -152,6 +169,8 @@ pub struct AssistantTurn {
     pub stop_detail: Option<String>,
     pub usage: UsageDelta,
     pub model: String,
+    /// Set when the request went through Auto routing (see `LlmEvent::Routed`).
+    #[serde(default)] pub routing: Option<RoutingInfo>,
 }
 impl AssistantTurn {
     pub fn text(&self) -> String { self.content.iter().filter_map(|b| if let ContentBlock::Text { text } = b { Some(text.as_str()) } else { None }).collect() }
@@ -233,6 +252,9 @@ pub async fn run_stream(
             LlmEvent::Usage(u) => turn.usage.add(u),
             LlmEvent::Stop { reason, detail } => { turn.stop = Some(*reason); turn.stop_detail = detail.clone(); }
             LlmEvent::Error { message, .. } => { let _ = handle.abort(); return Err(CaretError::provider(message.clone())); }
+            LlmEvent::Routed { model, tier, score, method } => {
+                turn.routing = Some(RoutingInfo { via: "auto".into(), requested_tier: tier.clone(), served_tier: None, served_model_id: model.clone().unwrap_or_default(), score: *score, method: method.clone(), fallback: false });
+            }
         }
     }
     // Flush any tool blocks whose BlockStop was not sent.

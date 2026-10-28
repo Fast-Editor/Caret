@@ -99,3 +99,12 @@ describe('applyAgentEvent', () => {
     expect(st.loaded.s1.messages[0].status).toBe('error')
   })
 })
+
+describe('routed events', () => {
+  it('attaches the routing decision to the streaming message', () => {
+    let st = applyAgentEvent(withSession(), start)
+    st = applyAgentEvent(st, { type: 'routed', sessionId: 's1', messageId: 'm1', routing: { via: 'auto', servedModelId: 'claude-haiku-4-5', servedTier: 'SIMPLE', requestedTier: 'SIMPLE', score: 12, fallback: false } })
+    expect(st.loaded.s1.messages[0].routing).toMatchObject({ servedModelId: 'claude-haiku-4-5', servedTier: 'SIMPLE' })
+    expect(st.versions.m1).toBeGreaterThanOrEqual(2)
+  })
+})

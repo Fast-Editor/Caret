@@ -23,6 +23,7 @@ tauri-plugin-clipboard-manager = "2.5"
 tauri-plugin-window-state = "2.5"
 tauri-plugin-process = "2.4"
 tauri-plugin-os = "2.4"
+tauri-plugin-updater = "2"
 # --- runtime / utils ---
 tokio = { version = "1", features = ["full"] }
 tokio-util = { version = "0.7", features = ["io", "codec", "rt"] }
@@ -71,6 +72,10 @@ portable-pty = "0.9"
 # --- AI / network ---
 reqwest = { version = "0.13", default-features = false, features = ["json", "stream", "rustls", "gzip", "brotli", "charset", "http2", "system-proxy"] }
 eventsource-stream = "0.2"
+# --- auto router (Lynkr sidecar + loopback bridge) ---
+hyper = { version = "1", features = ["server", "http1"] }
+hyper-util = { version = "0.1", features = ["tokio"] }
+http-body-util = "0.1"
 html2text = "0.17"
 # --- indexing ---
 tantivy = "0.27"

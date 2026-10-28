@@ -124,7 +124,7 @@ fn windowed_file(full: &str, start: u32, end: u32, max_lines: usize) -> (String,
 pub async fn inline_edit(app: &AppHandle, req: InlineEditRequest, ch: Channel<InlineEditEvent>) -> Result<()> {
     let settings_state = app.state::<SettingsState>();
     let settings = settings_state.effective();
-    let resolved = pick_model(&settings, &settings_state, req.model_id.as_deref(), false)?;
+    let resolved = crate::ai::util::pick_model_auto(Some(app), &settings, &settings_state, req.model_id.as_deref(), false, Some(&format!("inline-{}", req.request_id)))?;
     let root = workspace_root(app);
     let is_question = req.mode == "question";
     let (window, first_line) = windowed_file(&req.full_text, req.start_line, req.end_line, 1500);

@@ -6,7 +6,7 @@ use serde_json::Value;
 use std::path::{Path, PathBuf};
 use tauri::{AppHandle, Manager};
 
-fn usable(p: &ProviderConfig, secrets: &SettingsState) -> bool {
+pub fn usable(p: &ProviderConfig, secrets: &SettingsState) -> bool {
     p.enabled && p.api_key_ref.as_deref().map(|r| secrets.secret(r).is_some()).unwrap_or(true)
 }
 
@@ -19,6 +19,16 @@ pub fn pick_model(settings: &Settings, secrets: &SettingsState, explicit: Option
         for m in fast { if let Ok(r) = resolve_model(settings, secrets, Some(&m.id)) { if usable(&r.provider, secrets) { return Ok(r); } } }
     }
     resolve_model(settings, secrets, None)
+}
+
+/// Like `pick_model`, but an Auto preference goes through the Lynkr router when it is enabled, healthy and
+/// `router.routeSingleShot` is on. `prefer_fast` requests (Tab, commit, apply, terminal ⌘K) always stay direct.
+pub fn pick_model_auto(app: Option<&AppHandle>, settings: &Settings, secrets: &SettingsState, explicit: Option<&str>, prefer_fast: bool, session_id: Option<&str>) -> Result<ResolvedModel> {
+    let is_auto = explicit.map(|s| s.is_empty() || s == "auto").unwrap_or(true);
+    if is_auto && !prefer_fast && settings.router.route_single_shot {
+        if let Some(r) = crate::ai::router::resolve_auto(app, settings, session_id) { return Ok(r); }
+    }
+    pick_model(settings, secrets, explicit, prefer_fast)
 }
 
 pub fn workspace_root(app: &AppHandle) -> Option<PathBuf> { app.state::<crate::core::workspace::WorkspaceState>().root() }

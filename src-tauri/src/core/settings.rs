@@ -320,6 +320,27 @@ impl Default for TerminalSettings {
     fn default() -> Self { Self { blocks: true, shell_integration: true, ai_enabled: true, program_status: true, max_blocks: 200 } }
 }
 
+/// Auto routing through the managed Lynkr sidecar (see `ai::router`).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase", default)]
+pub struct RouterSettings {
+    pub enabled: bool,
+    /// "npm" (managed install into ~/.caret/lynkr) or "bundled" (shipped with the app).
+    pub source: String,
+    /// tier ("simple" | "medium" | "complex" | "reasoning") → model id chosen by the user.
+    pub overrides: BTreeMap<String, String>,
+    pub excluded_models: Vec<String>,
+    pub sticky_sessions: bool,
+    /// Route review / inline edit / apply through Auto too (Tab never is).
+    pub route_single_shot: bool,
+    #[serde(skip_serializing_if = "Option::is_none")] pub tpm_limit: Option<u32>,
+    /// Ollama provider id used for Lynkr's embeddings (intent scoring, kNN); empty → lexical scorer.
+    #[serde(skip_serializing_if = "Option::is_none")] pub embeddings_provider_id: Option<String>,
+}
+impl Default for RouterSettings {
+    fn default() -> Self { Self { enabled: false, source: "npm".into(), overrides: BTreeMap::new(), excluded_models: vec![], sticky_sessions: true, route_single_shot: true, tpm_limit: None, embeddings_provider_id: None } }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
 pub struct Settings {
@@ -341,10 +362,11 @@ pub struct Settings {
     pub sandbox: SandboxSettings,
     pub acp: AcpSettings,
     pub terminal: TerminalSettings,
+    pub router: RouterSettings,
 }
 impl Default for Settings {
     fn default() -> Self {
-        Self { providers: default_providers(), models: default_models(), tab: Default::default(), agent: Default::default(), indexing: Default::default(), ui: Default::default(), privacy: Default::default(), general: Default::default(), user_rules: String::new(), lsp: Default::default(), mcp: Default::default(), custom_modes: vec![], beta: Default::default(), keybindings: BTreeMap::new(), verify: Default::default(), sandbox: Default::default(), acp: Default::default(), terminal: Default::default() }
+        Self { providers: default_providers(), models: default_models(), tab: Default::default(), agent: Default::default(), indexing: Default::default(), ui: Default::default(), privacy: Default::default(), general: Default::default(), user_rules: String::new(), lsp: Default::default(), mcp: Default::default(), custom_modes: vec![], beta: Default::default(), keybindings: BTreeMap::new(), verify: Default::default(), sandbox: Default::default(), acp: Default::default(), terminal: Default::default(), router: Default::default() }
     }
 }
 

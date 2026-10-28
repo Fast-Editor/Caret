@@ -29,7 +29,7 @@ export function SymbolPicker() {
         <Command.List className="overflow-auto p-1">
           <Command.Empty className="px-3 py-2 text-muted text-xs">No symbols</Command.Empty>
           {symbols.map((s) => (
-            <Command.Item key={s.id} value={`${s.name} ${symbolKindName(s.kind + 1)}`} onSelect={() => go(s)} className="flex items-center gap-2 px-2 h-7 rounded text-xs data-[selected=true]:bg-selected cursor-default">
+            <Command.Item key={s.id} value={`${s.name} ${symbolKindName(s.kind + 1)}`} onSelect={() => go(s)} className="flex items-center gap-2 px-2 h-7 rounded text-xs data-[selected=true]:bg-selected cursor-pointer">
               <span style={{ paddingLeft: s.depth * 10 }} className="flex items-center gap-2"><SymbolIcon kind={s.kind} />{s.name}</span>
               <span className="text-faint">{s.detail}</span>
               <span className="flex-1" />

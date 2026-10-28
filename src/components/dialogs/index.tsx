@@ -97,7 +97,7 @@ function PickBody({ req, close }: { req: Extract<DialogRequest, { kind: 'pick' }
         <Command.Empty className="px-3 py-4 text-xs text-muted">{req.opts.allowFreeText ? 'Press Enter to use the typed value' : 'No matches'}</Command.Empty>
         {items.map((it) => (
           <Command.Item key={it.id} value={`${it.label} ${it.description ?? ''} ${it.keywords ?? ''}`} onSelect={() => close(() => req.resolve(it.id))}
-            className="flex items-center gap-2 rounded px-2 h-7 text-xs cursor-default data-[selected=true]:bg-selected">
+            className="flex items-center gap-2 rounded px-2 h-7 text-xs cursor-pointer data-[selected=true]:bg-selected">
             {it.icon && <span className="text-muted [&_svg]:size-3.5">{it.icon}</span>}
             <span className="truncate">{it.label}</span>
             {it.description && <span className="text-muted truncate">{it.description}</span>}

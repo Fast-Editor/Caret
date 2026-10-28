@@ -32,7 +32,7 @@ export function OpenEditors() {
         <div className="max-h-[200px] overflow-auto pb-1">
           {files.length === 0 && <div className="px-5 py-1 text-[11px] text-faint">No open editors</div>}
           {files.map((f) => (
-            <div key={(f as { tabId?: string }).tabId ?? f.path} className={cn('group flex items-center gap-1.5 h-[22px] pl-4 pr-1 text-xs hover:bg-hover cursor-default', f.active && 'bg-selected')} onClick={() => void runCommand('editor.openFile', { path: f.path, focus: true })} title={f.path}>
+            <div key={(f as { tabId?: string }).tabId ?? f.path} className={cn('group flex items-center gap-1.5 h-[22px] pl-4 pr-1 text-xs hover:bg-hover cursor-pointer', f.active && 'bg-selected')} onClick={() => void runCommand('editor.openFile', { path: f.path, focus: true })} title={f.path}>
               <button aria-label="Close" className="size-4 rounded flex items-center justify-center text-muted hover:bg-active opacity-0 group-hover:opacity-100 data-[dirty=true]:opacity-100 shrink-0" data-dirty={!!f.dirty}
                 onClick={(e) => { e.stopPropagation(); void runCommand('editor.closeTab', { path: f.path }) }}>
                 {f.dirty ? <Circle className="size-2.5 fill-current group-hover:hidden" /> : null}

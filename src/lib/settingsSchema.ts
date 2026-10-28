@@ -86,9 +86,14 @@ export const DEFAULTS: Settings = {
   sandbox: { mode: 'auto', allowNetwork: true, extraWritablePaths: [], allowReadHome: true, pinMcpToolDescriptions: true },
   acp: { enabled: true, defaultAgentId: 'caret', agents: [], passMcpServers: true, sessionDefaults: {} },
   terminal: { blocks: true, shellIntegration: true, aiEnabled: true, programStatus: true, maxBlocks: 200 },
+  router: { enabled: false, source: 'npm', overrides: {}, excludedModels: [], stickySessions: true, routeSingleShot: true, tpmLimit: undefined, embeddingsProviderId: undefined },
 }
 
 export const SETTINGS_FIELDS: SettingField[] = [
+  // ── Auto routing (rendered inside Settings → Models by AutoRoutingSection) ──
+  { id: 'router.stickySessions', page: 'models', type: 'boolean', title: 'Sticky sessions', description: 'Keep a chat on the model the router first picked unless the conversation drifts or a tool exchange needs more.', group: 'Auto routing', keywords: ['lynkr', 'pin', 'auto'] },
+  { id: 'router.routeSingleShot', page: 'models', type: 'boolean', title: 'Route review and inline edits too', description: 'Bugbot reviews and ⌘K edits made with Auto go through the router. Tab, commit messages and apply always use the fast model.', group: 'Auto routing', keywords: ['lynkr', 'auto'] },
+  { id: 'router.embeddingsProviderId', page: 'models', type: 'provider', title: 'Embeddings for routing', description: 'An Ollama provider the router may use for intent scoring and kNN hints. Empty = lexical scoring only.', optional: true, group: 'Auto routing', keywords: ['lynkr', 'auto'] },
   // ── General ──
   { id: 'acp.enabled', page: 'agents', type: 'boolean', title: 'Enable external agents', description: 'Run Claude Code, Codex, Gemini CLI, OpenCode and other ACP agents inside Caret chat.', group: 'Agent Client Protocol', keywords: ['acp', 'claude code', 'codex', 'gemini'] },
   { id: 'acp.passMcpServers', page: 'agents', type: 'boolean', title: 'Share MCP servers with agents', description: 'Pass your enabled MCP servers to external agents when a session starts.', group: 'Agent Client Protocol', dependsOn: 'acp.enabled' },

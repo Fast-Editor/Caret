@@ -127,7 +127,7 @@ export const ToolCallCard = memo(function ToolCallCard({ call, sessionId }: { ca
               {call.status !== 'awaiting-approval' && call.classification && (call.classification.overallRisk !== 'safe' || call.sandboxed !== undefined) && <RiskPanel c={call.classification} sandboxed={call.sandboxed} compact />}
             </>
           ) : input && Object.keys(input).length > 0 && group !== 'edit' ? (
-            <details className="mt-1 text-[11px]"><summary className="text-faint cursor-default">Input</summary><pre className="mono mt-1 p-1.5 rounded bg-editor border border-border overflow-x-auto selectable max-h-48">{JSON.stringify(input, null, 2)}</pre></details>
+            <details className="mt-1 text-[11px]"><summary className="text-faint cursor-pointer">Input</summary><pre className="mono mt-1 p-1.5 rounded bg-editor border border-border overflow-x-auto selectable max-h-48">{JSON.stringify(input, null, 2)}</pre></details>
           ) : call.inputText && call.status === 'running' && !input ? (
             <pre className="mono mt-1 p-1.5 rounded bg-editor border border-border overflow-x-auto text-[11px] max-h-32 text-faint">{call.inputText.slice(-1500)}</pre>
           ) : null}

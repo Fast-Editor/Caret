@@ -18,6 +18,7 @@ pub fn grep(root: &Path, pattern: &str, include: Option<&str>, case_sensitive: O
     let smart_ci = case_sensitive.unwrap_or_else(|| pattern.chars().any(|c| c.is_uppercase()));
     let matcher = RegexMatcherBuilder::new().case_insensitive(!smart_ci).line_terminator(Some(b'\n')).build(pattern).map_err(|e| CaretError::invalid(format!("Invalid regex: {e}")))?;
     let mut walker = ignore::WalkBuilder::new(root);
+    if crate::paths::is_broad_root(root) { walker.max_depth(Some(1)); }
     walker.hidden(true).git_ignore(true).git_global(true).git_exclude(true).add_custom_ignore_filename(".caretignore").add_custom_ignore_filename(".cursorignore").max_filesize(Some(2 * 1024 * 1024));
     if let Some(glob) = include { let mut ov = ignore::overrides::OverrideBuilder::new(root); for g in glob.split(',') { let g = g.trim(); if g.is_empty() { continue; } let g2 = if g.contains('/') { g.to_string() } else { format!("**/{g}") }; let _ = ov.add(&g2); } if let Ok(o) = ov.build() { walker.overrides(o); } }
     let mut hits = vec![]; let mut limited = false;
@@ -170,6 +171,7 @@ impl Tool for SearchDocs {
 }
 
 pub fn list_files(root: &Path, limit: usize) -> Vec<String> {
+    if crate::paths::is_broad_root(root) { return vec![]; }
     let mut walker = ignore::WalkBuilder::new(root);
     walker.hidden(true).git_ignore(true).git_global(true).git_exclude(true).add_custom_ignore_filename(".caretignore").add_custom_ignore_filename(".cursorignore");
     let mut v = vec![];
@@ -182,6 +184,7 @@ pub fn list_files(root: &Path, limit: usize) -> Vec<String> {
     v
 }
 pub fn list_dirs(root: &Path, limit: usize) -> Vec<String> {
+    if crate::paths::is_broad_root(root) { return vec![]; }
     let mut walker = ignore::WalkBuilder::new(root);
     walker.hidden(true).git_ignore(true).git_global(true).git_exclude(true).max_depth(Some(6));
     let mut v = vec![];

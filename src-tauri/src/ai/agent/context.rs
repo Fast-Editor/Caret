@@ -67,7 +67,7 @@ fn file_block(env: &ContextEnv, path: &str, range: Option<&Range1>) -> String {
 fn folder_block(env: &ContextEnv, path: &str) -> String {
     let abs = resolve(env, path);
     let mut walker = ignore::WalkBuilder::new(&abs);
-    walker.max_depth(Some(3)).hidden(true).git_ignore(true);
+    walker.max_depth(Some(if crate::paths::is_broad_root(&abs) { 1 } else { 3 })).hidden(true).git_ignore(true);
     let mut out = format!("<folder path=\"{}\">\n", display(env, &abs));
     let mut n = 0; let mut small: Vec<PathBuf> = vec![];
     for e in walker.build().flatten() {

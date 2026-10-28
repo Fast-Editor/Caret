@@ -1,7 +1,7 @@
 //! Bugbot-style code review: diff per scope → batched LLM review → streamed structured findings.
 use crate::ai::cancel;
 use crate::ai::llm::{self, LlmRequest, Message, SystemBlock};
-use crate::ai::util::{extract_json, pick_model, read_text_capped, run_git, workspace_root};
+use crate::ai::util::{extract_json, read_text_capped, run_git, workspace_root};
 use crate::core::settings::SettingsState;
 use crate::error::{CaretError, Result};
 use crate::events;
@@ -164,7 +164,7 @@ pub async fn start_review(app: AppHandle, req: ReviewRequest, ch: Channel<Review
     let review_id = uuid::Uuid::new_v4().to_string();
     let settings_state = app.state::<SettingsState>();
     let settings = settings_state.effective();
-    let resolved = pick_model(&settings, &settings_state, req.model_id.as_deref(), false)?;
+    let resolved = crate::ai::util::pick_model_auto(Some(&app), &settings, &settings_state, req.model_id.as_deref(), false, Some(&format!("review-{review_id}")))?;
     let id2 = review_id.clone();
     tauri::async_runtime::spawn(async move {
         let token = cancel::register(&id2);

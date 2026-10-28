@@ -1,9 +1,10 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { DropdownMenu, Popover } from 'radix-ui'
 import { Bot, Brain, Bug, Check, ChevronDown, Gauge, ListChecks, MessageCircle, Search, Sparkles, Star, WandSparkles, Zap } from 'lucide-react'
 import type { Effort, ModeId, ThinkingPref } from '@/types'
 import { AUTO_MODEL, useChat, useModelGroups, type ModeDescriptor } from '@/store/chat'
 import { runCommand } from '@/lib/commands'
+import { autoSummary, initRouterStore, useRouter } from '@/store/router'
 import { fmtTokens } from '../util'
 
 const MODE_ICON: Record<string, typeof Bot> = { bot: Bot, 'message-circle': MessageCircle, 'list-checks': ListChecks, bug: Bug, sparkles: Sparkles }
@@ -48,6 +49,9 @@ export function ModelPicker({ sessionId }: { sessionId: string }) {
   const toggleFav = useChat((s) => s.toggleFavoriteModel)
   const [q, setQ] = useState('')
   const [open, setOpen] = useState(false)
+  const routerStatus = useRouter((s) => s.status)
+  useEffect(() => { initRouterStore() }, [])
+  const auto = autoSummary(routerStatus)
   const all = useMemo(() => groups.flatMap((g) => g.models.map((m) => ({ ...m, providerName: g.providerName }))), [groups])
   const cur = all.find((m) => m.id === modelId)
   const filtered = useMemo(() => (q ? all.filter((m) => `${m.displayName} ${m.model} ${m.providerName}`.toLowerCase().includes(q.toLowerCase())) : all), [all, q])
@@ -65,7 +69,7 @@ export function ModelPicker({ sessionId }: { sessionId: string }) {
         <Popover.Content side="top" align="start" sideOffset={6} className={`${contentCls} w-[300px] p-0`}>
           <div className="flex items-center gap-1.5 px-2 h-8 border-b border-border"><Search size={12} className="text-faint" /><input autoFocus value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search models…" className="flex-1 bg-transparent outline-none text-[12px]" /></div>
           <div className="max-h-80 overflow-y-auto p-1">
-            <button type="button" onClick={() => pick(AUTO_MODEL)} className={`${itemCls} w-full hover:bg-selected`}><WandSparkles size={13} className="text-accent" /><div className="flex-1 text-left"><div>Auto</div><div className="text-[10.5px] text-faint">Caret picks the default model for the task</div></div>{modelId === AUTO_MODEL && <Check size={12} className="text-accent" />}</button>
+            <button type="button" onClick={() => pick(AUTO_MODEL)} className={`${itemCls} w-full hover:bg-selected`}><WandSparkles size={13} className="text-accent" /><div className="flex-1 text-left"><div>Auto{auto.routed && <span className="ml-1 text-[10px] text-success">● routed</span>}</div><div className="text-[10.5px] text-faint">{auto.text}</div></div>{modelId === AUTO_MODEL && <Check size={12} className="text-accent" />}</button>
             {favList.length > 0 && <div className="px-2 pt-1.5 pb-0.5 text-[10.5px] text-faint">Favorites</div>}
             {favList.map((m) => <ModelRow key={`fav-${m.id}`} m={m} selected={m.id === modelId} fav onPick={pick} onFav={toggleFav} />)}
             {byProvider.map((g) => (

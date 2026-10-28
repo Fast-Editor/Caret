@@ -13,7 +13,7 @@ export function SlashCommandPicker({ query, commands, onPick, onClose }: { query
         <Command.Input value={query} readOnly className="sr-only" aria-hidden />
         <Command.List className="max-h-64 overflow-y-auto p-1">
           {list.map((c) => (
-            <Command.Item key={`${c.source}:${c.name}`} value={c.name} onSelect={() => onPick(c)} className="flex items-center gap-2 px-2 h-7 rounded data-[selected=true]:bg-selected cursor-default">
+            <Command.Item key={`${c.source}:${c.name}`} value={c.name} onSelect={() => onPick(c)} className="flex items-center gap-2 px-2 h-7 rounded data-[selected=true]:bg-selected cursor-pointer">
               <Slash size={12} className="text-muted" /><span className="mono">/{c.name}</span>
               {c.argumentHint && <span className="text-faint">{c.argumentHint}</span>}
               {c.description && <span className="truncate-1 text-faint ml-1">{c.description}</span>}

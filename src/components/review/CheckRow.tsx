@@ -38,7 +38,7 @@ export function CheckRow({ check, reportId, defaultOpen }: { check: VerifyCheck;
         <div className="pb-1">
           {check.findings.length > 0 && <div className="mx-2 mb-1 rounded border border-border bg-editor/40">{check.findings.map((f) => <FindingRow key={f.id} f={f} reportId={reportId} />)}</div>}
           {check.command && <div className="mx-2 mb-1 flex items-center gap-1.5 text-[10.5px] text-faint mono truncate-1"><Terminal size={10} /> {check.command}</div>}
-          {check.output && <details className="mx-2 mb-1"><summary className="text-[10.5px] text-faint cursor-default select-none">Raw output</summary><pre className="mt-1 p-1.5 rounded bg-editor border border-border mono text-[10.5px] whitespace-pre-wrap max-h-48 overflow-auto selectable">{check.output.length > 20_000 ? check.output.slice(0, 20_000) + '\n… (truncated)' : check.output}</pre></details>}
+          {check.output && <details className="mx-2 mb-1"><summary className="text-[10.5px] text-faint cursor-pointer select-none">Raw output</summary><pre className="mt-1 p-1.5 rounded bg-editor border border-border mono text-[10.5px] whitespace-pre-wrap max-h-48 overflow-auto selectable">{check.output.length > 20_000 ? check.output.slice(0, 20_000) + '\n… (truncated)' : check.output}</pre></details>}
         </div>
       )}
     </div>

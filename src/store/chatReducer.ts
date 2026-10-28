@@ -158,6 +158,8 @@ export function applyAgentEvent(state: ChatCoreState, ev: AgentEvent): ChatCoreS
       const next = mapMessage(state, ev.sessionId, ev.messageId, (m) => ({ ...m, usage: ev.usage }))
       return mapSession(next, ev.sessionId, (s) => ({ ...s, usage: ev.sessionUsage, contextTokens: ev.contextTokens }))
     }
+    case 'routed':
+      return mapMessage(state, ev.sessionId, ev.messageId, (m) => ({ ...m, routing: ev.routing, modelId: ev.routing.servedModelId || m.modelId }))
     case 'message-end': {
       const streaming = { ...state.streaming }
       if (streaming[ev.sessionId] === ev.messageId) delete streaming[ev.sessionId]

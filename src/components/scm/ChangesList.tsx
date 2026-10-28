@@ -91,7 +91,7 @@ function ChangeRow({ c, section, selected, onSelect, selectedPaths }: { c: GitFi
   }
   return (
     <div role="button" tabIndex={0} onClick={(e) => { onSelect(e); if (!(e.metaKey || e.ctrlKey || e.shiftKey)) open() }} onKeyDown={(e) => { if (e.key === 'Enter') open() }}
-      className={cn('group flex items-center h-[22px] pl-4 pr-1 text-xs cursor-default', selected ? 'bg-selected' : 'hover:bg-hover/60')} title={`${c.path}${c.oldPath ? ` ← ${c.oldPath}` : ''}`}>
+      className={cn('group flex items-center h-[22px] pl-4 pr-1 text-xs cursor-pointer', selected ? 'bg-selected' : 'hover:bg-hover/60')} title={`${c.path}${c.oldPath ? ` ← ${c.oldPath}` : ''}`}>
       <span className={cn('truncate-1 flex-1 min-w-0', c.status === 'deleted' && 'line-through text-muted')}>{base}<span className="text-faint ml-1.5 text-[11px]">{dir}</span></span>
       <div className="hidden group-hover:flex items-center gap-0.5 mr-1" onClick={(e) => e.stopPropagation()}>
         <IconButton title="Open file" onClick={() => void runCommand('editor.openFile', { path: root ? `${root}/${c.path}` : c.path })}><ExternalLink size={11} /></IconButton>

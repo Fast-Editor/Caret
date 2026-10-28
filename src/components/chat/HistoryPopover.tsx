@@ -6,7 +6,7 @@ import { useChat } from '@/store/chat'
 import { dayGroup, fmtRelative } from './util'
 import { runCommand } from '@/lib/commands'
 
-const itemCls = 'flex items-center gap-2 px-2 h-7 rounded text-[12px] outline-none data-[highlighted]:bg-selected cursor-default'
+const itemCls = 'flex items-center gap-2 px-2 h-7 rounded text-[12px] outline-none data-[highlighted]:bg-selected cursor-pointer'
 
 export function SessionMenu({ s, onRename }: { s: ChatSessionSummary; onRename: () => void }) {
   const { pinSession, archiveSession, deleteSession, duplicateSession, exportSession } = useChat.getState()
@@ -38,7 +38,7 @@ export function SessionRow({ s, active, onSelect, compact }: { s: ChatSessionSum
   const rename = useChat((st) => st.renameSession)
   const busy = s.status === 'running' || s.status === 'summarizing'
   return (
-    <div onClick={onSelect} className={`group/row flex items-start gap-2 px-2 py-1.5 rounded cursor-default ${active ? 'bg-selected' : 'hover:bg-hover'}`}>
+    <div onClick={onSelect} className={`group/row flex items-start gap-2 px-2 py-1.5 rounded cursor-pointer ${active ? 'bg-selected' : 'hover:bg-hover'}`}>
       <span className={`mt-1.5 w-1.5 h-1.5 rounded-full shrink-0 ${busy ? 'bg-accent pulse' : s.status === 'awaiting-approval' || s.status === 'awaiting-input' ? 'bg-warning' : s.status === 'error' ? 'bg-danger' : 'bg-border-strong'}`} title={s.status} />
       <div className="flex-1 min-w-0">
         {renaming ? (

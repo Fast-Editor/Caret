@@ -1,8 +1,9 @@
 import { memo, useState } from 'react'
 import { Brain, ChevronRight, CircleX, FileText, Hammer, ListChecks, RotateCcw, Undo2 } from 'lucide-react'
-import type { AgentQuestion, ImageAttachment, MessagePart, Usage } from '@/types'
+import type { AgentQuestion, ImageAttachment, MessagePart, RoutingInfo, Usage } from '@/types'
 import { Markdown } from '@/lib/markdown'
-import { useChat } from '@/store/chat'
+import { resolveModel, useChat } from '@/store/chat'
+import { modelLabel, routingLabel, routingTooltip } from '@/lib/routingLabel'
 import { api } from '@/lib/api'
 import { runCommand, hasCommand } from '@/lib/commands'
 import { fmtCost, fmtDuration, fmtTokens } from '../util'
@@ -94,8 +95,8 @@ export const CheckpointLink = memo(function CheckpointLink({ sessionId, checkpoi
   return <button type="button" onClick={() => void onClick()} disabled={busy} title="Restore workspace files to the state before this message" className={`flex items-center gap-1 text-[11px] text-faint hover:text-fg ${className ?? ''}`}><Undo2 size={11} /> Restore checkpoint</button>
 })
 
-export const UsageFooter = memo(function UsageFooter({ usage, durationMs, modelId }: { usage?: Usage; durationMs?: number; modelId?: string }) {
-  if (!usage && !durationMs) return null
+export const UsageFooter = memo(function UsageFooter({ usage, durationMs, modelId, routing }: { usage?: Usage; durationMs?: number; modelId?: string; routing?: RoutingInfo }) {
+  if (!usage && !durationMs && !routing) return null
   const bits: string[] = []
   if (usage) {
     bits.push(`${fmtTokens(usage.inputTokens)} in · ${fmtTokens(usage.outputTokens)} out`)
@@ -103,8 +104,15 @@ export const UsageFooter = memo(function UsageFooter({ usage, durationMs, modelI
     if (usage.costUsd !== undefined) bits.push(fmtCost(usage.costUsd))
   }
   if (durationMs) bits.push(fmtDuration(durationMs))
-  if (modelId) bits.push(modelId)
-  return <div className="mt-1 text-[10.5px] text-faint" title="Usage for this response">{bits.join(' · ')}</div>
+  const named = modelId && modelId !== 'auto' ? resolveModel(modelId)?.displayName : undefined
+  if (!routing && modelId) bits.push(modelLabel(modelId, named) ?? modelId)
+  const servedName = routing ? resolveModel(routing.servedModelId)?.displayName : undefined
+  return (
+    <div className="mt-1 flex items-center gap-1.5 text-[10.5px] text-faint" title="Usage for this response">
+      {routing && <span title={routingTooltip(routing)} className={`inline-flex items-center h-[15px] px-1.5 rounded-full border border-border ${routing.fallback ? 'text-muted' : 'text-fg'}`} data-testid="routing-pill">{routingLabel(routing, servedName)}</span>}
+      {bits.length > 0 && <span>{bits.join(' · ')}</span>}
+    </div>
+  )
 })
 
 export const ImageThumb = memo(function ImageThumb({ image, onRemove, size = 72 }: { image: ImageAttachment; onRemove?: () => void; size?: number }) {

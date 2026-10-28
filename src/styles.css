@@ -77,8 +77,13 @@ body { background: var(--bg-app); color: var(--fg); font-family: var(--font-ui);
 ::-webkit-scrollbar-thumb { background: transparent; border-radius: 10px; border: 2px solid transparent; background-clip: padding-box; }
 *:hover > ::-webkit-scrollbar-thumb, ::-webkit-scrollbar-thumb:hover { background-color: var(--scrollbar); }
 ::-webkit-scrollbar-corner { background: transparent; }
-button, input, textarea, select { font: inherit; color: inherit; }
-button { cursor: default; }
+/* Element resets live in the base layer so Tailwind utilities (e.g. `text-accent-fg` on a primary button) win over them. */
+@layer base {
+  button, input, textarea, select { font: inherit; color: inherit; }
+  /* Hand cursor on everything clickable: buttons, links and link-like roles. Disabled controls keep the arrow. */
+  button, [role=button], a[href], [role=link], summary, label[for] { cursor: pointer; }
+  button:disabled, [aria-disabled=true] { cursor: default; }
+}
 input, textarea { user-select: text; }
 :focus-visible { outline: 1px solid var(--accent); outline-offset: -1px; }
 /* Pickers, menus and tabs: hand cursor on anything that opens or selects (Radix triggers carry aria-haspopup). */

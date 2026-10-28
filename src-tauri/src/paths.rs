@@ -53,3 +53,27 @@ pub fn workspace_hash(root: &Path) -> String {
 }
 
 pub fn is_hidden(name: &str) -> bool { name.starts_with('.') }
+
+/// Roots that must never be enumerated recursively: the user's home directory, `/`, and `/Users`. Walking them
+/// (even just to count files) descends into macOS-protected folders — Photos library, Music, Desktop, Documents —
+/// and makes the OS pop privacy prompts attributed to Caret. Callers return an empty listing instead.
+pub fn is_broad_root(p: &Path) -> bool {
+    let home = home_dir();
+    let canon = |x: &Path| std::fs::canonicalize(x).unwrap_or_else(|_| x.to_path_buf());
+    let p = canon(p);
+    p == canon(&home) || p == Path::new("/") || p == Path::new("/Users") || p.parent().is_none()
+}
+
+#[cfg(test)]
+mod broad_root_tests {
+    use super::*;
+    #[test]
+    fn home_root_and_users_are_broad_but_projects_are_not() {
+        assert!(is_broad_root(&home_dir()));
+        assert!(is_broad_root(Path::new("/")));
+        assert!(is_broad_root(Path::new("/Users")));
+        let t = std::env::temp_dir(); std::fs::create_dir_all(&t).unwrap();
+        assert!(!is_broad_root(&t));
+        assert!(!is_broad_root(&home_dir().join("some-project-dir-that-may-not-exist")));
+    }
+}

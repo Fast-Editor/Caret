@@ -5,6 +5,7 @@ import { api } from '@/lib/api'
 import type { ModelConfig, ProviderConfig, ProviderKind } from '@/types'
 import { fieldsForPage } from '@/lib/settingsSchema'
 import { FieldControl } from '../FieldControl'
+import { AutoRoutingSection } from './AutoRouting'
 import { Section, Row, Button, IconButton, Toggle, TextInput, NumberInput, Select, Badge, Dialog, Field, KeyValueEditor, confirmDialog, notify, errorMessage, Tooltip, cn } from '../primitives'
 
 const KINDS: { value: ProviderKind; label: string; description: string; defaultBase?: string; auth: 'x-api-key' | 'bearer' | 'api-key' }[] = [
@@ -90,6 +91,8 @@ export function ModelsPage() {
       <Section title="Defaults" description="Which model each feature uses.">
         {defaultsFields.map((f) => <FieldControl key={f.id} field={f} />)}
       </Section>
+
+      <AutoRoutingSection />
 
       <ProviderDialog state={providerDialog} onClose={() => setProviderDialog({ open: false })} onSave={async (p) => { const exists = providers.some((x) => x.id === p.id); await saveProviders(exists ? providers.map((x) => x.id === p.id ? p : x) : [...providers, p]); setProviderDialog({ open: false }) }} />
       <ModelDialog state={modelDialog} providers={providers} onClose={() => setModelDialog({ open: false })} onSave={async (m) => { const exists = models.some((x) => x.id === m.id); await saveModels(exists ? models.map((x) => x.id === m.id ? m : x) : [...models, m]); setModelDialog({ open: false }) }} />
@@ -215,7 +218,7 @@ function FetchModelsDialog({ state, existing, onClose, onAdd }: { state: { open:
           <TextInput value={filter} onChange={setFilter} placeholder="Filter…" className="mb-2" autoFocus />
           <div className="max-h-[44vh] overflow-auto rounded border border-border divide-y divide-border">
             {list.map((id) => { const dup = have.has(id); return (
-              <label key={id} className={cn('flex items-center gap-2 px-2 h-7 text-xs cursor-default', dup ? 'opacity-50' : 'hover:bg-hover')}>
+              <label key={id} className={cn('flex items-center gap-2 px-2 h-7 text-xs cursor-pointer', dup ? 'opacity-50' : 'hover:bg-hover')}>
                 <input type="checkbox" disabled={dup} checked={picked.has(id)} onChange={() => toggle(id)} className="accent-[var(--accent)]" />
                 <span className="mono truncate-1 flex-1">{id}</span>{dup && <Badge>added</Badge>}
               </label>) })}

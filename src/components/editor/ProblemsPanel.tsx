@@ -49,7 +49,7 @@ export function ProblemsPanel() {
                 <span className="ml-1 px-1 rounded bg-active text-muted">{g.items.length}</span>
               </button>
               {!isCollapsed && g.items.map((d, i) => (
-                <div key={i} className="group flex items-start gap-2 pl-7 pr-2 py-0.5 hover:bg-hover cursor-default" onClick={() => void runCommand('editor.openFile', { path: g.path, line: d.range.start.line + 1, column: d.range.start.character + 1, preview: true })}>
+                <div key={i} className="group flex items-start gap-2 pl-7 pr-2 py-0.5 hover:bg-hover cursor-pointer" onClick={() => void runCommand('editor.openFile', { path: g.path, line: d.range.start.line + 1, column: d.range.start.character + 1, preview: true })}>
                   <Sev s={d.severity} />
                   <span className="flex-1 min-w-0"><span className="selectable">{d.message}</span> <span className="text-faint">{d.source ? `${d.source}${d.code !== undefined ? `(${String(d.code)})` : ''}` : ''} [Ln {d.range.start.line + 1}, Col {d.range.start.character + 1}]</span></span>
                   <button className="opacity-0 group-hover:opacity-100 px-1.5 rounded bg-active hover:bg-hover flex items-center gap-1 shrink-0" title="Fix with AI" onClick={(e) => { e.stopPropagation(); void runCommand('ai.fixInChat', { path: g.path, line: d.range.start.line + 1, message: d.message }) }}><Sparkles size={11} />Fix</button>
