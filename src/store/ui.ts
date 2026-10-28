@@ -1,7 +1,7 @@
 import { create } from 'zustand'
 
-export type SidebarView = 'explorer' | 'search' | 'scm' | 'agents' | 'rules' | 'outline'
-export type PanelView = 'terminal' | 'problems' | 'output' | 'review' | 'ports'
+export type SidebarView = 'explorer' | 'search' | 'scm' | 'agents' | 'rules' | 'outline' | 'debug'
+export type PanelView = 'terminal' | 'problems' | 'output' | 'review' | 'ports' | 'debugConsole'
 export type LayoutMode = 'editor' | 'agents'
 export type PaletteMode = null | 'commands' | 'files' | 'symbols' | 'recent' | 'search'
 

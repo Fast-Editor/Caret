@@ -21,7 +21,8 @@ export function OpenEditors() {
     } catch { setFiles([]) }
   }, [])
   useEffect(() => { void refresh(); return subscribe('editor.tabs', () => void refresh()) }, [refresh])
-  if (!hasCommand('editor.getOpenFiles')) return null
+  // VS Code hides this section until something is open — no placeholder row, no zero badge.
+  if (!hasCommand('editor.getOpenFiles') || files.length === 0) return null
   return (
     <div className="shrink-0 border-b border-border">
       <button onClick={() => useExplorer.setState({ openEditorsCollapsed: !collapsed })} className="w-full flex items-center gap-1 h-[22px] px-1 text-[11px] font-semibold uppercase tracking-wide text-muted hover:text-fg">
@@ -30,7 +31,6 @@ export function OpenEditors() {
       </button>
       {!collapsed && (
         <div className="max-h-[200px] overflow-auto pb-1">
-          {files.length === 0 && <div className="px-5 py-1 text-[11px] text-faint">No open editors</div>}
           {files.map((f) => (
             <div key={(f as { tabId?: string }).tabId ?? f.path} className={cn('group flex items-center gap-1.5 h-[22px] pl-4 pr-1 text-xs hover:bg-hover cursor-pointer', f.active && 'bg-selected')} onClick={() => void runCommand('editor.openFile', { path: f.path, focus: true })} title={f.path}>
               <button aria-label="Close" className="size-4 rounded flex items-center justify-center text-muted hover:bg-active opacity-0 group-hover:opacity-100 data-[dirty=true]:opacity-100 shrink-0" data-dirty={!!f.dirty}
@@ -38,9 +38,9 @@ export function OpenEditors() {
                 {f.dirty ? <Circle className="size-2.5 fill-current group-hover:hidden" /> : null}
                 <X className={cn('size-3.5', f.dirty && 'hidden group-hover:block')} />
               </button>
-              <span className="[&_svg]:size-4 shrink-0 flex">{fileIconFor(baseName(f.path), false)}</span>
-              <span className={cn('truncate', f.preview && 'italic')}>{f.title ?? baseName(f.path)}</span>
-              <span className="truncate text-faint text-[11px]">{relPath(f.path).split('/').slice(0, -1).join('/')}</span>
+              <span className="shrink-0 flex">{fileIconFor(baseName(f.path), false)}</span>
+              <span className={cn('shrink-0 max-w-[70%] truncate', f.preview && 'italic')}>{f.title ?? baseName(f.path)}</span>
+              <span className="min-w-0 truncate text-faint text-[11px]" dir="rtl">{relPath(f.path).split('/').slice(0, -1).join('/')}</span>
             </div>
           ))}
         </div>

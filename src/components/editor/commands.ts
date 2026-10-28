@@ -80,6 +80,7 @@ export function initEditorModule(): void {
     // navigation
     { id: 'go.back', title: 'Go Back', category: 'Go', keybinding: 'ctrl+-', run: () => st().goBack() },
     { id: 'go.forward', title: 'Go Forward', category: 'Go', keybinding: 'ctrl+shift+-', run: () => st().goForward() },
+    { id: 'go.forward', title: 'Go Forward', category: 'Go', keybinding: 'ctrl+shift+-', run: () => st().goForward() },
     { id: 'go.symbol', title: 'Go to Symbol in Editor…', hidden: true, run: () => openSymbolPicker() },
     { id: 'go.line', title: 'Go to Line…', hidden: true, run: act('editor.action.gotoLine') },
     { id: 'go.definition', title: 'Go to Definition', hidden: true, run: act('editor.action.revealDefinition') },

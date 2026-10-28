@@ -479,7 +479,33 @@ export interface ReviewComment {
   id: string; path: string; line: number; endLine?: number; side: 'before' | 'after'; text: string
   changeId?: string; createdAt: number; resolved?: boolean; author: 'user' | 'bot'; findingId?: string
 }
+/** A local TCP server (Ports panel). */
+export interface ListeningPort { port: number; address: string; pid: number; process: string; command: string; ownedByCaret: boolean; protocol: string }
 export interface ReviewGroup {
   id: string; title: string; kind: 'intent' | 'tool-call' | 'file-kind' | 'other'; turnId?: string; toolCallId?: string
   changeIds: string[]; collapsedByDefault: boolean; order: number
 }
+
+// ───────────────────────────── Run and Debug (DAP) ─────────────────────────────
+export interface DebugAdapterStatus { id: string; name: string; installed: boolean; version?: string; path?: string; installHint: string; types: string[]; languages: string[]; runtime: string; runtimeFound: boolean }
+export interface LaunchConfig { name: string; type: string; request: string; source: 'launch.json' | 'caret' | 'auto' | string; config: Record<string, unknown> }
+export interface DebugSessionInfo { id: string; name: string; adapter: string; kind: string; request: string; state: DebugSessionState; capabilities: Record<string, unknown> }
+export type DebugSessionState = 'starting' | 'running' | 'stopped' | 'terminated'
+export interface DebugBreakpoint { id?: number; verified: boolean; line?: number; message?: string; path?: string }
+export interface DapThread { id: number; name: string }
+export interface DapStackFrame { id: number; name: string; path?: string; sourceName?: string; line: number; column: number; presentationHint?: string }
+export interface DapScope { name: string; variablesReference: number; expensive: boolean; presentationHint?: string }
+export interface DapVariable { name: string; value: string; type?: string; variablesReference: number; evaluateName?: string; indexedVariables?: number; namedVariables?: number }
+export interface DapEvaluateResult { result: string; type?: string; variablesReference: number }
+export type DebugEvent =
+  | { type: 'sessionStarted'; sessionId: string; name: string; adapter: string; kind: string }
+  | { type: 'initialized'; sessionId: string; capabilities: Record<string, unknown> }
+  | { type: 'stopped'; sessionId: string; threadId: number; reason: string; description?: string; text?: string; allThreadsStopped: boolean; hitBreakpointIds: number[] }
+  | { type: 'continued'; sessionId: string; threadId: number; allThreadsContinued: boolean }
+  | { type: 'output'; sessionId: string; category: string; output: string; source?: string; line?: number }
+  | { type: 'breakpoint'; sessionId: string; reason: string; breakpoint: DebugBreakpoint }
+  | { type: 'thread'; sessionId: string; reason: string; threadId: number }
+  | { type: 'terminated'; sessionId: string }
+  | { type: 'exited'; sessionId: string; exitCode: number }
+  | { type: 'error'; sessionId: string; message: string }
+  | { type: 'state'; sessionId: string; state: DebugSessionState }

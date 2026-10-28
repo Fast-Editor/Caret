@@ -7,6 +7,7 @@ import { useExplorer } from '@/store/explorer'
 import { useWorkspace } from '@/store/workspace'
 import { FileTree, explorerActions } from './FileTree'
 import { OpenEditors } from './OpenEditors'
+import { ExplorerBottomSections } from './BottomSections'
 export { fileIconFor } from './fileIcons'
 
 export function ExplorerView() {
@@ -41,7 +42,8 @@ export function ExplorerView() {
         <button onClick={() => ex.set({ treeCollapsed: !ex.treeCollapsed })} className="flex items-center gap-1 text-[11px] font-semibold uppercase tracking-wide text-muted hover:text-fg truncate flex-1 min-w-0">
           {ex.treeCollapsed ? <ChevronRight className="size-3.5 shrink-0" /> : <ChevronDown className="size-3.5 shrink-0" />}<span className="truncate" title={ws.root}>{ws.name}</span>
         </button>
-        <div className="flex items-center opacity-0 group-hover/head:opacity-100 focus-within:opacity-100 transition-opacity">
+        {/* Hover-only actions: `hidden` (not opacity-0) so they reserve no width and the workspace name can use it. */}
+        <div className="hidden group-hover/head:flex items-center shrink-0">
           <IconButton size="xs" icon={<FilePlus2 />} label="New File" onClick={() => explorerActions.current.newFile?.()} />
           <IconButton size="xs" icon={<FolderPlus />} label="New Folder" onClick={() => explorerActions.current.newFolder?.()} />
           <IconButton size="xs" icon={<RefreshCw />} label="Refresh" onClick={() => void ex.loadDir(ws.root, true)} />
@@ -58,6 +60,7 @@ export function ExplorerView() {
         </div>
       )}
       <div data-explorer className={cn('flex-1 min-h-0 flex flex-col', ex.treeCollapsed && 'hidden')}><FileTree /></div>
+      <ExplorerBottomSections />
     </div>
   )
 }

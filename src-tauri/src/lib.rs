@@ -16,6 +16,7 @@ pub mod acp;
 pub mod index;
 pub mod mcp;
 pub mod browser;
+pub mod debug;
 // REGISTER:modules (index, mcp, browser)
 
 #[global_allocator]
@@ -63,6 +64,7 @@ pub fn run() {
         .manage(core::watcher::WatcherState::default())
         .manage(std::sync::Arc::new(ai::agent::manager::AgentManager::new()))
         // REGISTER:state (each domain adds `.manage(...)` lines here)
+        .manage(std::sync::Arc::new(debug::DebugState::default()))
         .manage(ai::router::RouterState::default())
         .manage(core::cli::OpenQueue::default())
         .manage(ai::tab::TabState::default())
@@ -103,10 +105,14 @@ pub fn run() {
             sandbox::sandbox_status, sandbox::sandbox_classify, sandbox::mcp_tool_changes, sandbox::mcp_acknowledge_tool,
             // REGISTER:commands:router
             ai::router::router_status, ai::router::router_install, ai::router::router_restart, ai::router::router_stop, ai::router::router_logs, ai::router::router_preview_assignment, ai::router::router_set_override,
+            // REGISTER:commands:debug
+            debug::debug_adapters, debug::debug_install_adapter, debug::debug_list_configs, debug::debug_start, debug::debug_sessions, debug::debug_stop, debug::debug_continue, debug::debug_next, debug::debug_step_in, debug::debug_step_out, debug::debug_pause, debug::debug_restart, debug::debug_threads, debug::debug_stack_trace, debug::debug_scopes, debug::debug_variables, debug::debug_evaluate, debug::debug_set_breakpoints, debug::debug_breakpoints, debug::debug_logs,
             // REGISTER:commands:acp
             acp::acp_list_agents, acp::acp_list_configs, acp::acp_add_agent, acp::acp_remove_agent, acp::acp_toggle_agent, acp::acp_probe, acp::acp_authenticate, acp::acp_set_mode, acp::acp_registry, acp::acp_install, acp::acp_logs, acp::acp_session_info, acp::acp_set_config_option, acp::acp_prepare_session,
             core::fs::fs_read_dir, core::fs::fs_read_file, core::fs::fs_write_file, core::fs::fs_stat, core::fs::fs_exists, core::fs::fs_create, core::fs::fs_rename, core::fs::fs_delete, core::fs::fs_copy, core::fs::fs_move, core::fs::fs_quick_open, core::fs::fs_read_image, core::fs::fs_list_files,
             // REGISTER:commands:fs
+            // REGISTER:commands:ports
+            core::netports::ports_list, core::netports::ports_kill,
             // REGISTER:commands:cli
             core::cli::cli_take_pending_opens, core::cli::cli_status, core::cli::cli_install, core::cli::cli_uninstall,
             core::search::search_text, core::search::search_cancel, core::search::search_replace,

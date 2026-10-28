@@ -6,9 +6,11 @@ their own ids; nobody imports another module's components to trigger behaviour. 
 
 | Owner | Ids |
 |---|---|
-| shell (layout/explorer/search/scm/terminal/palette/settings) | `workspace.*`, `file.*`, `view.*`, `palette.*`, `search.*`, `terminal.*`, `git.*`, `settings.*`, `app.*`, `help.*` |
-| editor | `editor.*`, `ai.tab.*`, `ai.inlineEdit`, `ai.quickQuestion`, `ai.explain`, `ai.apply` (delegates to backend), `ai.terminalCmdK` (shared with terminal) |
+| shell (layout/explorer/search/scm/terminal/palette/settings) | `workspace.*`, `file.*`, `view.*` (incl. `view.ports`, `view.debugConsole`), `palette.*`, `search.*`, `terminal.*`, `git.*`, `settings.*`, `app.*`, `help.*` |
+| editor | `editor.*`, `go.back` / `go.forward` (navigation stack; title-bar chevrons), `ai.tab.*`, `ai.inlineEdit`, `ai.quickQuestion`, `ai.explain`, `ai.apply` (delegates to backend), `ai.terminalCmdK` (shared with terminal) |
+| debug | `debug.view` (⌘⇧D), `debug.startOrContinue` (F5), `debug.start`, `debug.stop` (⇧F5), `debug.restart` (⌘⇧F5), `debug.pause` (F6), `debug.stepOver` (F10), `debug.stepInto` (F11), `debug.stepOut` (⇧F11), `debug.toggleBreakpoint` (F9; args `{path,line}` optional), `debug.removeAllBreakpoints`, `debug.openConsole`, `debug.evaluate` / `debug.installAdapter` (hidden) |
 | chat | `chat.*`, `ai.fixInChat`, `ai.review`, `ai.commitMessage` (opens scm with generated message) |
+| ports (`src/components/ports/index.tsx`) | `ports.refresh` (hidden), `ports.open` (hidden, `{ port }`) — Ports panel: local listening servers, open in browser, kill |
 | cli (`src/lib/cliOpen.ts`) | `cli.install`, `cli.uninstall`, `cli.status` (hidden), `cli.open` (hidden, `{ path, line?, col? }`) — see docs/CLI.md |
 
 Default keybindings (mac; `mod` = ⌘): palette `mod+shift+p`, quick open `mod+p`, find in files `mod+shift+f`,

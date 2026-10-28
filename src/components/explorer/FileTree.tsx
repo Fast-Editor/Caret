@@ -22,14 +22,18 @@ const GIT_DECO: Record<string, GitDeco> = {
   renamed: { letter: 'R', cls: 'text-warning' }, copied: { letter: 'C', cls: 'text-success' }, conflicted: { letter: '!', cls: 'text-danger' }, typechange: { letter: 'T', cls: 'text-warning' }, ignored: { letter: '', cls: 'text-faint' },
 }
 
-function gitDecorations(status: GitStatus | null, root: string): { files: Map<string, GitDeco>; dirs: Set<string> } {
-  const files = new Map<string, GitDeco>(); const dirs = new Set<string>()
+type DirState = 'modified' | 'untracked'
+function gitDecorations(status: GitStatus | null, root: string): { files: Map<string, GitDeco>; dirs: Map<string, DirState> } {
+  const files = new Map<string, GitDeco>(); const dirs = new Map<string, DirState>()
   if (!status?.isRepo) return { files, dirs }
   const add = (c: GitFileChange) => {
     const abs = c.path.startsWith('/') ? c.path : `${root}/${c.path}`
     const deco = GIT_DECO[c.status]
     if (deco && !files.has(abs)) files.set(abs, deco)
-    if (c.status !== 'ignored') { let p = abs; for (;;) { const i = p.lastIndexOf('/'); if (i <= root.length) break; p = p.slice(0, i); dirs.add(p) } }
+    if (c.status !== 'ignored') {
+      const state: DirState = c.status === 'untracked' || c.status === 'added' ? 'untracked' : 'modified'
+      let p = abs; for (;;) { const i = p.lastIndexOf('/'); if (i <= root.length) break; p = p.slice(0, i); if (state === 'modified' || !dirs.has(p)) dirs.set(p, state) }
+    }
   }
   status.conflicted.forEach(add); status.staged.forEach(add); status.unstaged.forEach(add); status.untracked.forEach(add)
   return { files, dirs }
@@ -51,6 +55,8 @@ export function FileTree() {
   const listRef = useRef<VirtualListHandle>(null)
   const containerRef = useRef<HTMLDivElement>(null)
   const [dropTarget, setDropTarget] = useState<string | null>(null)
+  // Focus ring only for keyboard navigation (mouse selection just fills the row, like Cursor).
+  const [kbFocus, setKbFocus] = useState(false)
 
   const rows = useMemo<TreeRow[]>(() => root ? flattenTree({ root, children: ex.children, expanded: ex.expanded, loading: ex.loading, errors: ex.errors, showHidden: ex.showHidden, filter: ex.filter, compact: settings?.ui.compactFolders ?? true, globalIgnore: settings?.general.globalIgnore }) : [], [root, ex.children, ex.expanded, ex.loading, ex.errors, ex.showHidden, ex.filter, settings?.ui.compactFolders, settings?.general.globalIgnore])
   const deco = useMemo(() => gitDecorations(gitStatus, root ?? ''), [gitStatus, root])
@@ -223,7 +229,7 @@ export function FileTree() {
 
   if (!root) return null
   return (
-    <div ref={containerRef} data-keyctx="explorer" tabIndex={0} onKeyDown={onKeyDown} className="flex-1 min-h-0 outline-none"
+    <div ref={containerRef} data-keyctx="explorer" tabIndex={0} onKeyDown={(e) => { setKbFocus(true); onKeyDown(e) }} onMouseDown={() => setKbFocus(false)} onBlur={(e) => { if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setKbFocus(false) }} data-kb={kbFocus} className="flex-1 min-h-0 outline-none group/tree"
       onDragOver={(e) => { if (e.dataTransfer.types.includes('application/x-caret-path')) { e.preventDefault(); setDropTarget(root) } }} onDragLeave={() => setDropTarget(null)}
       onDrop={(e) => { e.preventDefault(); setDropTarget(null); const paths = (e.dataTransfer.getData('application/x-caret-paths') || e.dataTransfer.getData('application/x-caret-path')).split('\n').filter(Boolean); if (paths.length) void moveTo(paths, root) }}>
       <ContextMenu items={() => menuFor(null)}>
@@ -241,7 +247,7 @@ export function FileTree() {
 export const explorerActions: { current: Partial<Record<'rename' | 'delete' | 'copy' | 'cut' | 'paste' | 'newFile' | 'newFolder' | 'reveal', (args?: unknown) => void>> } = { current: {} }
 
 function Row({ r, style, deco, dropTarget, setDropTarget, rowPaths, onOpen, onCommitEdit, onMove, menuFor }: {
-  r: TreeRow; style: React.CSSProperties; deco: { files: Map<string, GitDeco>; dirs: Set<string> }; dropTarget: string | null; setDropTarget: (p: string | null) => void; rowPaths: string[]
+  r: TreeRow; style: React.CSSProperties; deco: { files: Map<string, GitDeco>; dirs: Map<string, DirState> }; dropTarget: string | null; setDropTarget: (p: string | null) => void; rowPaths: string[]
   onOpen: (r: TreeRow, preview?: boolean) => void; onCommitEdit: (v: string) => void; onMove: (paths: string[], dir: string) => void; menuFor: (r: TreeRow) => MenuEntry[]
 }) {
   const ex = useExplorer()
@@ -250,23 +256,28 @@ function Row({ r, style, deco, dropTarget, setDropTarget, rowPaths, onOpen, onCo
   const selected = !!ex.selected[r.nodePath]
   const focused = ex.focused === r.nodePath
   const fileDeco = deco.files.get(r.entry.path)
-  const dirDeco = isDir && (r.chain.some((p) => deco.dirs.has(p)))
+  // Folders inherit the strongest state of anything beneath them (compact chains cover every merged segment).
+  const dirState: DirState | undefined = isDir ? (r.chain.map((p) => deco.dirs.get(p)).find((x) => x === 'modified') ?? r.chain.map((p) => deco.dirs.get(p)).find(Boolean) ?? deco.dirs.get(r.nodePath)) : undefined
+  const dirDeco = !!dirState
+  const dirCls = dirState === 'modified' ? 'text-warning' : dirState === 'untracked' ? 'text-success' : ''
   const dimmed = r.entry.isIgnored || fileDeco?.letter === ''
   return (
     <ContextMenu items={() => menuFor(r)} onOpenChange={(o) => { if (o && !selected) ex.select(r.nodePath) }}>
       <div style={{ ...style, paddingLeft: 8 + r.depth * 12 }} draggable={!editing} title={r.entry.path}
-        className={cn('flex items-center gap-1 pr-2 text-xs cursor-pointer select-none group/row', selected ? 'bg-selected' : 'hover:bg-hover', focused && 'outline-1 -outline-offset-1 outline-accent/60', dropTarget === r.nodePath && isDir && 'bg-selected/60', dimmed && 'opacity-50')}
+        className={cn('relative flex items-center gap-1 pr-2 text-xs cursor-pointer select-none group/row', selected ? 'bg-selected' : 'hover:bg-hover', focused && selected && 'group-data-[kb=true]/tree:ring-1 group-data-[kb=true]/tree:ring-inset group-data-[kb=true]/tree:ring-border-strong', dropTarget === r.nodePath && isDir && 'bg-selected/60', dimmed && 'opacity-50')}
         onClick={(e) => { ex.select(r.nodePath, { toggle: e.metaKey || e.ctrlKey, range: e.shiftKey, rows: rowPaths }); if (!e.metaKey && !e.ctrlKey && !e.shiftKey) onOpen(r, true) }}
         onDoubleClick={() => { if (!isDir) onOpen(r, false) }}
         onDragStart={(e) => { const paths = selected ? Object.keys(ex.selected) : [r.entry.path]; e.dataTransfer.setData('application/x-caret-path', r.entry.path); e.dataTransfer.setData('application/x-caret-paths', paths.join('\n')); e.dataTransfer.setData('text/plain', r.entry.path); e.dataTransfer.effectAllowed = 'copyMove' }}
         onDragOver={(e) => { if (isDir && e.dataTransfer.types.includes('application/x-caret-path')) { e.preventDefault(); e.stopPropagation(); setDropTarget(r.nodePath) } }}
         onDrop={(e) => { if (!isDir) return; e.preventDefault(); e.stopPropagation(); setDropTarget(null); const paths = (e.dataTransfer.getData('application/x-caret-paths') || e.dataTransfer.getData('application/x-caret-path')).split('\n').filter(Boolean); if (paths.length) onMove(paths, r.nodePath) }}>
-        <span className="size-4 shrink-0 flex items-center justify-center text-muted">{isDir ? (r.loading ? <Loader2 className="size-3.5 spin" /> : r.expanded ? <ChevronDown className="size-3.5" /> : <ChevronRight className="size-3.5" />) : null}</span>
-        <span className="shrink-0 flex [&_svg]:size-4">{fileIconFor(r.entry.name || (isDir ? 'dir' : 'file'), isDir, r.expanded)}</span>
+        {/* Indent guides: one hairline per ancestor level, aligned with that level's chevron column. */}
+        {Array.from({ length: r.depth }, (_, k) => <span key={k} aria-hidden className="absolute top-0 bottom-0 w-px bg-border pointer-events-none" style={{ left: 8 + k * 12 + 7 }} />)}
+        {/* Folders: chevron only (Seti style); files: the type icon sits in the same column so names align. */}
+        <span className="size-4 shrink-0 flex items-center justify-center text-muted">{isDir ? (r.loading ? <Loader2 className="size-3.5 spin" /> : r.expanded ? <ChevronDown className="size-3.5" /> : <ChevronRight className="size-3.5" />) : fileIconFor(r.entry.name || 'file', false)}</span>
         {editing ? <InlineEdit initial={ex.editing!.kind === 'rename' ? r.entry.name : ''} isDir={isDir} onCommit={onCommitEdit} onCancel={() => ex.set({ editing: null })} />
-          : <span className={cn('truncate flex-1', fileDeco?.cls)}>{r.label}</span>}
+          : <span className={cn('truncate flex-1', fileDeco?.cls, !fileDeco && dirCls)}>{r.label}</span>}
         {!editing && fileDeco?.letter && <span className={cn('text-[10px] font-semibold shrink-0', fileDeco.cls)}>{fileDeco.letter}</span>}
-        {!editing && dirDeco && !fileDeco && <span className="size-1.5 rounded-full bg-warning/80 shrink-0" />}
+        {!editing && dirDeco && !fileDeco && <span className={cn('size-1.5 rounded-full shrink-0', dirState === 'untracked' ? 'bg-success/80' : 'bg-warning/80')} />}
         {r.error && <span className="text-[10px] text-danger shrink-0" title={r.error}>!</span>}
       </div>
     </ContextMenu>

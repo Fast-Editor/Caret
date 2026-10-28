@@ -25,6 +25,7 @@ top-level [README](../README.md) has the overview, install instructions and the 
 | [VERIFIED_DIFF.md](VERIFIED_DIFF.md) | The verification engine that runs after agent turns: checks, risk tiers, proof panel, build-before-test |
 | [SANDBOX.md](SANDBOX.md) | Shell command classification, macOS Seatbelt / Linux bubblewrap sandboxing, MCP tool pins |
 | [TERMINAL.md](TERMINAL.md) | Semantic terminal blocks (OSC 133 / 7501), shell integration, program status |
+| [DEBUGGING.md](DEBUGGING.md) | Run and Debug: the Debug Adapter Protocol client, js-debug and debugpy adapters, launch.json compatibility, limitations |
 | [CLI.md](CLI.md) | The `caret` command-line launcher (`caret .`, `caret file:line:col`), how it is installed and how it talks to the app |
 | [RELEASING.md](RELEASING.md) | Cutting releases: version bump, GitHub Actions matrix, secrets, code signing, updater, Homebrew cask |
 | [PERFORMANCE.md](PERFORMANCE.md) | Measured memory and latency numbers and the rules that keep them low |

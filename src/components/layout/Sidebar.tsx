@@ -5,6 +5,7 @@ import { ScmView } from '@/components/scm'
 import { AgentsSidebar } from '@/components/chat'
 import { OutlineView } from '@/components/editor'
 import { RulesView } from './RulesView'
+import { DebugView } from '@/components/debug'
 
 export function Sidebar() {
   const view = useUi((s) => s.sidebarView)
@@ -16,6 +17,7 @@ export function Sidebar() {
       {view === 'agents' && <AgentsSidebar />}
       {view === 'outline' && <OutlineView />}
       {view === 'rules' && <RulesView />}
+      {view === 'debug' && <DebugView />}
     </div>
   )
 }

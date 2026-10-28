@@ -1,9 +1,10 @@
-import { Bot, LayoutPanelLeft, LayoutPanelTop, MessageSquare, PanelRight, Search, Minus, Square, X, Copy } from 'lucide-react'
+import { Bot, ChevronLeft, ChevronRight, LayoutPanelLeft, LayoutPanelTop, MessageSquare, PanelRight, Search, Minus, Square, X } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import { getCurrentWindow } from '@tauri-apps/api/window'
 import { IconButton, Kbd, cn } from '@/components/common'
 import { runCommand } from '@/lib/commands'
 import { subscribe } from '@/lib/bus'
+import { useEditor } from '@/store/editor'
 import { useUi } from '@/store/ui'
 import { useWorkspace } from '@/store/workspace'
 
@@ -13,37 +14,44 @@ function useRunningAgents(): number {
   return n
 }
 
+/** Compact Cursor-style title bar: navigation + command center in the middle, layout toggles on the right. ≤ 40px at 110% zoom. */
 export function TitleBar() {
   const ui = useUi()
   const ws = useWorkspace((s) => s.workspace)
   const running = useRunningAgents()
+  const canBack = useEditor((s) => s.navBack.length > 0)
+  const canForward = useEditor((s) => s.navForward.length > 0)
   const [tabStatus, setTabStatus] = useState<{ enabled: boolean; busy?: boolean } | null>(null)
   useEffect(() => subscribe<{ enabled: boolean; busy?: boolean }>('tab.status', setTabStatus), [])
   const isMac = ui.platform === 'macos'
   const win = () => getCurrentWindow()
+  const navCls = 'size-6 rounded-md flex items-center justify-center text-muted hover:bg-hover hover:text-fg disabled:opacity-30 disabled:hover:bg-transparent disabled:hover:text-muted'
   return (
-    <div data-tauri-drag-region className={cn('h-[38px] shrink-0 flex items-center bg-titlebar border-b border-border select-none', isMac ? 'pl-[78px] pr-2' : 'pl-3 pr-0')} onDoubleClick={() => void win().toggleMaximize()}>
-      <div data-tauri-drag-region className="flex items-center gap-2 min-w-0 w-[220px]">
-        <span className="text-xs font-semibold text-fg">Caret</span>
-        {ws && <span className="text-xs text-muted truncate" title={ws.root}>{ws.name}</span>}
+    <div data-tauri-drag-region className={cn('h-[34px] shrink-0 flex items-center bg-titlebar border-b border-border select-none', isMac ? 'pl-[78px] pr-2' : 'pl-2 pr-0')} onDoubleClick={() => void win().toggleMaximize()}>
+      {/* left: status pills only (the window title is native) */}
+      <div data-tauri-drag-region className="flex items-center gap-1 w-[150px] shrink-0 min-w-0">
+        {tabStatus && <button type="button" onClick={() => void runCommand('ai.tab.toggle')} className={cn('h-5 px-1.5 rounded text-[10px] font-medium border', tabStatus.enabled ? 'border-accent/40 text-accent' : 'border-border text-faint')} title="Tab completions">{tabStatus.busy ? '…' : 'Tab'}</button>}
+        {running > 0 && <button type="button" onClick={() => void runCommand('view.agents')} className="flex items-center gap-1 h-5 px-1.5 rounded border border-accent/40 text-accent text-[10px]"><Bot className="size-3 pulse" />{running}</button>}
       </div>
-      <div data-tauri-drag-region className="flex-1 flex justify-center min-w-0">
-        <button onClick={() => ui.openPalette('files')} className="flex items-center gap-2 h-6 w-[min(520px,46vw)] rounded-md border border-border bg-input/70 hover:bg-input px-2 text-[11px] text-muted" aria-label="Open command center">
-          <Search className="size-3.5" /><span className="truncate flex-1 text-left">{ws ? `Search ${ws.name}` : 'Search files and commands'}</span><Kbd keys="mod+p" />
+      {/* centre: back / forward + command center */}
+      <div data-tauri-drag-region className="flex-1 flex items-center justify-center gap-1 min-w-0">
+        <button type="button" className={navCls} disabled={!canBack} onClick={() => void runCommand('go.back')} title="Go Back (⌃-)" aria-label="Go back"><ChevronLeft className="size-4" /></button>
+        <button type="button" className={navCls} disabled={!canForward} onClick={() => void runCommand('go.forward')} title="Go Forward (⌃⇧-)" aria-label="Go forward"><ChevronRight className="size-4" /></button>
+        <button type="button" onClick={() => ui.openPalette('files')} className="flex items-center gap-2 h-[26px] w-[min(560px,44vw)] rounded-md border border-border bg-input/60 hover:bg-input px-2.5 text-[11.5px] text-muted" aria-label="Open command center" title="Search files and commands">
+          <Search className="size-3.5 shrink-0" /><span className="truncate flex-1 text-center">{ws ? ws.name : 'Search files and commands'}</span><Kbd keys="mod+p" />
         </button>
       </div>
-      <div className="flex items-center gap-0.5 w-[220px] justify-end">
-        {tabStatus && <button onClick={() => void runCommand('ai.tab.toggle')} className={cn('h-5 px-1.5 rounded text-[10px] font-medium border', tabStatus.enabled ? 'border-accent/40 text-accent' : 'border-border text-faint')} title="Tab completions">{tabStatus.busy ? '…' : 'Tab'}</button>}
-        {running > 0 && <button onClick={() => void runCommand('view.agents')} className="flex items-center gap-1 h-5 px-1.5 rounded border border-accent/40 text-accent text-[10px]"><Bot className="size-3 pulse" />{running}</button>}
+      {/* right: layout toggles (+ window controls off macOS) */}
+      <div className="flex items-center gap-0.5 w-[150px] shrink-0 justify-end">
         <IconButton size="sm" icon={<LayoutPanelLeft />} label="Toggle Primary Sidebar" shortcut="mod+b" active={ui.sidebarVisible} onClick={() => ui.toggleSidebar()} />
         <IconButton size="sm" icon={<LayoutPanelTop className="rotate-180" />} label="Toggle Panel" shortcut="mod+j" active={ui.panelVisible} onClick={() => ui.togglePanel()} />
         <IconButton size="sm" icon={<PanelRight />} label="Toggle AI Pane" shortcut="mod+shift+i" active={ui.chatVisible} onClick={() => ui.toggleChat()} />
         <IconButton size="sm" icon={<MessageSquare />} label={ui.layout === 'agents' ? 'Back to Editor' : 'Agents Layout'} shortcut="mod+alt+a" active={ui.layout === 'agents'} onClick={() => ui.set({ layout: ui.layout === 'agents' ? 'editor' : 'agents' })} />
         {!isMac && (
-          <div className="flex items-stretch h-[38px] ml-2">
-            <button aria-label="Minimize" className="w-11 hover:bg-hover flex items-center justify-center" onClick={() => void win().minimize()}><Minus className="size-3.5" /></button>
-            <button aria-label="Maximize" className="w-11 hover:bg-hover flex items-center justify-center" onClick={() => void win().toggleMaximize()}><Square className="size-3" /><Copy className="hidden" /></button>
-            <button aria-label="Close" className="w-11 hover:bg-danger hover:text-white flex items-center justify-center" onClick={() => void win().close()}><X className="size-4" /></button>
+          <div className="flex items-stretch h-[34px] ml-2">
+            <button type="button" aria-label="Minimize" className="w-11 hover:bg-hover flex items-center justify-center" onClick={() => void win().minimize()}><Minus className="size-3.5" /></button>
+            <button type="button" aria-label="Maximize" className="w-11 hover:bg-hover flex items-center justify-center" onClick={() => void win().toggleMaximize()}><Square className="size-3" /></button>
+            <button type="button" aria-label="Close" className="w-11 hover:bg-danger hover:text-white flex items-center justify-center" onClick={() => void win().close()}><X className="size-4" /></button>
           </div>
         )}
       </div>

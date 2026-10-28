@@ -5,6 +5,7 @@ import { useUi } from '@/store/ui'
 import { useWorkspace } from '@/store/workspace'
 import { useSettings } from '@/store/settings'
 import { EditorArea } from '@/components/editor'
+import { DebugToolbar } from '@/components/debug'
 import { ChatPane } from '@/components/chat'
 import { AgentsLayout } from '@/components/agents'
 import { SettingsPage } from '@/components/settings'
@@ -46,6 +47,7 @@ export function AppLayout() {
     <div className="flex-1 min-w-0 h-full flex flex-col bg-editor relative">
       <div className={cn('min-h-0 relative', ui.panelVisible && ui.panelMaximized ? 'h-0 overflow-hidden' : 'flex-1')}>
         {ws ? <EditorArea /> : <WelcomeView />}
+        <DebugToolbar />
         {ui.settingsOpen && (
           <div className="absolute inset-0 z-30 bg-editor flex flex-col">
             <div className="h-9 shrink-0 flex items-center gap-2 px-3 border-b border-border text-xs">

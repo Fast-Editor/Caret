@@ -5,6 +5,7 @@ import { useEditor, registerEditor, saveViewState, loadViewState, getModel, prim
 import { attachGitGutter } from '@/lib/monaco/gitGutter'
 import { attachBlame } from '@/lib/monaco/blame'
 import { inlineEditFor } from '@/lib/monaco/inlineEdit'
+import { installDebugDecorations } from '@/lib/monaco/debugDecorations'
 import { runCommand } from '@/lib/commands'
 import { useProblems } from '@/store/problems'
 import { EditorContextMenu, type MenuPos } from './EditorContextMenu'
@@ -26,7 +27,7 @@ export function MonacoEditor({ groupId, tab, active }: Props) {
     const editor = monaco.editor.create(el, { ...editorOptionsFromSettings(useSettings.getState().settings?.ui), model: null })
     editorRef.current = editor
     const unregister = registerEditor(groupId, editor)
-    const disposables: monaco.IDisposable[] = [attachGitGutter(editor), attachBlame(editor)]
+    const disposables: monaco.IDisposable[] = [attachGitGutter(editor), attachBlame(editor), installDebugDecorations(editor)]
     inlineEditFor(editor)
     // keybindings → commands (shell skips global handling when defaultPrevented)
     const bind = (keys: number, cmd: string, args?: unknown) => { disposables.push({ dispose: () => {} }); editor.addCommand(keys, () => { void runCommand(cmd, args) }) }

@@ -1,4 +1,4 @@
-import { Bot, Files, GitBranch, Search, Settings, BookMarked, ListTree } from 'lucide-react'
+import { Bot, Files, GitBranch, Search, Settings, BookMarked, ListTree, Bug } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import { Tooltip, cn } from '@/components/common'
 import { subscribe } from '@/lib/bus'
@@ -11,6 +11,7 @@ const ITEMS: { id: SidebarView; icon: typeof Files; label: string; shortcut: str
   { id: 'search', icon: Search, label: 'Search', shortcut: 'mod+shift+f' },
   { id: 'scm', icon: GitBranch, label: 'Source Control', shortcut: 'ctrl+shift+g' },
   { id: 'agents', icon: Bot, label: 'Agents', shortcut: 'mod+shift+a' },
+  { id: 'debug', icon: Bug, label: 'Run and Debug', shortcut: 'mod+shift+d' },
   { id: 'outline', icon: ListTree, label: 'Outline', shortcut: '' },
   { id: 'rules', icon: BookMarked, label: 'Rules & Context', shortcut: '' },
 ]

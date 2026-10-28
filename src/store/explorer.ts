@@ -20,6 +20,9 @@ interface ExplorerStore {
   clipboard: { paths: string[]; cut: boolean } | null
   openEditorsCollapsed: boolean
   treeCollapsed: boolean
+  /** Bottom sections (VS Code style), collapsed by default. */
+  outlineCollapsed: boolean
+  timelineCollapsed: boolean
   loadDir: (path: string, force?: boolean) => Promise<DirEntry[]>
   toggle: (path: string) => void
   expand: (path: string) => void
@@ -37,7 +40,7 @@ function parentOf(p: string): string { const i = p.lastIndexOf('/'); return i > 
 
 export const useExplorer = create<ExplorerStore>((set, get) => ({
   children: {}, loading: {}, errors: {}, expanded: {}, selected: {}, focused: null, anchor: null,
-  showHidden: true, filter: '', filterOpen: false, followActive: true, editing: null, clipboard: null, openEditorsCollapsed: false, treeCollapsed: false,
+  showHidden: true, filter: '', filterOpen: false, followActive: true, editing: null, clipboard: null, openEditorsCollapsed: false, treeCollapsed: false, outlineCollapsed: true, timelineCollapsed: true,
   loadDir: async (path, force = false) => {
     const s = get()
     if (!force && s.children[path]) return s.children[path]!

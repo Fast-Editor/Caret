@@ -61,12 +61,15 @@ export function StatusBar() {
 
   const st = git.status
   const branchLabel = st?.isRepo ? (st.branch ?? (st.headSha ? st.headSha.slice(0, 7) : 'HEAD')) : null
+  const dirtyCounts = st ? { staged: st.staged.length, unstaged: st.unstaged.length, untracked: st.untracked.length, conflicted: st.conflicted.length } : null
+  const dirty = !!dirtyCounts && dirtyCounts.staged + dirtyCounts.unstaged + dirtyCounts.untracked + dirtyCounts.conflicted > 0
+  const dirtyTitle = dirtyCounts && dirty ? ` · uncommitted: ${[dirtyCounts.staged && `${dirtyCounts.staged} staged`, dirtyCounts.unstaged && `${dirtyCounts.unstaged} modified`, dirtyCounts.untracked && `${dirtyCounts.untracked} untracked`, dirtyCounts.conflicted && `${dirtyCounts.conflicted} conflicted`].filter(Boolean).join(', ')}` : ''
   return (
     <div className="h-[22px] shrink-0 flex items-stretch bg-titlebar border-t border-border select-none">
       <div className="flex items-stretch">
         {branchLabel && (
           <>
-            <Item onClick={() => void runCommand('git.checkout')} title={st?.upstream ? `${branchLabel} → ${st.upstream}` : branchLabel}><GitBranch className="size-3.5" />{branchLabel}{st?.state && st.state !== 'normal' && st.state !== 'clean' ? ` (${st.state})` : ''}</Item>
+            <Item onClick={() => void runCommand('git.checkout')} title={(st?.upstream ? `${branchLabel} → ${st.upstream}` : branchLabel) + dirtyTitle}><GitBranch className="size-3.5" />{branchLabel}{dirty ? '*' : ''}{st?.state && st.state !== 'normal' && st.state !== 'clean' ? ` (${st.state})` : ''}</Item>
             <Item onClick={() => void runCommand(st && st.behind > 0 ? 'git.pull' : 'git.push')} title="Synchronize changes"><RefreshCw className={cn('size-3', git.refreshing && 'spin')} />{st ? <>{st.behind > 0 && <><ChevronDown className="size-3" />{st.behind}</>}{st.ahead > 0 && <><ChevronUp className="size-3" />{st.ahead}</>}</> : null}</Item>
           </>
         )}

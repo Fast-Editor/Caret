@@ -47,6 +47,8 @@ export function registerShellCommands(): () => void {
     { id: 'view.problems', title: 'Show Problems', category: 'View', keybinding: 'mod+shift+m', run: () => ui().togglePanel('problems') },
     { id: 'view.output', title: 'Show Output', category: 'View', keybinding: 'mod+shift+u', run: () => ui().togglePanel('output') },
     { id: 'view.review', title: 'Show Review Panel', category: 'View', run: () => ui().showPanel('review') },
+    { id: 'view.ports', title: 'Show Ports', category: 'View', run: () => ui().showPanel('ports') },
+    { id: 'view.debugConsole', title: 'Show Debug Console', category: 'View', run: () => ui().showPanel('debugConsole') },
     { id: 'view.toggleAgentsLayout', title: 'Toggle Agents Layout', category: 'View', keybinding: 'mod+alt+a', run: () => ui().set({ layout: ui().layout === 'agents' ? 'editor' : 'agents' }) },
     { id: 'view.zen', title: 'Toggle Zen Mode', category: 'View', keybinding: 'mod+k z', run: () => ui().set({ zenMode: !ui().zenMode }) },
     { id: 'view.zoomIn', title: 'Zoom In', category: 'View', keybinding: 'mod+=', run: () => ui().setZoom(ui().zoom + 1) },

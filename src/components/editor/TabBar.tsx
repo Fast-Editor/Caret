@@ -2,6 +2,8 @@ import { useEffect, useRef, useState } from 'react'
 import { X, Pin, Circle, SplitSquareHorizontal, AlertTriangle, Settings2, Sparkles, FileText, Image as ImageIcon, GitCompare, Globe, ListChecks, Keyboard, Home, ShieldCheck } from 'lucide-react'
 import { useEditor, type EditorGroup, type EditorTab } from '@/store/editor'
 import { relPath } from '@/store/workspace'
+import { fileIconFor } from '@/components/explorer/fileIcons'
+import { tabDirHint } from '@/lib/tabHints'
 import { runCommand } from '@/lib/commands'
 import { clsx } from 'clsx'
 
@@ -17,7 +19,9 @@ function TabIcon({ tab }: { tab: EditorTab }) {
     case 'keybindings': return <Keyboard size={13} className={cls} />
     case 'review': return <ShieldCheck size={13} className={cls} />
     case 'markdown-preview': return <Sparkles size={13} className={cls} />
-    default: return <FileText size={13} className={cls} />
+    default: return tab.path
+      ? <span className="shrink-0 inline-flex items-center justify-center size-3.5 [&_svg]:size-3.5 [&>span]:size-3.5 [&>span]:text-[7px]">{fileIconFor(tab.title, false)}</span>
+      : <FileText size={13} className={cls} />
   }
 }
 
@@ -31,11 +35,11 @@ export function TabBar({ group, active }: { group: EditorGroup; active: boolean 
   useEffect(() => { if (!menu) return; const close = () => setMenu(null); window.addEventListener('mousedown', close, true); window.addEventListener('keydown', close, true); return () => { window.removeEventListener('mousedown', close, true); window.removeEventListener('keydown', close, true) } }, [menu])
   const dupTitles = new Map<string, number>(); for (const t of group.tabs) dupTitles.set(t.title, (dupTitles.get(t.title) ?? 0) + 1)
   return (
-    <div className={clsx('h-[35px] shrink-0 flex items-stretch border-b border-border bg-sidebar', !active && 'opacity-90')} onDoubleClick={(e) => { if (e.target === e.currentTarget) void runCommand('file.new') }}>
+    <div className={clsx('h-[35px] shrink-0 flex items-stretch bg-panel', !active && 'opacity-90')} onDoubleClick={(e) => { if (e.target === e.currentTarget) void runCommand('file.new') }}>
       <div ref={scrollRef} className="tabbar flex-1 flex items-stretch overflow-x-auto overflow-y-hidden min-w-0" onWheel={(e) => { if (e.deltaY && !e.deltaX) { e.currentTarget.scrollLeft += e.deltaY } }}>
         {group.tabs.map((tab, i) => {
           const isActive = tab.id === group.activeTabId
-          const dup = (dupTitles.get(tab.title) ?? 0) > 1 && tab.path
+          const hint = tabDirHint(tab.path, dupTitles.get(tab.title) ?? 0, relPath)
           return (
             <div key={tab.id} data-active={isActive} draggable
               onDragStart={(e) => { dragIdx.current = i; e.dataTransfer.setData('text/caret-tab', JSON.stringify({ group: group.id, tabId: tab.id })); e.dataTransfer.effectAllowed = 'move' }}
@@ -45,9 +49,9 @@ export function TabBar({ group, active }: { group: EditorGroup; active: boolean 
               onDoubleClick={(e) => { e.stopPropagation(); keepTab(group.id, tab.id) }}
               onContextMenu={(e) => { e.preventDefault(); setMenu({ x: e.clientX, y: e.clientY, tab }) }}
               title={tab.path ?? tab.title}
-              className={clsx('group relative flex items-center gap-1.5 pl-3 pr-1.5 min-w-[110px] max-w-[220px] border-r border-border text-xs select-none', isActive ? 'bg-editor text-fg' : 'text-muted hover:bg-hover', isActive && active && 'shadow-[inset_0_1px_0_var(--accent)]')}>
+              className={clsx('group relative flex items-center gap-1.5 pl-3 pr-1.5 min-w-[110px] max-w-[220px] border-r border-b border-r-border text-xs select-none', isActive ? 'bg-editor text-fg border-b-editor' : 'bg-panel text-muted hover:bg-hover border-b-border')}>
               <TabIcon tab={tab} />
-              <span className={clsx('truncate-1 flex-1', tab.preview && 'italic', tab.conflict && 'text-warning')}>{tab.title}{dup && <span className="text-faint ml-1 not-italic">{relPath(tab.path!).split('/').slice(-2, -1)[0]}</span>}</span>
+              <span className={clsx('truncate-1 flex-1', tab.preview && 'italic', tab.conflict && 'text-warning')}>{tab.title}{hint && <span className="text-faint ml-1 not-italic">{hint}</span>}</span>
               {tab.conflict && <AlertTriangle size={11} className="text-warning" />}
               {tab.pinned ? <Pin size={11} className="text-faint" /> : (
                 <button className={clsx('w-5 h-5 flex items-center justify-center rounded hover:bg-active', !tab.dirty && !isActive && 'opacity-0 group-hover:opacity-100')} onMouseDown={(e) => e.stopPropagation()} onClick={(e) => { e.stopPropagation(); void closeTab(group.id, tab.id) }} title={tab.dirty ? 'Unsaved changes' : 'Close'}>
@@ -58,9 +62,9 @@ export function TabBar({ group, active }: { group: EditorGroup; active: boolean 
             </div>
           )
         })}
-        <div className="flex-1 min-w-[40px]" onDragOver={(e) => e.preventDefault()} onDrop={(e) => { const raw = e.dataTransfer.getData('text/caret-tab'); if (!raw) return; const { group: g, tabId } = JSON.parse(raw) as { group: string; tabId: string }; if (g === group.id) { const from = group.tabs.findIndex((t) => t.id === tabId); reorderTab(group.id, from, group.tabs.length - 1) } else moveTab(g, tabId, group.id) }} />
+        <div className="flex-1 min-w-[40px] border-b border-border" onDragOver={(e) => e.preventDefault()} onDrop={(e) => { const raw = e.dataTransfer.getData('text/caret-tab'); if (!raw) return; const { group: g, tabId } = JSON.parse(raw) as { group: string; tabId: string }; if (g === group.id) { const from = group.tabs.findIndex((t) => t.id === tabId); reorderTab(group.id, from, group.tabs.length - 1) } else moveTab(g, tabId, group.id) }} />
       </div>
-      <div className="flex items-center gap-0.5 px-1 border-l border-border">
+      <div className="flex items-center gap-0.5 px-1 border-l border-b border-border">
         {groupsCount < 3 && <button className="p-1 rounded hover:bg-hover text-muted" title="Split editor right (⌘\)" onClick={() => split()}><SplitSquareHorizontal size={14} /></button>}
       </div>
       {menu && (
