@@ -6,9 +6,12 @@ set -eu
 REPO="Fast-Editor/Caret"
 case "$(uname -s)" in Darwin) ;; *) echo "This installer is for macOS. Linux and Windows builds: https://github.com/$REPO/releases"; exit 1;; esac
 ARCH=$(uname -m); case "$ARCH" in arm64) PAT="aarch64";; x86_64) PAT="x64";; *) echo "unsupported architecture $ARCH"; exit 1;; esac
-API="https://api.github.com/repos/$REPO/releases/latest"
-URL=$(curl -fsSL "$API" | grep -o "https://[^\"]*${PAT}[^\"]*\.dmg" | head -1)
-[ -n "$URL" ] || { echo "no DMG for $ARCH found in the latest release"; exit 1; }
+# Resolve the latest version without the GitHub API (which rate-limits anonymous callers): follow the
+# releases/latest redirect to .../tag/vX.Y.Z, falling back to the updater manifest.
+TAG=$(curl -fsSLI -o /dev/null -w '%{url_effective}' "https://github.com/$REPO/releases/latest" 2>/dev/null | sed -n 's#.*/tag/##p')
+[ -n "$TAG" ] || TAG=v$(curl -fsSL "https://github.com/$REPO/releases/latest/download/latest.json" | sed -n 's/.*"version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -1)
+VERSION=${TAG#v}; [ -n "$VERSION" ] || { echo "could not determine the latest Caret version"; exit 1; }
+URL="https://github.com/$REPO/releases/download/$TAG/Caret_${VERSION}_${PAT}.dmg"
 TMP=$(mktemp -d); trap 'hdiutil detach "$TMP/mnt" -quiet 2>/dev/null || true; rm -rf "$TMP"' EXIT
 echo "Downloading $(basename "$URL")…"; curl -fL --progress-bar "$URL" -o "$TMP/caret.dmg"
 mkdir -p "$TMP/mnt"; hdiutil attach "$TMP/caret.dmg" -nobrowse -quiet -mountpoint "$TMP/mnt"
