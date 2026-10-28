@@ -22,7 +22,7 @@
 curl -fsSL https://raw.githubusercontent.com/Fast-Editor/Caret/main/scripts/install.sh | sh
 ```
 
-or with Homebrew: `brew install --cask --no-quarantine fast-editor/lynkr/caret`.
+or with Homebrew (7+, which no longer quarantines cask downloads): `brew install --cask fast-editor/lynkr/caret`.
 
 Or download the DMG from the [latest release](https://github.com/Fast-Editor/Caret/releases/latest) and drag Caret to Applications.
 Builds are ad-hoc signed until a Developer ID is configured, so a browser-downloaded copy is quarantined and macOS reports

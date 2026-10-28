@@ -44,7 +44,7 @@ longer verify updates** — keep `~/.tauri/caret.key` and its password backed up
 `bundle.macOS.signingIdentity` is `"-"`: every build is ad-hoc signed with the bundle identifier `dev.caret.editor` as
 its identity, so macOS keeps privacy grants and caches across updates. Browser downloads still get the quarantine
 attribute, which makes Gatekeeper refuse ad-hoc apps ("damaged"); the README documents the one-time `xattr` fix, and
-`scripts/install.sh` / the Homebrew cask (`--no-quarantine`) avoid it entirely. Adding the Apple secrets above switches
+`scripts/install.sh` and the Homebrew cask avoid it entirely (Homebrew 7 no longer applies the quarantine attribute). Adding the Apple secrets above switches
 the workflow to Developer ID signing + notarization automatically; remove the `signingIdentity: "-"` override then.
 
 ## Updater
