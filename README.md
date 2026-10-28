@@ -72,7 +72,11 @@ Measured on the release build (see [docs/PERFORMANCE.md](docs/PERFORMANCE.md)): 
 - **Command safety & sandbox** — every agent shell command is parsed (POSIX shell AST incl. nested `sh -c`/`eval`/`$( )`) and classified below the model (safe / caution / destructive / blocked with labels); destructive commands always ask, blocked ones never run; approved commands run under **macOS Seatbelt / Linux bubblewrap** (writes limited to workspace + temp + caches, credential folders unreadable, optional no-network); **MCP tool-description pinning** re-approves tools that silently change. See `docs/SANDBOX.md`.
 - **Cursor compatibility** — reads `.cursor/rules`, `.cursor/mcp.json`, `.cursor/hooks.json`, `.cursor/commands`, `.cursor/skills`, `.cursor/agents`, `.cursorignore`, `.cursorindexingignore` so existing projects work unchanged.
 
-## Status (2026-10-25)
+## Status (2026-10-28)
+
+**v0.1.0 is released** — installers for macOS (Apple Silicon, Intel), Windows and Linux are on the
+[releases page](https://github.com/Fast-Editor/Caret/releases/latest), built by CI from the `v0.1.0` tag, with in-app updates from here on.
+
 
 Verified end to end on macOS against a local OpenAI-compatible proxy and Ollama embeddings:
 
@@ -135,7 +139,7 @@ The project is a single repository: locally at **`~/caret`**, published at **htt
 │       └── dev/automation.rs localhost bridge used by scripts/e2e.mjs for scripted UI checks
 ├── scripts/                  e2e.mjs (bridge client), wave1-check.mjs (smoke checks)
 ├── docs/                     ARCHITECTURE, UI_COMMANDS, VERIFIED_DIFF, SANDBOX, TERMINAL, ACP, CLI,
-│                             PROVIDERS, PERFORMANCE
+│                             PROVIDERS, AUTO_ROUTING, RELEASING, PERFORMANCE
 ├── dist/                     built frontend (output of `npm run build:web`; generated)
 └── node_modules/             npm dependencies (generated)
 ```
@@ -237,6 +241,17 @@ Known wrinkle: the DMG step (`bundle_dmg.sh`, which calls `hdiutil`) occasionall
 hangs. The `.app` is already complete at that point. If it hangs, `pkill -f bundle_dmg.sh` lets the build finish;
 if it fails, re-run the build or ignore the DMG and use the `.app`.
 
+Since v0.1.0 the bundle also produces **updater artifacts** (`Caret.app.tar.gz` + `.sig`), which must be signed with the
+project's minisign key. A local release build therefore needs the key in the environment (CI gets it from repository secrets):
+
+```bash
+export TAURI_SIGNING_PRIVATE_KEY=~/.tauri/caret.key
+export TAURI_SIGNING_PRIVATE_KEY_PASSWORD="$(cat ~/.tauri/caret.key.password)"
+```
+
+Without a key, set `bundle.createUpdaterArtifacts` to `false` in `src-tauri/tauri.conf.json` for that build. Details in
+[docs/RELEASING.md](docs/RELEASING.md).
+
 ### 6. Install and launch
 
 ```bash
@@ -282,9 +297,25 @@ Details and the transport (`open -b dev.caret.editor`, `caret://open?path=…`) 
 | `caret .` opens nothing | launch the new bundle once so LaunchServices knows it; quit older instances |
 | External agent shows "Not installed" | Settings → Agents → Install (npm into `~/.caret/acp`) or install the tool yourself; Caret also searches Homebrew, nvm, volta, bun paths |
 
+### 10. Publish a release
+
+Releases are built by GitHub Actions from a tag — nothing is uploaded from a laptop:
+
+```bash
+# add a "## X.Y.Z — YYYY-MM-DD" section to CHANGELOG.md, then
+npm run release:bump 0.2.0      # bumps package.json, tauri.conf.json, Cargo.toml (+ lockfiles), commits, tags v0.2.0
+git push && git push --tags     # → .github/workflows/release.yml
+```
+
+The workflow builds macOS (Apple Silicon + Intel), Linux and Windows in parallel and drafts a GitHub Release with the
+installers, signed updater artifacts, `latest.json` for the in-app updater and `SHA256SUMS.txt`. Review the draft and
+publish it; installed apps pick the update up from Settings → About. CI (`ci.yml`) runs typecheck, vitest and `cargo test`
+on every push. Secrets, code signing (ad-hoc today, Developer ID when configured), the Homebrew cask and troubleshooting:
+[docs/RELEASING.md](docs/RELEASING.md).
+
 ## Architecture
 
-See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the module map, IPC conventions and memory rules, [docs/UI_COMMANDS.md](docs/UI_COMMANDS.md) for the UI command registry. Feature docs: [PROVIDERS](docs/PROVIDERS.md), [AUTO_ROUTING](docs/AUTO_ROUTING.md), [VERIFIED_DIFF](docs/VERIFIED_DIFF.md), [SANDBOX](docs/SANDBOX.md), [TERMINAL](docs/TERMINAL.md), [ACP](docs/ACP.md), [CLI](docs/CLI.md), [PERFORMANCE](docs/PERFORMANCE.md).
+See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the module map, IPC conventions and memory rules, [docs/UI_COMMANDS.md](docs/UI_COMMANDS.md) for the UI command registry. Feature docs: [PROVIDERS](docs/PROVIDERS.md), [AUTO_ROUTING](docs/AUTO_ROUTING.md), [RELEASING](docs/RELEASING.md), [AUTO_ROUTING](docs/AUTO_ROUTING.md), [VERIFIED_DIFF](docs/VERIFIED_DIFF.md), [SANDBOX](docs/SANDBOX.md), [TERMINAL](docs/TERMINAL.md), [ACP](docs/ACP.md), [CLI](docs/CLI.md), [PERFORMANCE](docs/PERFORMANCE.md).
 
 ## License
 
