@@ -38,6 +38,7 @@ function boot(): () => void {
   try { const r = ch.initChatModule?.(); if (typeof r === 'function') offs.push(r) } catch (e) { console.error('chat module init failed', e) }
   // `caret <path>` launcher: drain queued opens (argv / Finder / caret:// URLs) and register install commands
   offs.push(initCliOpen())
+  if (!import.meta.env.DEV) { const t = window.setTimeout(() => { void import('@/lib/updater').then((m) => m.checkForUpdatesSilently()) }, 15_000); offs.push(() => window.clearTimeout(t)) }
   // keybindings: settings overrides + optional ~/.caret/keybindings.json
   setPersistHandler((overrides) => useSettings.getState().update({ keybindings: overrides }))
   const applyOverrides = () => setUserOverrides(useSettings.getState().settings?.keybindings)

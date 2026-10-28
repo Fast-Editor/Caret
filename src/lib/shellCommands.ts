@@ -101,8 +101,15 @@ export function registerShellCommands(): () => void {
         stats ? createElement('div', null, `Core process: ${(stats.rssBytes / 1048576).toFixed(1)} MB RSS · CPU ${stats.cpuPercent.toFixed(1)}% · up ${Math.round(stats.uptimeSecs / 60)} min`) : null))
     } },
     { id: 'help.welcome', title: 'Welcome', category: 'Help', run: () => { if (hasCommand('editor.openWelcome')) void runCommand('editor.openWelcome'); else notify('info', 'Welcome', 'Open a folder to get started.') } },
-    { id: 'help.docs', title: 'Documentation', category: 'Help', run: () => void api.app.openExternal('https://github.com/') },
-    { id: 'help.reportIssue', title: 'Report Issue', category: 'Help', run: () => void api.app.openExternal('https://github.com/') },
+    { id: 'help.docs', title: 'Documentation', category: 'Help', run: () => void api.app.openExternal('https://github.com/Fast-Editor/Caret/tree/main/docs#readme') },
+    { id: 'help.reportIssue', title: 'Report Issue', category: 'Help', run: () => void api.app.openExternal('https://github.com/Fast-Editor/Caret/issues/new') },
+    { id: 'app.checkForUpdates', title: 'Check for Updates…', category: 'Help', run: async () => {
+      const { checkForUpdates } = await import('@/lib/updater')
+      const st = await checkForUpdates()
+      if (st.kind === 'available') { notify('info', `Caret ${st.version} is available`, 'Install it from Settings → About.'); void runCommand('settings.open', { page: 'about' }) }
+      else if (st.kind === 'none') notify('success', 'You are on the latest version')
+      else if (st.kind === 'error') notify('warn', 'Could not check for updates', st.message)
+    } },
     { id: 'app.quitConfirm', title: 'Quit', category: 'File', hidden: true, run: async () => { if (await confirm({ title: 'Quit Caret?' })) { const { exit } = await import('@tauri-apps/plugin-process'); await exit(0) } } },
   ]))
   // Expose default keybinding on palette rows for commands registered without one.

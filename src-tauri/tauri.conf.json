@@ -30,12 +30,17 @@
     ],
     "security": {
       "csp": null,
-      "assetProtocol": { "enable": true, "scope": ["**"] }
+      "assetProtocol": {
+        "enable": true,
+        "scope": [
+          "**"
+        ]
+      }
     }
   },
   "bundle": {
     "active": true,
-    "targets": ["app", "dmg"],
+    "targets": "all",
     "category": "DeveloperTool",
     "icon": [
       "icons/32x32.png",
@@ -44,6 +49,32 @@
       "icons/icon.icns",
       "icons/icon.ico"
     ],
-    "macOS": { "minimumSystemVersion": "12.0" }
+    "macOS": {
+      "minimumSystemVersion": "12.0",
+      "signingIdentity": "-"
+    },
+    "createUpdaterArtifacts": true,
+    "windows": {
+      "webviewInstallMode": {
+        "type": "embedBootstrapper"
+      }
+    },
+    "linux": {
+      "deb": {
+        "depends": []
+      }
+    },
+    "publisher": "Fast Editor",
+    "homepage": "https://github.com/Fast-Editor/Caret",
+    "shortDescription": "Cursor-class local AI coding agent",
+    "longDescription": "Caret is a memory-efficient, Rust-powered AI code editor: a Cursor-class agent, Verified Diff, sandboxed commands, semantic terminal, external agents via ACP and an Auto router."
+  },
+  "plugins": {
+    "updater": {
+      "endpoints": [
+        "https://github.com/Fast-Editor/Caret/releases/latest/download/latest.json"
+      ],
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDFCMkQwOERFNjcwRDIyRDQKUldUVUlnMW4zZ2d0RytaOFZjbXJ0SkFOR2k1SHo3OWt0b3VHV3ZONzF4Zm9QQTdJTmhrUXZpR1gK"
+    }
   }
 }

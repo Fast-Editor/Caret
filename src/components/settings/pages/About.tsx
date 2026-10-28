@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
-import { FolderOpen, Cpu, ExternalLink } from 'lucide-react'
+import { FolderOpen, Cpu, ExternalLink, RefreshCw, Download } from 'lucide-react'
+import { checkForUpdates, installUpdate, type UpdateState } from '@/lib/updater'
 import { api } from '@/lib/api'
 import { runCommand, hasCommand } from '@/lib/commands'
 import type { AppInfo, ProcessStats } from '@/types'
@@ -8,6 +9,15 @@ import { Section, Row, Button, formatBytes } from '../primitives'
 export function AboutPage() {
   const [info, setInfo] = useState<AppInfo | null>(null)
   const [stats, setStats] = useState<ProcessStats | null>(null)
+  const [upd, setUpd] = useState<UpdateState>({ kind: 'idle' })
+  const doCheck = async () => { setUpd({ kind: 'checking' }); setUpd(await checkForUpdates()) }
+  const doInstall = async () => {
+    if (upd.kind !== 'available') return
+    const version = upd.version
+    setUpd({ kind: 'downloading', version, received: 0 })
+    try { await installUpdate((received, total) => setUpd({ kind: 'downloading', version, received, total })); setUpd({ kind: 'ready', version }) }
+    catch (e) { setUpd({ kind: 'error', message: String((e as Error)?.message ?? e) }) }
+  }
   useEffect(() => {
     api.app.info().then(setInfo).catch(() => {})
     const tick = () => api.app.processStats().then(setStats).catch(() => {})
@@ -21,6 +31,12 @@ export function AboutPage() {
         <Row title="Version"><span className="text-xs mono">{info ? `${info.version} · ${info.os}/${info.arch}${info.debug ? ' · debug' : ''}` : '—'}</span></Row>
         <Row title="WebView"><span className="text-xs mono">{info?.webview ?? '—'}</span></Row>
         <Row title="Config folder" description={info?.configDir}><Button onClick={openConfig}><FolderOpen size={12} />Open</Button></Row>
+        <Row title="Updates" description={upd.kind === 'none' ? 'You are on the latest version.' : upd.kind === 'available' ? `Version ${upd.version} is available${upd.date ? ` (${upd.date.slice(0, 10)})` : ''}.` : upd.kind === 'downloading' ? `Downloading ${upd.version}… ${upd.total ? Math.round((upd.received / upd.total) * 100) + '%' : formatBytes(upd.received)}` : upd.kind === 'ready' ? 'Installed — restarting.' : upd.kind === 'error' ? `Updates unavailable: ${upd.message}` : 'Releases are published on GitHub; updates are verified with Caret\'s signing key.'}>
+          <span className="flex items-center gap-1.5">
+            {upd.kind === 'available' && <Button variant="primary" onClick={() => void doInstall()}><Download size={12} />Install and restart</Button>}
+            <Button onClick={() => void doCheck()} disabled={upd.kind === 'checking' || upd.kind === 'downloading'}><RefreshCw size={12} className={upd.kind === 'checking' ? 'spin' : ''} />{upd.kind === 'checking' ? 'Checking…' : 'Check for updates'}</Button>
+          </span>
+        </Row>
         <Row title="Documentation"><Button onClick={() => void (hasCommand('help.docs') ? runCommand('help.docs') : api.app.openExternal('https://github.com/'))}><ExternalLink size={12} />Open docs</Button></Row>
       </Section>
       <Section title="Resource usage" description="Live stats for the Caret core process (the WebView renderer is a separate OS process).">

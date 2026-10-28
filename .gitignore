@@ -9,3 +9,5 @@ src-tauri/target-release
 *.dmg
 .vite
 /tmp
+brag-output*/
+*.mp4

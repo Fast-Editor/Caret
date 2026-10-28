@@ -2,7 +2,7 @@
   "name": "caret",
   "productName": "Caret",
   "version": "0.1.0",
-  "description": "Caret — a memory-efficient, Rust-powered AI code editor (Tauri + Monaco)",
+  "description": "Caret \u2014 a memory-efficient, Rust-powered AI code editor (Tauri + Monaco)",
   "private": true,
   "type": "module",
   "license": "MIT",
@@ -13,7 +13,8 @@
     "dev:web": "vite",
     "build:web": "tsc --noEmit -p tsconfig.json && vite build",
     "typecheck": "tsc --noEmit -p tsconfig.json",
-    "test": "vitest run"
+    "test": "vitest run",
+    "release:bump": "node scripts/bump-version.mjs"
   },
   "dependencies": {
     "@tauri-apps/api": "^2.12.4",
@@ -22,6 +23,7 @@
     "@tauri-apps/plugin-opener": "^2.7.2",
     "@tauri-apps/plugin-os": "^2.4.0",
     "@tauri-apps/plugin-process": "^2.4.0",
+    "@tauri-apps/plugin-updater": "^2.14.1",
     "@tauri-apps/plugin-window-state": "^2.5.0",
     "@xterm/addon-fit": "^0.11.0",
     "@xterm/addon-search": "^0.16.0",

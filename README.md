@@ -4,7 +4,38 @@
 
 **A Cursor-class AI code editor with a Rust core.** Tauri 2 + Rust on the backend, React 19 + Monaco in the system WebView on the front. No bundled Chromium, no Node at run time.
 
+<a href="https://www.producthunt.com/products/caret-9?embed=true&utm_source=badge-featured&utm_medium=badge&utm_campaign=badge-caret-12" target="_blank" rel="noopener noreferrer"><img alt="Caret - Caret — Cursor-class Local AI coding agent | Product Hunt" width="250" height="54" src="https://api.producthunt.com/widgets/embed-image/v1/featured.svg?post_id=1296357&theme=light&t=1793218129641"></a>
+
+[![CI](https://github.com/Fast-Editor/Caret/actions/workflows/ci.yml/badge.svg)](https://github.com/Fast-Editor/Caret/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/Fast-Editor/Caret?display_name=tag&sort=semver)](https://github.com/Fast-Editor/Caret/releases/latest)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+
+[**Download**](https://github.com/Fast-Editor/Caret/releases/latest) · [**Docs**](docs/) · [**Changelog**](CHANGELOG.md)
+
 </div>
+
+## Install
+
+**macOS** (Apple Silicon and Intel) — one line, no Gatekeeper dialog:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/Fast-Editor/Caret/main/scripts/install.sh | sh
+```
+
+or with Homebrew: `brew install --cask --no-quarantine fast-editor/lynkr/caret`.
+
+Or download the DMG from the [latest release](https://github.com/Fast-Editor/Caret/releases/latest) and drag Caret to Applications.
+Builds are ad-hoc signed until a Developer ID is configured, so a browser-downloaded copy is quarantined and macOS reports
+*"Caret is damaged and can't be opened"*. Clear it once:
+
+```bash
+xattr -dr com.apple.quarantine /Applications/Caret.app
+```
+
+(or System Settings → Privacy & Security → *Open Anyway*). After that, updates install from inside the app: **Settings → About → Check for updates**.
+
+**Windows and Linux** installers (`.msi`/`.exe`, `.deb`/`.AppImage`) are produced by the same release workflow on a best-effort basis
+and attached to each release; see [docs/RELEASING.md](docs/RELEASING.md) for their status.
 
 ## Why Caret
 
@@ -36,6 +67,7 @@ Measured on the release build (see [docs/PERFORMANCE.md](docs/PERFORMANCE.md)): 
 - **Workbench** — explorer with git decorations, project-wide search/replace, source control (commit UI, AI commit messages, branches, history, stashes, worktrees), integrated terminal (xterm.js, splits), command palette, quick open, keybindings editor, full settings UI, status bar with live memory badge, privacy mode.
 - **Providers** — Anthropic (Messages API with adaptive thinking, effort, prompt caching, refusal fallbacks), OpenAI, OpenAI-compatible (Ollama, OpenRouter, LM Studio, vLLM, proxies), Azure OpenAI, Gemini (OpenAI-compatible endpoint). Bring your own keys; nothing leaves your machine except model calls.
 - **External agents (ACP)** — pick **Claude Code, Codex, Gemini CLI, OpenCode, Pi, GLM** or any Agent Client Protocol agent per chat from the composer. Pick the agent's model, effort and permission mode from the composer (ACP session config options). The agent runs locally with its own login; its streaming text, thoughts, tool calls, permission prompts, diffs (checkpointed, in the review bar) and terminals all flow through Caret's UI. Install adapters from Settings → Agents. See `docs/ACP.md`.
+- **Auto routing** — turn "Auto" into a real router: a managed [Lynkr](https://github.com/Fast-Editor/lynkr) sidecar scores every request and picks one of *your* configured models per tier (SIMPLE → REASONING), with session pins and fallback climbing; Caret still executes with its own providers and keys and shows `Auto → model · TIER` on each reply. [docs/AUTO_ROUTING.md](docs/AUTO_ROUTING.md).
 - **Command safety & sandbox** — every agent shell command is parsed (POSIX shell AST incl. nested `sh -c`/`eval`/`$( )`) and classified below the model (safe / caution / destructive / blocked with labels); destructive commands always ask, blocked ones never run; approved commands run under **macOS Seatbelt / Linux bubblewrap** (writes limited to workspace + temp + caches, credential folders unreadable, optional no-network); **MCP tool-description pinning** re-approves tools that silently change. See `docs/SANDBOX.md`.
 - **Cursor compatibility** — reads `.cursor/rules`, `.cursor/mcp.json`, `.cursor/hooks.json`, `.cursor/commands`, `.cursor/skills`, `.cursor/agents`, `.cursorignore`, `.cursorindexingignore` so existing projects work unchanged.
 
@@ -251,7 +283,7 @@ Details and the transport (`open -b dev.caret.editor`, `caret://open?path=…`) 
 
 ## Architecture
 
-See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the module map, IPC conventions and memory rules, [docs/UI_COMMANDS.md](docs/UI_COMMANDS.md) for the UI command registry. Feature docs: [PROVIDERS](docs/PROVIDERS.md), [VERIFIED_DIFF](docs/VERIFIED_DIFF.md), [SANDBOX](docs/SANDBOX.md), [TERMINAL](docs/TERMINAL.md), [ACP](docs/ACP.md), [CLI](docs/CLI.md), [PERFORMANCE](docs/PERFORMANCE.md).
+See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the module map, IPC conventions and memory rules, [docs/UI_COMMANDS.md](docs/UI_COMMANDS.md) for the UI command registry. Feature docs: [PROVIDERS](docs/PROVIDERS.md), [AUTO_ROUTING](docs/AUTO_ROUTING.md), [VERIFIED_DIFF](docs/VERIFIED_DIFF.md), [SANDBOX](docs/SANDBOX.md), [TERMINAL](docs/TERMINAL.md), [ACP](docs/ACP.md), [CLI](docs/CLI.md), [PERFORMANCE](docs/PERFORMANCE.md).
 
 ## License
 
