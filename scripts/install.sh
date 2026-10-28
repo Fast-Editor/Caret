@@ -13,7 +13,12 @@ TMP=$(mktemp -d); trap 'hdiutil detach "$TMP/mnt" -quiet 2>/dev/null || true; rm
 echo "Downloading $(basename "$URL")…"; curl -fL --progress-bar "$URL" -o "$TMP/caret.dmg"
 mkdir -p "$TMP/mnt"; hdiutil attach "$TMP/caret.dmg" -nobrowse -quiet -mountpoint "$TMP/mnt"
 APP=$(find "$TMP/mnt" -maxdepth 1 -name '*.app' | head -1); [ -n "$APP" ] || { echo "no .app inside the DMG"; exit 1; }
-DEST="/Applications/$(basename "$APP")"
-if [ -w /Applications ]; then rm -rf "$DEST"; cp -R "$APP" "$DEST"; else echo "Need permission to write /Applications:"; sudo rm -rf "$DEST"; sudo cp -R "$APP" "$DEST"; fi
+# Destination: $CARET_INSTALL_DIR, else /Applications when writable, else (sudo if a terminal is available) else ~/Applications.
+NAME=$(basename "$APP")
+if [ -n "${CARET_INSTALL_DIR:-}" ]; then DIR="$CARET_INSTALL_DIR"; mkdir -p "$DIR"; DEST="$DIR/$NAME"; rm -rf "$DEST"; cp -R "$APP" "$DEST"
+elif [ -w /Applications ]; then DEST="/Applications/$NAME"; rm -rf "$DEST"; cp -R "$APP" "$DEST"
+elif [ -r /dev/tty ] && sudo -p "Password (to install into /Applications): " -v </dev/tty 2>/dev/null; then DEST="/Applications/$NAME"; sudo rm -rf "$DEST"; sudo cp -R "$APP" "$DEST"; sudo chown -R "$(id -u):$(id -g)" "$DEST"
+else DIR="$HOME/Applications"; mkdir -p "$DIR"; DEST="$DIR/$NAME"; rm -rf "$DEST"; cp -R "$APP" "$DEST"; echo "(/Applications is not writable without a password; installed into $DIR instead)"
+fi
 xattr -dr com.apple.quarantine "$DEST" 2>/dev/null || true
 echo "Installed $DEST. Launch it from Spotlight, or install the \`caret\` command from its command palette."
