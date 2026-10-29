@@ -30,3 +30,8 @@ export function fuzzyScore(query: string, text: string): { score: number; indice
   score -= Math.max(0, (indices[indices.length - 1] - indices[0] + 1 - q.length)) * 0.1
   return { score, indices }
 }
+
+/** Palette inputs carry a mode prefix (`>` commands, `@` symbols, `#` search). Matching must score only the text after it. */
+export function stripPalettePrefix(search: string): string {
+  return search.replace(/^[>@#]\s*/, '')
+}

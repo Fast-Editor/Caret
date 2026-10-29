@@ -4,6 +4,9 @@ All notable changes to Caret. The version here must match `package.json`, `src-t
 
 ## Unreleased
 
+- Command palette: opening with ⌘⇧P listed nothing and nothing typed after the `>` prefix matched, because the prefix
+  was scored as part of the query. The prefix is now stripped before matching and an empty query lists every command,
+  recently used first.
 - Menus, popovers, dialogs and toasts had no background or shadow (the floating-surface tokens were never defined per
   theme), so context menus floated transparently over code. Each theme now defines them.
 - Tab bar: closed editors no longer linger as unclickable ghost tabs (the exit-animation timer was cancelled by the

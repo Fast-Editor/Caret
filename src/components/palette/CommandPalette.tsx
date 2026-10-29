@@ -46,7 +46,7 @@ export function CommandPalette({ initial = '' }: { initial?: string }) {
         const kb = c.keybinding ?? getKeybindingFor(c.id)
         return (
           <PaletteItem key={c.id} value={`${c.id} ${c.category ?? ''} ${c.title}`} keywords={[q]} onSelect={() => run(c)}>
-            <span className="text-muted truncate">{c.category ? `${c.category}: ` : ''}<span className="text-fg">{c.title}</span></span>
+            <span className="text-muted truncate">{c.category && !c.title.startsWith(`${c.category}:`) ? `${c.category}: ` : ''}<span className="text-fg">{c.title}</span></span>
             {recentIds.has(c.id) && <span className="text-[10px] text-faint">recently used</span>}
             <span className="ml-auto flex items-center gap-2">{kb && <Kbd keys={kb} />}</span>
           </PaletteItem>
