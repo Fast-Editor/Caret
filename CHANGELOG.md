@@ -4,6 +4,13 @@ All notable changes to Caret. The version here must match `package.json`, `src-t
 
 ## Unreleased
 
+- Tab bar: closed editors no longer linger as unclickable ghost tabs (the exit-animation timer was cancelled by the
+  very state change that closing a tab causes, so ghosts piled up at the end of the strip and new tabs opened out of
+  view).
+- Quick Open, @-mentions and the file list now see files that only an ignore file hides (a repo's own `tmp/`, scratch
+  folders): they form a second tier of the file index, ranked below tracked files, marked "ignored" in the list, and
+  heavy directories such as node_modules, dist, build or target stay excluded. Semantic search and the AI context index
+  still honour ignore files.
 - Editor completions: debounced document edits are flushed to the language server before any request, and
   client→server writes are serialised, so completion lists are filtered against what you actually typed instead of
   a stale document (previously visible as an unfiltered Java list and insertions at the wrong column).

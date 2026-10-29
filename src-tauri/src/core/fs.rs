@@ -6,7 +6,7 @@ use crate::paths;
 use base64::Engine;
 use parking_lot::{Mutex, RwLock};
 use serde::{Deserialize, Serialize};
-use std::collections::BinaryHeap;
+use std::collections::{BinaryHeap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use tauri::{AppHandle, Listener, Manager};
@@ -55,7 +55,8 @@ pub struct WriteResult { pub path: String, pub mtime: u64, pub size: u64 }
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub struct QuickOpenResult { pub path: String, pub rel_path: String, pub score: i32, #[serde(skip_serializing_if = "Option::is_none")] pub indices: Option<Vec<u32>> }
+pub struct QuickOpenResult { pub path: String, pub rel_path: String, pub score: i32, #[serde(skip_serializing_if = "Option::is_none")] pub indices: Option<Vec<u32>>, /// Lives in a git-ignored (or .caretignore'd) directory: still openable, ranked below regular files.
+    pub ignored: bool }
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -338,7 +339,7 @@ pub async fn fs_read_image(app: AppHandle, path: String) -> Result<ImageData> {
 
 pub const INDEX_CAP: usize = 200_000;
 
-struct Entry { rel: String, lower: String }
+struct Entry { rel: String, lower: String, ignored: bool }
 
 #[derive(Default)]
 pub struct FileIndexState {
@@ -389,6 +390,47 @@ pub fn collect_workspace_files(root: &Path, global_ignore: &[String], exclude_gl
     v
 }
 
+/// Directories never surfaced even as low-priority "ignored" results: generated output, dependency trees and tool state.
+const IGNORED_TIER_SKIP: &[&str] = &[".git", ".hg", ".svn", ".caret", "node_modules", "bower_components", "__pycache__", ".venv", "venv", ".next", ".nuxt", ".turbo", ".cache", ".pytest_cache", ".mypy_cache", ".gradle", ".idea", "target", "dist", "build", "out", "coverage", ".terraform", ".tox", ".parcel-cache", ".yarn", ".pnpm-store", "Pods", "DerivedData", ".dart_tool"];
+pub const IGNORED_CAP: usize = 50_000;
+
+/// Files that only the ignore rules hide (a repo's own `tmp/`, scratch dirs, logs): a second walk with ignore files off but
+/// the heavy-directory skip list, settings excludes and global ignores still applied. `known` are the first-tier paths.
+pub fn collect_ignored_files(root: &Path, global_ignore: &[String], exclude_globs: &[String], known: &HashSet<String>, cap: usize) -> Vec<String> {
+    let mut wb = ignore::WalkBuilder::new(root);
+    wb.hidden(false).git_ignore(false).git_global(false).git_exclude(false).ignore(false).parents(false).require_git(false).follow_links(false).same_file_system(false)
+        .threads(std::thread::available_parallelism().map(|n| n.get().min(8)).unwrap_or(4));
+    let mut ob = ignore::overrides::OverrideBuilder::new(root);
+    for g in IGNORED_TIER_SKIP.iter().map(|s| s.to_string()).chain(global_ignore.iter().cloned()).chain(exclude_globs.iter().cloned()) {
+        let g = g.trim(); if g.is_empty() { continue; }
+        let pat = if let Some(rest) = g.strip_prefix('!') { rest.to_string() } else { format!("!{g}") };
+        let _ = ob.add(&pat);
+        if !pat.contains('/') && !pat.contains('*') { let _ = ob.add(&format!("{pat}/**")); }
+    }
+    if let Ok(ov) = ob.build() { wb.overrides(ov); }
+    wb.filter_entry(|e| { let is_dir = e.file_type().map(|t| t.is_dir()).unwrap_or(false); let n = e.file_name().to_string_lossy(); !(is_dir && IGNORED_TIER_SKIP.iter().any(|s| *s == n.as_ref())) });
+    let out = std::sync::Arc::new(Mutex::new(Vec::<String>::new()));
+    let stop = std::sync::Arc::new(AtomicBool::new(false));
+    let root_b = root.to_path_buf();
+    wb.build_parallel().run(|| {
+        let out = out.clone(); let stop = stop.clone(); let root_b = root_b.clone();
+        Box::new(move |res| {
+            if stop.load(Ordering::Relaxed) { return ignore::WalkState::Quit; }
+            let Ok(e) = res else { return ignore::WalkState::Continue };
+            if !e.file_type().map(|t| t.is_file()).unwrap_or(false) { return ignore::WalkState::Continue; }
+            let rel = paths::rel_to(&root_b, e.path());
+            if known.contains(&rel) { return ignore::WalkState::Continue; }
+            let mut g = out.lock();
+            if g.len() >= cap { stop.store(true, Ordering::Relaxed); return ignore::WalkState::Quit; }
+            g.push(rel);
+            ignore::WalkState::Continue
+        })
+    });
+    let mut v = std::mem::take(&mut *out.lock());
+    v.sort_unstable();
+    v
+}
+
 fn rebuild_index(app: &AppHandle) {
     let st = app.state::<FileIndexState>();
     let _g = st.build_lock.lock();
@@ -396,8 +438,13 @@ fn rebuild_index(app: &AppHandle) {
     let settings = app.state::<SettingsState>().effective();
     let t0 = std::time::Instant::now();
     let files = collect_workspace_files(&root, &settings.general.global_ignore, &settings.indexing.exclude_globs, INDEX_CAP);
-    let entries: Vec<Entry> = files.into_iter().map(|rel| Entry { lower: rel.to_lowercase(), rel }).collect();
-    tracing::info!(files = entries.len(), ms = t0.elapsed().as_millis() as u64, "quick-open index built");
+    let known: HashSet<String> = files.iter().cloned().collect();
+    let extra = collect_ignored_files(&root, &settings.general.global_ignore, &settings.indexing.exclude_globs, &known, IGNORED_CAP);
+    let n_ignored = extra.len();
+    let mut entries: Vec<Entry> = files.into_iter().map(|rel| Entry { lower: rel.to_lowercase(), rel, ignored: false })
+        .chain(extra.into_iter().map(|rel| Entry { lower: rel.to_lowercase(), rel, ignored: true })).collect();
+    entries.sort_unstable_by(|a, b| a.rel.cmp(&b.rel));
+    tracing::info!(files = entries.len(), ignored = n_ignored, ms = t0.elapsed().as_millis() as u64, "quick-open index built");
     *st.root.write() = Some(root);
     *st.entries.write() = entries;
     st.ready.store(true, Ordering::Release);
@@ -416,10 +463,13 @@ pub fn index_add(app: &AppHandle, path: &Path) {
     let Some(root) = st.root() else { return };
     if !path.starts_with(&root) || !path.is_file() { return; }
     let rel = paths::rel_to(&root, path);
-    if rel.split('/').any(|seg| seg == ".git") { return; }
+    if rel.split('/').any(|seg| IGNORED_TIER_SKIP.contains(&seg)) { return; }
+    // Classify like the builder would, so a watcher-added file in `tmp/` ranks as ignored instead of jumping the queue.
+    let global = app.state::<SettingsState>().effective().general.global_ignore.clone();
+    let ignored = path.parent().map(|d| IgnoreSet::build(Some(&root), d, &global).is_ignored(path, false)).unwrap_or(false);
     let mut e = st.entries.write();
-    if e.len() >= INDEX_CAP { return; }
-    match e.binary_search_by(|x| x.rel.as_str().cmp(rel.as_str())) { Ok(_) => {}, Err(pos) => e.insert(pos, Entry { lower: rel.to_lowercase(), rel }) }
+    if e.len() >= INDEX_CAP + IGNORED_CAP { return; }
+    match e.binary_search_by(|x| x.rel.as_str().cmp(rel.as_str())) { Ok(_) => {}, Err(pos) => e.insert(pos, Entry { lower: rel.to_lowercase(), rel, ignored }) }
 }
 
 /// Remove a path (file or directory subtree) from the index.
@@ -479,6 +529,9 @@ pub fn fuzzy_match(query_lower: &[char], cand: &str, cand_lower: &[char]) -> Opt
     Some((score, positions.into_iter().map(|p| p as u32).collect()))
 }
 
+/// Score handicap for ignored-tier files: a strong match in `tmp/` still beats a weak one elsewhere, but ties go to tracked files.
+const IGNORED_PENALTY: i32 = 80;
+
 #[derive(PartialEq, Eq)]
 struct Scored { score: i32, idx: usize }
 impl Ord for Scored { fn cmp(&self, o: &Self) -> std::cmp::Ordering { o.score.cmp(&self.score).then_with(|| self.idx.cmp(&o.idx)) } }
@@ -499,12 +552,13 @@ pub async fn fs_quick_open(app: AppHandle, query: String, limit: Option<usize>) 
         let entries = st.entries.read();
         let mut heap: BinaryHeap<Scored> = BinaryHeap::with_capacity(limit + 1);
         if ql.is_empty() {
-            return Ok(entries.iter().take(limit).map(|e| QuickOpenResult { path: root.join(&e.rel).to_string_lossy().to_string(), rel_path: e.rel.clone(), score: 0, indices: None }).collect());
+            return Ok(entries.iter().filter(|e| !e.ignored).take(limit).map(|e| QuickOpenResult { path: root.join(&e.rel).to_string_lossy().to_string(), rel_path: e.rel.clone(), score: 0, indices: None, ignored: false }).collect());
         }
         let mut scores: Vec<(usize, i32, Vec<u32>)> = Vec::new();
         for (i, e) in entries.iter().enumerate() {
             let lower: Vec<char> = e.lower.chars().collect();
             if let Some((s, idx)) = fuzzy_match(&ql, &e.rel, &lower) {
+                let s = if e.ignored { s - IGNORED_PENALTY } else { s };
                 heap.push(Scored { score: s, idx: scores.len() });
                 scores.push((i, s, idx));
                 if heap.len() > limit { heap.pop(); }
@@ -512,20 +566,33 @@ pub async fn fs_quick_open(app: AppHandle, query: String, limit: Option<usize>) 
         }
         let mut picked: Vec<Scored> = heap.into_vec();
         picked.sort();
-        Ok(picked.into_iter().map(|sc| { let (ei, s, idx) = &scores[sc.idx]; let e = &entries[*ei]; QuickOpenResult { path: root.join(&e.rel).to_string_lossy().to_string(), rel_path: e.rel.clone(), score: *s, indices: Some(idx.clone()) } }).collect())
+        Ok(picked.into_iter().map(|sc| { let (ei, s, idx) = &scores[sc.idx]; let e = &entries[*ei]; QuickOpenResult { path: root.join(&e.rel).to_string_lossy().to_string(), rel_path: e.rel.clone(), score: *s, indices: Some(idx.clone()), ignored: e.ignored } }).collect())
     }).await.map_err(|e| CaretError::internal(e.to_string()))?
 }
 
 #[tauri::command]
 pub async fn fs_list_files(app: AppHandle, limit: Option<usize>) -> Result<Vec<String>> {
     let limit = limit.unwrap_or(20_000);
-    tokio::task::spawn_blocking(move || { ensure_index(&app); let st = app.state::<FileIndexState>(); let v: Vec<String> = st.entries.read().iter().take(limit).map(|e| e.rel.clone()).collect(); Ok(v) }).await.map_err(|e| CaretError::internal(e.to_string()))?
+    tokio::task::spawn_blocking(move || { ensure_index(&app); let st = app.state::<FileIndexState>(); let v: Vec<String> = st.entries.read().iter().filter(|e| !e.ignored).take(limit).map(|e| e.rel.clone()).collect(); Ok(v) }).await.map_err(|e| CaretError::internal(e.to_string()))?
 }
 
 // ───────────────────────── tests ─────────────────────────
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn ignored_tier_surfaces_gitignored_files_but_not_heavy_dirs() {
+        let d = tempfile::tempdir().unwrap(); let r = d.path();
+        std::fs::create_dir_all(r.join("src")).unwrap(); std::fs::create_dir_all(r.join("tmp/node_modules")).unwrap(); std::fs::create_dir_all(r.join("node_modules")).unwrap();
+        std::fs::write(r.join(".gitignore"), "tmp/\nnode_modules\n").unwrap();
+        std::fs::write(r.join("src/a.txt"), "a").unwrap(); std::fs::write(r.join("tmp/x.txt"), "x").unwrap();
+        std::fs::write(r.join("tmp/node_modules/n.js"), "n").unwrap(); std::fs::write(r.join("node_modules/m.js"), "m").unwrap();
+        let tier0 = collect_workspace_files(r, &[], &[], 1000);
+        assert!(tier0.iter().any(|p| p == "src/a.txt") && !tier0.iter().any(|p| p.starts_with("tmp/")));
+        let known: HashSet<String> = tier0.iter().cloned().collect();
+        let tier1 = collect_ignored_files(r, &[], &[], &known, 1000);
+        assert_eq!(tier1, vec!["tmp/x.txt".to_string()]);
+    }
     #[test]
     fn line_endings() {
         assert_eq!(detect_line_ending("a\nb\n"), "lf");

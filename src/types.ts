@@ -41,7 +41,7 @@ export interface CliStatus { installed: boolean; path?: string; target?: string;
 export interface FileStat { path: string; kind: FileKind; size: number; mtime: number; readonly: boolean; exists: boolean }
 export interface WriteResult { path: string; mtime: number; size: number }
 export interface FsChangeEvent { kind: 'create' | 'modify' | 'remove' | 'rename' | 'any'; paths: string[] }
-export interface QuickOpenResult { path: string; relPath: string; score: number; indices?: number[] }
+export interface QuickOpenResult { path: string; relPath: string; score: number; indices?: number[]; ignored?: boolean }
 
 // ───────────────────────────── search ─────────────────────────────
 export interface SearchQuery {

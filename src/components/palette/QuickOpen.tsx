@@ -11,7 +11,7 @@ import { parseQuickOpenInput } from './parse'
 import type { QuickOpenResult } from '@/types'
 import { fileIconFor } from '@/components/explorer/fileIcons'
 
-type Row = { path: string; relPath: string; indices?: number[]; recent?: boolean }
+type Row = { path: string; relPath: string; indices?: number[]; recent?: boolean; ignored?: boolean }
 
 export function QuickOpen({ initial = '' }: { initial?: string }) {
   const close = useUi((s) => s.closePalette)
@@ -46,7 +46,7 @@ export function QuickOpen({ initial = '' }: { initial?: string }) {
     const t = setTimeout(async () => {
       try {
         const res: QuickOpenResult[] = await api.fs.quickOpen(parsed.query, 60)
-        if (my === seq.current) setRows(res.map((r) => ({ path: r.path, relPath: r.relPath, indices: r.indices })))
+        if (my === seq.current) setRows(res.map((r) => ({ path: r.path, relPath: r.relPath, indices: r.indices, ignored: r.ignored })))
       } catch { if (my === seq.current) setRows([]) } finally { if (my === seq.current) setLoading(false) }
     }, 60)
     return () => clearTimeout(t)
@@ -71,8 +71,9 @@ export function QuickOpen({ initial = '' }: { initial?: string }) {
         return (
           <PaletteItem key={r.path} value={r.path} onSelect={() => open(r, false)}>
             <span className="text-muted [&_svg]:size-4" data-path={r.path}>{r.recent ? <Clock /> : fileIconFor(name, false) ?? <File />}</span>
-            <Highlight text={name} indices={nameIdx} />
+            <Highlight text={name} indices={nameIdx} className={r.ignored ? 'opacity-60' : undefined} />
             <Highlight text={dir} indices={dirIdx} className="text-muted truncate text-[11px]" />
+            {r.ignored && <span className="ml-auto shrink-0 text-faint text-[10px]" title="Matched by an ignore file; not indexed for search or AI context">ignored</span>}
           </PaletteItem>
         )
       })}

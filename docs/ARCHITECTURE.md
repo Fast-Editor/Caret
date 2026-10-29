@@ -101,3 +101,13 @@ Motion is a shared system, not per-component improvisation (`src/styles.css`, `s
   waiter on a cancelled or failed request runs its own instead of inheriting an empty result.
 - **Automation.** `window.__caret` exposes `monaco`, `lsp` (the manager) and `tab` (last round-trips) for
   `scripts/e2e.mjs eval`; type with `editor.trigger('keyboard', 'type', …)` or quick suggestions will not fire.
+
+## File index tiers
+
+`core/fs.rs` keeps one in-memory file index per workspace. Tier 0 is the ignore-aware walk (gitignore, .caretignore,
+.cursorignore, settings excludes). Tier 1 is a second walk with ignore files off that still skips `IGNORED_TIER_SKIP`
+(dependency trees, build output, tool caches) and the settings excludes, capped at `IGNORED_CAP`; its entries carry
+`ignored: true`, lose `IGNORED_PENALTY` in fuzzy ranking and are omitted from `fs_list_files`. The watcher classifies
+late additions with the same `IgnoreSet` so behaviour does not depend on whether a file was touched after start-up.
+Semantic indexing (`index/`) and text search keep their own ignore handling; text search exposes a "Use .gitignore"
+toggle instead.
