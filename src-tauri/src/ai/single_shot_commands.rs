@@ -32,7 +32,7 @@ pub async fn ai_commit_message(app: AppHandle, req: commit::CommitMessageRequest
 #[tauri::command]
 pub async fn ai_review(app: AppHandle, req: review::ReviewRequest, on_event: Channel<review::ReviewStreamEvent>) -> Result<String> { review::start_review(app, req, on_event).await }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn ai_review_list(app: AppHandle) -> Result<Vec<review::ReviewResult>> { let root = crate::ai::util::workspace_root(&app); Ok(app.state::<review::ReviewState>().list(root.as_deref())) }
 
 #[tauri::command]

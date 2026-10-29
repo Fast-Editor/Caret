@@ -4,6 +4,10 @@ All notable changes to Caret. The version here must match `package.json`, `src-t
 
 ## Unreleased
 
+- Responsiveness: sixty read-only backend commands (settings, registries, status probes, file stat, session and
+  knowledge lists) ran synchronously on the main thread and froze the whole window for the duration of their disk
+  reads and process spawns; they now run on worker threads. The debugpy probe, which spawned a Python interpreter on
+  every Settings or Debug render, is cached for a minute.
 - Tab context menu: actions never ran because the outside-press listener closed the menu before the item's click
   fired; presses inside the menu are now ignored by that listener and only Escape closes it from the keyboard.
 - Command palette: opening with ⌘⇧P listed nothing and nothing typed after the `>` prefix matched, because the prefix

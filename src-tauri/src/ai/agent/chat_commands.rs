@@ -17,7 +17,7 @@ type Mgr<'a> = State<'a, Arc<AgentManager>>;
 #[tauri::command]
 pub fn chat_subscribe(mgr: Mgr<'_>, on_event: Channel<AgentEvent>) -> Result<()> { mgr.subscribe(on_event); Ok(()) }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn chat_list_sessions(mgr: Mgr<'_>, include_archived: Option<bool>) -> Result<Vec<SessionSummary>> { Ok(mgr.list_sessions(include_archived.unwrap_or(false))) }
 
 #[tauri::command]
@@ -30,7 +30,7 @@ pub async fn chat_create_session(app: AppHandle, mgr: Mgr<'_>, mode: Option<Stri
     let v = h.session.lock().view(); Ok(v)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn chat_get_session(mgr: Mgr<'_>, session_id: String) -> Result<ChatSessionView> { let h = mgr.handle(&session_id)?; let v = h.session.lock().view(); Ok(v) }
 
 #[tauri::command]
@@ -60,7 +60,7 @@ pub fn chat_pin_session(mgr: Mgr<'_>, session_id: String, pinned: bool) -> Resul
 #[tauri::command]
 pub fn chat_archive_session(mgr: Mgr<'_>, session_id: String, archived: bool) -> Result<()> { let h = mgr.handle(&session_id)?; { h.session.lock().archived = archived; } mgr.persist_now(&h); Ok(()) }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn chat_export_session(mgr: Mgr<'_>, session_id: String, format: String) -> Result<String> {
     let h = mgr.handle(&session_id)?; let s = h.session.lock();
     Ok(match format.as_str() { "json" => serde_json::to_string_pretty(&s.view())?, _ => SessionStore::export_markdown(&s) })
@@ -119,7 +119,7 @@ pub fn chat_accept_changes(mgr: Mgr<'_>, session_id: String, change_ids: Option<
 #[tauri::command]
 pub fn chat_reject_changes(mgr: Mgr<'_>, session_id: String, change_ids: Option<Vec<String>>) -> Result<()> { mgr.reject_changes(&session_id, change_ids) }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn chat_pending_changes(mgr: Mgr<'_>, session_id: String) -> Result<Vec<PendingChange>> {
     let h = mgr.handle(&session_id)?; let s = h.session.lock();
     Ok(s.changes.iter().filter(|c| c.status == ChangeStatus::Pending).cloned().collect())
@@ -128,7 +128,7 @@ pub fn chat_pending_changes(mgr: Mgr<'_>, session_id: String) -> Result<Vec<Pend
 #[tauri::command]
 pub fn chat_change_diff(mgr: Mgr<'_>, change_id: String) -> Result<PendingChange> { mgr.find_change(&change_id).ok_or_else(|| CaretError::not_found(format!("change {change_id}"))) }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn chat_checkpoints(mgr: Mgr<'_>, session_id: String) -> Result<Vec<Checkpoint>> { let h = mgr.handle(&session_id)?; let v = h.session.lock().checkpoints.clone(); Ok(v) }
 
 #[tauri::command]
@@ -192,7 +192,7 @@ pub async fn chat_edit_message(mgr: Mgr<'_>, session_id: String, message_id: Str
     mgr.inner().submit(SendMessageRequest { session_id, text, context, images, mode, ..Default::default() }).await
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn chat_list_modes(mgr: Mgr<'_>) -> Result<Vec<ModeView>> {
     let settings = mgr.settings();
     Ok(modes::all_modes(&settings).into_iter().map(|m| ModeView { id: m.id, name: m.name, description: m.description, icon: m.icon, builtin: m.builtin, tools: match m.tools { modes::ToolFilter::All => Value::String("all".into()), modes::ToolFilter::Readonly => Value::String("readonly".into()), modes::ToolFilter::Only { names } => Value::Array(names.into_iter().map(Value::String).collect()) } }).collect())

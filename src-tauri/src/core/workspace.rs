@@ -76,15 +76,15 @@ pub fn close_workspace(app: &AppHandle) {
 
 #[tauri::command]
 pub fn workspace_open(app: AppHandle, path: String) -> Result<WorkspaceInfo> { open_workspace(&app, Path::new(&path)) }
-#[tauri::command]
+#[tauri::command(async)]
 pub fn workspace_current(ws: State<'_, WorkspaceState>) -> Result<Option<WorkspaceInfo>> { Ok(ws.info()) }
 #[tauri::command]
 pub fn workspace_close(app: AppHandle) -> Result<()> { close_workspace(&app); Ok(()) }
-#[tauri::command]
+#[tauri::command(async)]
 pub fn workspace_recent() -> Result<Vec<RecentWorkspace>> { Ok(load_recent()) }
 #[tauri::command]
 pub fn workspace_remove_recent(path: String) -> Result<()> { let mut v = load_recent(); v.retain(|r| r.path != path); save_recent(&v); Ok(()) }
-#[tauri::command]
+#[tauri::command(async)]
 pub fn workspace_ensure_project_dir(ws: State<'_, WorkspaceState>) -> Result<String> {
     let root = ws.require_root()?;
     let dir = root.join(".caret");

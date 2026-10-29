@@ -8,7 +8,7 @@ use tauri::{AppHandle, Manager};
 
 fn mgr(app: &AppHandle) -> Result<Arc<RouterManager>> { super::manager(app).ok_or_else(|| CaretError::internal("router not initialised")) }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn router_status(app: AppHandle) -> Result<RouterStatus> { Ok(mgr(&app)?.status()) }
 
 #[tauri::command]
@@ -20,11 +20,11 @@ pub async fn router_restart(app: AppHandle) -> Result<RouterStatus> { mgr(&app)?
 #[tauri::command]
 pub fn router_stop(app: AppHandle) -> Result<RouterStatus> { let m = mgr(&app)?; m.stop(); Ok(m.status()) }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn router_logs(app: AppHandle) -> Result<Vec<String>> { Ok(mgr(&app)?.logs()) }
 
 /// Tier assignment computed from the current settings (what the sidecar would be configured with).
-#[tauri::command]
+#[tauri::command(async)]
 pub fn router_preview_assignment(app: AppHandle) -> Result<Assignment> {
     let st = app.state::<SettingsState>();
     let s = st.effective();

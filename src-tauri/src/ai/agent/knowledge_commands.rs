@@ -10,10 +10,10 @@ use tauri::{AppHandle, State};
 fn root(ws: &WorkspaceState) -> Option<PathBuf> { ws.root() }
 
 // ───────── rules ─────────
-#[tauri::command]
+#[tauri::command(async)]
 pub fn rules_list(ws: State<'_, WorkspaceState>, st: State<'_, SettingsState>) -> Result<Vec<rules::RuleInfo>> { Ok(rules::list(root(&ws).as_deref(), &st.effective())) }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn rules_read(ws: State<'_, WorkspaceState>, st: State<'_, SettingsState>, rule_id: String) -> Result<String> {
     let r = root(&ws);
     let file = rules::resolve_path(r.as_deref(), &st.effective(), &rule_id).ok_or_else(|| CaretError::not_found(format!("Rule {rule_id}")))?;
@@ -41,7 +41,7 @@ pub fn rules_delete(app: AppHandle, ws: State<'_, WorkspaceState>, st: State<'_,
 }
 
 // ───────── memories ─────────
-#[tauri::command]
+#[tauri::command(async)]
 pub fn memories_list(ws: State<'_, WorkspaceState>) -> Result<Vec<memories::MemoryItem>> { Ok(memories::list(root(&ws).as_deref())) }
 #[tauri::command]
 pub fn memories_add(ws: State<'_, WorkspaceState>, text: String, title: Option<String>) -> Result<memories::MemoryItem> { memories::add(root(&ws).as_deref(), &text, title.as_deref(), "user", None) }
@@ -53,21 +53,21 @@ pub fn memories_delete(ws: State<'_, WorkspaceState>, memory_id: String) -> Resu
 pub fn memories_toggle(ws: State<'_, WorkspaceState>, memory_id: String, enabled: bool) -> Result<()> { memories::toggle(root(&ws).as_deref(), &memory_id, enabled) }
 
 // ───────── skills / commands / subagents / hooks ─────────
-#[tauri::command]
+#[tauri::command(async)]
 pub fn skills_list(ws: State<'_, WorkspaceState>) -> Result<Vec<skills::SkillInfo>> { Ok(skills::list(root(&ws).as_deref())) }
-#[tauri::command]
+#[tauri::command(async)]
 pub fn skills_read(ws: State<'_, WorkspaceState>, skill_id: String) -> Result<String> { skills::read(root(&ws).as_deref(), &skill_id) }
-#[tauri::command]
+#[tauri::command(async)]
 pub fn commands_list(ws: State<'_, WorkspaceState>) -> Result<Vec<slash::SlashCommandInfo>> { Ok(slash::list(root(&ws).as_deref())) }
-#[tauri::command]
+#[tauri::command(async)]
 pub fn subagents_list(ws: State<'_, WorkspaceState>) -> Result<Vec<subagents::SubagentInfo>> { Ok(subagents::list(root(&ws).as_deref())) }
-#[tauri::command]
+#[tauri::command(async)]
 pub fn hooks_list(ws: State<'_, WorkspaceState>) -> Result<Vec<hooks::HookInfo>> { Ok(hooks::list(root(&ws).as_deref())) }
 
 // ───────── plans ─────────
-#[tauri::command]
+#[tauri::command(async)]
 pub fn plans_list(ws: State<'_, WorkspaceState>) -> Result<Vec<plans::PlanInfo>> { Ok(plans::list(root(&ws).as_deref())) }
-#[tauri::command]
+#[tauri::command(async)]
 pub fn plans_read(path: String) -> Result<String> { plans::read(&path) }
 #[tauri::command]
 pub fn plans_set_status(path: String, status: String) -> Result<()> { plans::set_status(&path, &status) }

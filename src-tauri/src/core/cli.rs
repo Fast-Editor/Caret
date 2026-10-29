@@ -336,7 +336,7 @@ pub fn uninstall(app: &AppHandle) -> Result<CliStatus> {
 #[tauri::command]
 pub fn cli_take_pending_opens(q: State<'_, OpenQueue>) -> Result<Vec<OpenRequest>> { Ok(q.drain()) }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn cli_status(app: AppHandle) -> Result<CliStatus> { Ok(status(&app)) }
 
 #[tauri::command]

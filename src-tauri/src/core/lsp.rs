@@ -218,7 +218,7 @@ pub fn init(app: &AppHandle) {
 
 // ───────────────────────── commands ─────────────────────────
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn lsp_configs(settings: State<'_, SettingsState>) -> Result<Vec<LspConfigEntry>> {
     let s = settings.effective();
     Ok(s.lsp.servers.into_iter().map(|c| { let installed = crate::acp::process::resolve_command(&c.command).is_some() || which::which(&c.command).is_ok(); LspConfigEntry { config: c, installed } }).collect())
@@ -252,13 +252,13 @@ pub async fn lsp_send(st: State<'_, LspState>, server_id: String, message: Value
     srv.write(&message).await
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn lsp_status(st: State<'_, LspState>) -> Result<Vec<LspServerStatus>> { Ok(st.statuses()) }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn lsp_diagnostics(store: State<'_, DiagnosticsStore>) -> Result<Vec<FileDiagnostics>> { Ok(store.all()) }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn lsp_diagnostics_for(store: State<'_, DiagnosticsStore>, path: String) -> Result<Vec<FileDiagnostics>> { Ok(store.for_path(&path)) }
 
 #[tauri::command]

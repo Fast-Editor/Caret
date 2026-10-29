@@ -19,7 +19,7 @@ impl Default for AppStats {
     fn default() -> Self { Self { sys: Mutex::new(sysinfo::System::new()), started: std::time::Instant::now() } }
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn app_info(app: AppHandle) -> Result<AppInfo> {
     Ok(AppInfo {
         version: app.package_info().version.to_string(),
@@ -33,7 +33,7 @@ pub fn app_info(app: AppHandle) -> Result<AppInfo> {
     })
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn app_process_stats(st: State<'_, AppStats>) -> Result<ProcessStats> {
     use sysinfo::{Pid, ProcessRefreshKind, ProcessesToUpdate, RefreshKind, MemoryRefreshKind};
     let mut sys = st.sys.lock();

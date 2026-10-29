@@ -240,7 +240,7 @@ pub async fn fs_write_file(app: AppHandle, path: String, content: String, create
     }).await.map_err(|e| CaretError::internal(e.to_string()))?
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn fs_stat(app: AppHandle, path: String) -> Result<FileStat> {
     let p = resolve(&app, &path);
     let p = std::fs::canonicalize(&p).unwrap_or(p);
@@ -251,10 +251,10 @@ pub fn fs_stat(app: AppHandle, path: String) -> Result<FileStat> {
     }
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn fs_exists(app: AppHandle, path: String) -> Result<bool> { Ok(resolve(&app, &path).exists()) }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn fs_create(app: AppHandle, path: String, kind: String) -> Result<()> {
     let p = resolve(&app, &path);
     if kind == "dir" { std::fs::create_dir_all(&p)?; }
@@ -266,7 +266,7 @@ pub fn fs_create(app: AppHandle, path: String, kind: String) -> Result<()> {
     Ok(())
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn fs_rename(app: AppHandle, from: String, to: String) -> Result<()> {
     let f = resolve(&app, &from); let t = resolve(&app, &to);
     if t.exists() && f != t { return Err(CaretError::new("already_exists", format!("{} already exists", t.display()))); }

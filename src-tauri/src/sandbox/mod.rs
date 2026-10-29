@@ -141,14 +141,14 @@ pub fn wrap_options(settings: &crate::core::settings::Settings) -> WrapOptions {
 
 // ───────────────────────── commands ─────────────────────────
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn sandbox_status(app: AppHandle, _st: State<'_, SandboxState>) -> Result<SandboxStatus> {
     use tauri::Manager;
     let root = app.state::<crate::core::workspace::WorkspaceState>().root();
     Ok(status(root.as_deref()))
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn sandbox_classify(app: AppHandle, command: String, cwd: Option<String>) -> Result<CommandClassification> {
     use tauri::Manager;
     let s = app.state::<crate::core::settings::SettingsState>().effective();
@@ -157,7 +157,7 @@ pub fn sandbox_classify(app: AppHandle, command: String, cwd: Option<String>) ->
     Ok(classify_with(&command, cwd.as_deref(), root.as_deref(), &s.agent.command_allowlist, &s.agent.command_denylist))
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn mcp_tool_changes(_st: State<'_, SandboxState>) -> Result<Vec<McpToolChange>> { Ok(mcp_pins::pending_all()) }
 
 #[tauri::command]

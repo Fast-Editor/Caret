@@ -44,10 +44,22 @@ fn js_debug_version() -> Option<String> {
         .or_else(|| std::fs::read_to_string(js_debug_dir().join("VERSION")).ok().map(|s| s.trim().to_string()))
 }
 
+/// Probing debugpy means spawning a Python interpreter (100–250 ms, and a process spawn briefly stalls the whole app
+/// on macOS). Status is polled by the Debug panel and the Settings pages, so the answer is cached for a minute and
+/// dropped whenever an install runs.
+static DEBUGPY_PROBE: std::sync::Mutex<Option<(std::time::Instant, Option<String>)>> = std::sync::Mutex::new(None);
+const DEBUGPY_PROBE_TTL: std::time::Duration = std::time::Duration::from_secs(60);
+
+pub fn invalidate_probe_cache() { *DEBUGPY_PROBE.lock().unwrap_or_else(|e| e.into_inner()) = None; }
+
 fn debugpy_version() -> Option<String> {
-    let py = python()?;
-    let out = std::process::Command::new(py).args(["-c", "import debugpy, sys; print(debugpy.__version__)"]).env("PYTHONPATH", python_site()).output().ok()?;
-    if out.status.success() { Some(String::from_utf8_lossy(&out.stdout).trim().to_string()) } else { None }
+    if let Some((at, v)) = DEBUGPY_PROBE.lock().unwrap_or_else(|e| e.into_inner()).as_ref() { if at.elapsed() < DEBUGPY_PROBE_TTL { return v.clone(); } }
+    let v = python().and_then(|py| {
+        let out = std::process::Command::new(py).args(["-c", "import debugpy, sys; print(debugpy.__version__)"]).env("PYTHONPATH", python_site()).output().ok()?;
+        if out.status.success() { Some(String::from_utf8_lossy(&out.stdout).trim().to_string()) } else { None }
+    });
+    *DEBUGPY_PROBE.lock().unwrap_or_else(|e| e.into_inner()) = Some((std::time::Instant::now(), v.clone()));
+    v
 }
 
 pub fn status_all() -> Vec<AdapterStatus> {
@@ -80,6 +92,7 @@ async fn run_logged(cmd: &mut tokio::process::Command, what: &str, log: &(dyn Fn
 
 /// Install (or update) an adapter. Streams progress lines through `log`.
 pub async fn install(id: &str, log: Arc<dyn Fn(String) + Send + Sync>) -> Result<AdapterStatus> {
+    invalidate_probe_cache();
     let l = log.as_ref();
     match id {
         JS_DEBUG => {

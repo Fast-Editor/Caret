@@ -5,7 +5,7 @@ use crate::index::hybrid::CodebaseSearchHit;
 use crate::index::manager::{IndexManager, IndexStatus};
 use tauri::State;
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn index_status(m: State<'_, IndexManager>) -> Result<IndexStatus> { Ok(m.inner.status()) }
 #[tauri::command]
 pub async fn index_start(m: State<'_, IndexManager>) -> Result<()> { let me = m.inner.clone(); tauri::async_runtime::spawn(async move { me.run_full(false).await; }); Ok(()) }
@@ -22,7 +22,7 @@ pub async fn index_search(m: State<'_, IndexManager>, query: String, limit: Opti
     m.inner.search(&query, limit.unwrap_or(10), path_prefix.as_deref()).await
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn docs_list(d: State<'_, DocsManager>) -> Result<Vec<DocSource>> { Ok(d.list()) }
 #[tauri::command]
 pub fn docs_add(d: State<'_, DocsManager>, url: String, name: Option<String>, max_pages: Option<u32>, prefix: Option<String>) -> Result<DocSource> { d.add(&url, name.as_deref(), max_pages, prefix.as_deref()) }

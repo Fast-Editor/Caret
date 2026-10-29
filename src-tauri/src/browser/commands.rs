@@ -5,7 +5,7 @@ use tauri::State;
 
 #[tauri::command]
 pub async fn browser_open(b: State<'_, BrowserManager>, url: String, label: Option<String>) -> Result<BrowserTab> { b.inner.open(&url, label.as_deref()).await }
-#[tauri::command]
+#[tauri::command(async)]
 pub fn browser_list(b: State<'_, BrowserManager>) -> Result<Vec<BrowserTab>> { Ok(b.inner.list()) }
 #[tauri::command]
 pub async fn browser_navigate(b: State<'_, BrowserManager>, tab_id: String, url: String) -> Result<()> { b.inner.navigate(&tab_id, &url).await }

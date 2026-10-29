@@ -576,7 +576,7 @@ fn broadcast(app: &AppHandle, st: &SettingsState) { events::emit(app, events::SE
 
 // ───────────────────────── commands ─────────────────────────
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn settings_get(st: State<'_, SettingsState>) -> Result<SettingsScopes> { Ok(st.scopes()) }
 
 #[tauri::command]
@@ -597,12 +597,12 @@ pub fn settings_reset(app: AppHandle, st: State<'_, SettingsState>, scope: Strin
 pub fn settings_set_secret(st: State<'_, SettingsState>, id: String, value: String) -> Result<()> { st.set_secret(&id, &value) }
 #[tauri::command]
 pub fn settings_delete_secret(st: State<'_, SettingsState>, id: String) -> Result<()> { st.set_secret(&id, "") }
-#[tauri::command]
+#[tauri::command(async)]
 pub fn settings_list_secrets(st: State<'_, SettingsState>) -> Result<Vec<String>> { Ok(st.list_secrets()) }
 #[tauri::command]
 pub fn settings_import_env_keys(st: State<'_, SettingsState>) -> Result<Vec<String>> { st.import_env_keys() }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn settings_path(st: State<'_, SettingsState>, scope: String) -> Result<String> {
     Ok(match scope.as_str() {
         "workspace" => st.workspace_root.read().clone().map(|r| workspace_settings_path(&r)).ok_or_else(CaretError::no_workspace)?,

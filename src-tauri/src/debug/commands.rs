@@ -14,7 +14,7 @@ fn ensure_sink(app: &AppHandle, st: &DebugState) {
 fn info(s: &DebugSession) -> DebugSessionInfo { DebugSessionInfo { id: s.id.clone(), name: s.name.clone(), adapter: s.adapter.clone(), kind: s.kind.clone(), request: s.request.clone(), state: s.state(), capabilities: s.capabilities() } }
 fn session(st: &DebugState, id: &str) -> Result<Arc<DebugSession>> { st.sessions.get(id).map(|s| s.clone()).ok_or_else(|| CaretError::not_found(format!("debug session {id}"))) }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn debug_adapters() -> Result<Vec<AdapterStatus>> { Ok(adapters::status_all()) }
 
 #[tauri::command]
@@ -24,7 +24,7 @@ pub async fn debug_install_adapter(app: AppHandle, st: State<'_, Arc<DebugState>
 }
 
 /// Launch configurations for the Start dropdown (`file` = the active editor file for `${file}` defaults).
-#[tauri::command]
+#[tauri::command(async)]
 pub fn debug_list_configs(ws: State<'_, WorkspaceState>, file: Option<String>) -> Result<Vec<LaunchConfig>> {
     Ok(configs::discover(ws.root().as_deref(), file.as_deref()))
 }
@@ -45,7 +45,7 @@ pub async fn debug_start(app: AppHandle, st: State<'_, Arc<DebugState>>, ws: Sta
     Ok(info(&s))
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn debug_sessions(st: State<'_, Arc<DebugState>>) -> Result<Vec<DebugSessionInfo>> { Ok(st.sessions.iter().map(|e| info(e.value())).collect()) }
 
 #[tauri::command]
@@ -75,8 +75,8 @@ pub async fn debug_set_breakpoints(st: State<'_, Arc<DebugState>>, file: String,
     Ok(best)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn debug_breakpoints(st: State<'_, Arc<DebugState>>) -> Result<Vec<(String, Vec<u32>)>> { Ok(st.breakpoints.all()) }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn debug_logs(st: State<'_, Arc<DebugState>>) -> Result<Vec<String>> { Ok(st.logs()) }

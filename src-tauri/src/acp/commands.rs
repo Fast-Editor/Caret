@@ -18,7 +18,7 @@ pub async fn acp_list_agents(app: AppHandle, st: State<'_, AcpState>) -> Result<
 }
 
 /// All agent configs (builtins merged with user overrides), including disabled ones.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn acp_list_configs(app: AppHandle, _st: State<'_, AcpState>) -> Result<Vec<AcpAgentConfig>> {
     Ok(registry::all_configs(&app.state::<SettingsState>().effective()))
 }
@@ -120,7 +120,7 @@ pub async fn acp_prepare_session(app: AppHandle, st: State<'_, AcpState>, sessio
     Ok(bridge::status_for_link(&conn, &link))
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn acp_registry(app: AppHandle, _st: State<'_, AcpState>) -> Result<Vec<AcpRegistryEntry>> { Ok(registry::registry(&app.state::<SettingsState>().effective())) }
 
 #[tauri::command]
@@ -132,11 +132,11 @@ pub async fn acp_install(app: AppHandle, st: State<'_, AcpState>, entry_id: Stri
     Ok(e)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn acp_logs(st: State<'_, AcpState>, agent_id: String) -> Result<Vec<String>> { Ok(st.inner.logs_for(&agent_id)) }
 
 /// Current ACP session modes/commands for a Caret session (used by the composer when an external agent drives it).
-#[tauri::command]
+#[tauri::command(async)]
 pub fn acp_session_info(st: State<'_, AcpState>, session_id: String) -> Result<Option<serde_json::Value>> {
     Ok(st.inner.links.get(&session_id).map(|l| serde_json::json!({ "agentId": l.agent_id, "acpSessionId": l.acp_id, "modes": l.modes.lock().clone(), "configOptions": l.config_options.lock().clone(), "commands": l.commands.lock().clone() })))
 }

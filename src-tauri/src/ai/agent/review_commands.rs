@@ -34,7 +34,7 @@ fn emit_comments(mgr: &AgentManager, h: &SessionHandle) {
     mgr.emit(AgentEvent::ReviewComments { session_id: sid, comments });
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn chat_review_comments(mgr: Mgr<'_>, session_id: String) -> Result<Vec<ReviewComment>> { let h = mgr.handle(&session_id)?; let v = h.session.lock().review_comments.clone(); Ok(v) }
 
 #[tauri::command]
@@ -119,7 +119,7 @@ pub fn rank_title(rank: u32) -> &'static str { match rank { 10 => "Types & contr
 
 /// Groups for the review panel. `by`: "intent" (default; one group per agent turn, titled by the
 /// assistant's opening line), "tool-call", "file-kind" (types → impl → tests → docs → config/lock), or "file".
-#[tauri::command]
+#[tauri::command(async)]
 pub fn chat_review_groups(mgr: Mgr<'_>, session_id: String, by: Option<String>) -> Result<Vec<ReviewGroup>> {
     let h = mgr.handle(&session_id)?;
     let (changes, messages) = { let s = h.session.lock(); (s.changes.clone(), s.messages.iter().filter(|m| m.role == MessageRole::Assistant).map(|m| (m.id.clone(), m.text().lines().find(|l| !l.trim().is_empty()).unwrap_or("").trim_start_matches(['#', '*', ' ']).chars().take(80).collect::<String>())).collect::<Vec<_>>()) };
