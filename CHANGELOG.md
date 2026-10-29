@@ -4,6 +4,8 @@ All notable changes to Caret. The version here must match `package.json`, `src-t
 
 ## Unreleased
 
+- Tab context menu: actions never ran because the outside-press listener closed the menu before the item's click
+  fired; presses inside the menu are now ignored by that listener and only Escape closes it from the keyboard.
 - Command palette: opening with ⌘⇧P listed nothing and nothing typed after the `>` prefix matched, because the prefix
   was scored as part of the query. The prefix is now stripped before matching and an empty query lists every command,
   recently used first.

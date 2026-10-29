@@ -82,7 +82,16 @@ export function TabBar({ group, active }: { group: EditorGroup; active: boolean 
     setUnderline({ left: el.offsetLeft, width: el.offsetWidth })
   }, [group.activeTabId, orderKey])
   useEffect(() => { const el = scrollRef.current?.querySelector('[data-active="true"]'); el?.scrollIntoView({ block: 'nearest', inline: 'nearest' }) }, [group.activeTabId])
-  useEffect(() => { if (!menu) return; const close = () => setMenu(null); window.addEventListener('mousedown', close, true); window.addEventListener('keydown', close, true); return () => { window.removeEventListener('mousedown', close, true); window.removeEventListener('keydown', close, true) } }, [menu])
+  const menuRef = useRef<HTMLDivElement>(null)
+  // Close on an outside press or Escape. The listener is capture-phase, so a press *inside* the menu must be ignored
+  // here: closing on it would unmount the item before its click fired, and no menu action would ever run.
+  useEffect(() => {
+    if (!menu) return
+    const down = (e: MouseEvent) => { if (menuRef.current && e.target instanceof Node && menuRef.current.contains(e.target)) return; setMenu(null) }
+    const key = (e: KeyboardEvent) => { if (e.key === 'Escape') setMenu(null) }
+    window.addEventListener('mousedown', down, true); window.addEventListener('keydown', key, true)
+    return () => { window.removeEventListener('mousedown', down, true); window.removeEventListener('keydown', key, true) }
+  }, [menu])
   const dupTitles = new Map<string, number>(); for (const t of group.tabs) dupTitles.set(t.title, (dupTitles.get(t.title) ?? 0) + 1)
   return (
     <div className={clsx('h-[35px] shrink-0 flex items-stretch bg-panel', !active && 'opacity-90')} onDoubleClick={(e) => { if (e.target === e.currentTarget) void runCommand('file.new') }}>
@@ -121,7 +130,7 @@ export function TabBar({ group, active }: { group: EditorGroup; active: boolean 
         {groupsCount < 3 && <button className="p-1 rounded hover:bg-hover text-muted" title="Split editor right (⌘\)" onClick={() => split()}><SplitSquareHorizontal size={14} /></button>}
       </div>
       {menu && (
-        <div className="fixed z-[1000] min-w-[200px] py-1 rounded-md surface-float text-xs animate-pop" style={{ top: menu.y, left: Math.min(menu.x, window.innerWidth - 220) }} onMouseDown={(e) => e.stopPropagation()}>
+        <div ref={menuRef} role="menu" className="fixed z-[1000] min-w-[200px] py-1 rounded-md surface-float text-xs animate-pop" style={{ top: menu.y, left: Math.min(menu.x, window.innerWidth - 220) }}>
           {[
             { l: 'Close', r: () => closeTab(group.id, menu.tab.id), k: '⌘W' },
             { l: 'Close Others', r: () => closeOthers(group.id, menu.tab.id) },
