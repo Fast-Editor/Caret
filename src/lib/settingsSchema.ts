@@ -71,7 +71,7 @@ export const DEFAULTS: Settings = {
     theme: 'caret-dark', fontFamily: "JetBrains Mono, Menlo, Monaco, 'Courier New', monospace", fontSize: 13, lineHeight: 1.6, tabSize: 2, insertSpaces: true,
     wordWrap: 'off', minimap: true, renderWhitespace: 'selection', cursorBlinking: 'smooth', cursorStyle: 'line', bracketPairColorization: true, formatOnSave: false,
     autoSave: 'afterDelay', autoSaveDelayMs: 1000, chatFontSize: 13, sidebarPosition: 'left', chatPosition: 'right', terminalFontFamily: 'JetBrains Mono, Menlo, monospace',
-    terminalFontSize: 12, terminalScrollback: 5000, terminalCursorStyle: 'block', terminalCursorBlink: true, showStatusBarMemory: true, layout: 'editor', reduceMotion: false, stickyScroll: true, lineNumbers: 'on', smoothScrolling: true,
+    terminalFontSize: 12, terminalScrollback: 5000, terminalCursorStyle: 'block', terminalCursorBlink: true, showStatusBarMemory: true, layout: 'editor', reduceMotion: false, motion: 'subtle', stickyScroll: true, lineNumbers: 'on', smoothScrolling: true,
     fontLigatures: true, editorTabsMode: 'multiple', previewTabs: true, breadcrumbs: true, zoomLevel: 0, confirmDelete: true, compactFolders: true,
   },
   privacy: { privacyMode: false, allowWebTools: true, allowRemoteEmbeddings: true },
@@ -169,7 +169,8 @@ export const SETTINGS_FIELDS: SettingField[] = [
   // ── Appearance ──
   { id: 'ui.theme', page: 'appearance', type: 'theme', title: 'Theme', group: 'Appearance' },
   { id: 'ui.zoomLevel', page: 'appearance', type: 'number', title: 'Zoom level', min: -3, max: 5, step: 0.5, group: 'Appearance' },
-  { id: 'ui.reduceMotion', page: 'appearance', type: 'boolean', title: 'Reduce motion', group: 'Appearance' },
+  { id: 'ui.motion', page: 'appearance', type: 'select', title: 'Motion', description: 'How much the interface animates. Off respects accessibility needs; Subtle is the default.', options: [{ value: 'off', label: 'Off' }, { value: 'subtle', label: 'Subtle' }, { value: 'expressive', label: 'Expressive' }], group: 'Appearance' },
+  { id: 'ui.reduceMotion', page: 'appearance', type: 'boolean', title: 'Reduce motion', description: 'Forces Motion off (also follows the OS “Reduce motion” preference).', group: 'Appearance' },
   { id: 'ui.layout', page: 'appearance', type: 'select', title: 'Default layout', options: [{ value: 'editor', label: 'Editor' }, { value: 'agents', label: 'Agents' }], group: 'Appearance' },
   { id: 'ui.sidebarPosition', page: 'appearance', type: 'select', title: 'Sidebar position', options: [{ value: 'left', label: 'Left' }, { value: 'right', label: 'Right' }], group: 'Appearance' },
   { id: 'ui.chatPosition', page: 'appearance', type: 'select', title: 'AI pane position', options: [{ value: 'right', label: 'Right' }, { value: 'left', label: 'Left' }], group: 'Appearance' },

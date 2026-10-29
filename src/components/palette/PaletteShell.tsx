@@ -11,7 +11,7 @@ export function PaletteShell({ value, onValueChange, placeholder, onClose, child
   return (
     <div className="fixed inset-0 z-[800]" onMouseDown={(e) => { if (e.target === e.currentTarget) onClose() }}>
       <div className="absolute left-1/2 top-[8%] -translate-x-1/2 w-[640px] max-w-[92vw]" data-owns-keys>
-        <Command label={label} loop shouldFilter={shouldFilter} className="rounded-lg border border-border bg-panel shadow-[var(--shadow)] overflow-hidden text-fg"
+        <Command label={label} loop shouldFilter={shouldFilter} className="rounded-lg surface-float overflow-hidden text-fg animate-pop"
           onKeyDown={(e) => { if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); onClose(); return } onKeyDown?.(e) }}>
           <Command.Input ref={inputRef} value={value} onValueChange={onValueChange} placeholder={placeholder} autoFocus
             className="w-full h-9 bg-input border-b border-border px-3 text-[13px] outline-none placeholder:text-faint" />

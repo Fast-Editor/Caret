@@ -1,0 +1,10 @@
+/* Editor tab strip motion: tabs fade/slide in on open, fade out on close (kept mounted briefly by useLeavingTabs),
+   neighbours slide via FLIP transforms, and a 2px underline glides under the active tab. Depth separates tabs from
+   the editor (active tab = editor tone) so no bottom hairline is needed. */
+@keyframes caret-tab-in { from { opacity: 0; transform: translateY(2px) } to { opacity: 1; transform: none } }
+.tab-item { animation: caret-tab-in var(--dur-fast) var(--ease) both; }
+.tab-item-leaving { opacity: 0; transform: translateY(2px) scale(0.98); pointer-events: none; transition: opacity var(--dur-fast) var(--ease), transform var(--dur-fast) var(--ease); }
+.tab-item + .tab-item::before { content: ''; position: absolute; left: 0; top: 9px; bottom: 9px; width: 1px; background: var(--border); opacity: .7; }
+.tab-item[data-active="true"]::before, .tab-item[data-active="true"] + .tab-item::before { opacity: 0; }
+.tab-underline { position: absolute; left: 0; bottom: 0; height: 2px; border-radius: 2px 2px 0 0; background: var(--fg); opacity: .9; pointer-events: none;
+  transition: transform var(--dur-base) var(--ease), width var(--dur-base) var(--ease); }

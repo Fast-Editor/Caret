@@ -299,10 +299,10 @@ export function DiffEditor({ meta, onDecision }: { meta: DiffMeta; onDecision?: 
         {folds.length > 0 && <button className="p-1 rounded hover:bg-hover" title={allFolded ? 'Show all folded additions' : 'Fold large additions'} onClick={() => { if (allFolded) setExpanded(Object.fromEntries(folds.map((f) => [f.start, true]))); else { setSideBySide(false); setExpanded({}) } }}>{allFolded ? <UnfoldVertical size={13} /> : <FoldVertical size={13} />}</button>}
         {commentsEnabled && <button className="p-1 rounded hover:bg-hover" title="Comment on current line" onClick={() => { const ln = edRef.current?.getModifiedEditor().getPosition()?.lineNumber ?? 1; setComposer(ln) }}><MessageSquarePlus size={13} /></button>}
         <button className="p-1 rounded hover:bg-hover" title={sideBySide ? 'Inline view' : 'Side by side'} onClick={() => setSideBySide((v) => !v)}>{sideBySide ? <Rows2 size={13} /> : <Columns2 size={13} />}</button>
-        {meta.changeId && <>
-          <button className="ml-1 px-2 py-0.5 rounded bg-accent text-accent-fg flex items-center gap-1" onClick={() => void decide(true)}><Check size={12} />Accept</button>
-          <button className="px-2 py-0.5 rounded bg-active hover:bg-hover flex items-center gap-1" onClick={() => void decide(false)}><X size={12} />Reject</button>
-        </>}
+        {meta.changeId && <span className="flex items-center gap-1 animate-fade">
+          <button className="ml-1 px-2 py-0.5 rounded bg-accent text-accent-fg flex items-center gap-1 press" onClick={() => void decide(true)}><Check size={12} />Accept</button>
+          <button className="px-2 py-0.5 rounded bg-active hover:bg-hover flex items-center gap-1 press" onClick={() => void decide(false)}><X size={12} />Reject</button>
+        </span>}
       </div>
       <div ref={hostRef} className="flex-1 min-h-0" />
     </div>

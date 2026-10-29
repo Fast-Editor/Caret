@@ -13,9 +13,10 @@ import { QueuedMessages } from './QueuedMessages'
 import { EmptyState } from './EmptyState'
 import { HistoryPopover } from './HistoryPopover'
 import { fmtCost, fmtTokens } from './util'
+import './chat.css'
 
 function IconBtn({ title, onClick, children }: { title: string; onClick: () => void; children: React.ReactNode }) {
-  return <button type="button" onClick={onClick} title={title} className="flex items-center justify-center w-6 h-6 rounded hover:bg-hover text-muted hover:text-fg">{children}</button>
+  return <button type="button" onClick={onClick} title={title} className="flex items-center justify-center w-6 h-6 rounded hover:bg-hover text-muted hover:text-fg press">{children}</button>
 }
 
 export function ChatPane({ embedded }: { embedded?: boolean } = {}) {
@@ -50,7 +51,7 @@ export function ChatPane({ embedded }: { embedded?: boolean } = {}) {
     <Tooltip.Provider delayDuration={400}>
       <div className="h-full w-full flex flex-col bg-sidebar min-w-0" data-chat-pane>
         <div className="h-[34px] shrink-0 flex items-center gap-1 px-2 border-b border-border">
-          <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${busy ? 'bg-accent pulse' : session?.status === 'awaiting-approval' || session?.status === 'awaiting-input' ? 'bg-warning' : session?.status === 'error' ? 'bg-danger' : 'bg-border-strong'}`} title={session?.status ?? 'idle'} />
+          <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${busy ? 'bg-accent animate-breathe' : session?.status === 'awaiting-approval' || session?.status === 'awaiting-input' ? 'bg-warning' : session?.status === 'error' ? 'bg-danger' : 'bg-border-strong'}`} title={session?.status ?? 'idle'} />
           {editingTitle ? (
             <input autoFocus value={title} onChange={(e) => setTitle(e.target.value)} onBlur={() => { setEditingTitle(false); if (activeId && title.trim()) void renameSession(activeId, title.trim()) }} onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); if (e.key === 'Escape') setEditingTitle(false) }} className="flex-1 h-6 px-1 bg-input border border-border rounded text-[12px] outline-none" />
           ) : (
@@ -64,7 +65,7 @@ export function ChatPane({ embedded }: { embedded?: boolean } = {}) {
         </div>
         {activeId ? (
           <>
-            {session && session.messages.length > 0 ? <MessageList sessionId={activeId} messages={session.messages} /> : <div className="flex-1 min-h-0 overflow-y-auto"><EmptyState sessionId={activeId} /></div>}
+            {session && session.messages.length > 0 ? <MessageList sessionId={activeId} messages={session.messages} /> : <div key={activeId} className="flex-1 min-h-0 overflow-y-auto animate-fade"><EmptyState sessionId={activeId} /></div>}
             {session && <TodoList sessionId={activeId} todos={session.todos} />}
             {session && <ProofPanel sessionId={activeId} compact />}
             {session && <ReviewBar sessionId={activeId} changes={session.pendingChanges} />}

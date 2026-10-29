@@ -161,7 +161,7 @@ export interface UiSettings {
   bracketPairColorization: boolean; formatOnSave: boolean; autoSave: 'off' | 'afterDelay' | 'onFocusChange'
   autoSaveDelayMs: number; chatFontSize: number; sidebarPosition: 'left' | 'right'; chatPosition: 'right' | 'left'
   terminalFontFamily: string; terminalFontSize: number; terminalScrollback: number; terminalCursorStyle: 'block' | 'bar' | 'underline'; terminalCursorBlink: boolean; showStatusBarMemory: boolean
-  layout: 'editor' | 'agents'; reduceMotion: boolean; stickyScroll: boolean; lineNumbers: 'on' | 'off' | 'relative'
+  layout: 'editor' | 'agents'; reduceMotion: boolean; motion: 'off' | 'subtle' | 'expressive'; stickyScroll: boolean; lineNumbers: 'on' | 'off' | 'relative'
   smoothScrolling: boolean; fontLigatures: boolean; editorTabsMode: 'multiple' | 'single'; previewTabs: boolean
   breadcrumbs: boolean; zoomLevel: number; confirmDelete: boolean; compactFolders: boolean
 }

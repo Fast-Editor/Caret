@@ -1,4 +1,4 @@
-import { ChevronDown, ChevronRight, Loader2 } from 'lucide-react'
+import { ChevronRight, Loader2 } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { api } from '@/lib/api'
 import { runCommand } from '@/lib/commands'
@@ -58,6 +58,14 @@ export function FileTree() {
   // Focus ring only for keyboard navigation (mouse selection just fills the row, like Cursor).
   const [kbFocus, setKbFocus] = useState(false)
 
+  // Which folders just expanded (for the one-shot fade-up of their revealed rows).
+  const prevExpanded = useRef(ex.expanded)
+  const freshRef = useRef<{ paths: string[]; at: number }>({ paths: [], at: 0 })
+  if (prevExpanded.current !== ex.expanded) {
+    const added = Object.keys(ex.expanded).filter((k) => !prevExpanded.current[k])
+    if (added.length) freshRef.current = { paths: added, at: Date.now() }
+    prevExpanded.current = ex.expanded
+  }
   const rows = useMemo<TreeRow[]>(() => root ? flattenTree({ root, children: ex.children, expanded: ex.expanded, loading: ex.loading, errors: ex.errors, showHidden: ex.showHidden, filter: ex.filter, compact: settings?.ui.compactFolders ?? true, globalIgnore: settings?.general.globalIgnore }) : [], [root, ex.children, ex.expanded, ex.loading, ex.errors, ex.showHidden, ex.filter, settings?.ui.compactFolders, settings?.general.globalIgnore])
   const deco = useMemo(() => gitDecorations(gitStatus, root ?? ''), [gitStatus, root])
 
@@ -236,7 +244,7 @@ export function FileTree() {
         <div className={cn('h-full', dropTarget === root && 'bg-selected/40')}>
           <VirtualList ref={listRef} count={displayRows.length} rowHeight={ROW_H} className="pb-6"
             emptyState={<div className="px-3 py-3 text-[11px] text-faint">{ex.loading[root] ? 'Loading…' : ex.filter ? 'No matching files' : 'Empty folder'}</div>}
-            renderRow={(i, style) => <Row key={displayRows[i].nodePath} r={displayRows[i]} style={style} deco={deco} dropTarget={dropTarget} setDropTarget={setDropTarget} rowPaths={rowPaths} onOpen={openRow} onCommitEdit={commitEdit} onMove={moveTo} menuFor={menuFor} />} />
+            renderRow={(i, style) => <Row key={displayRows[i].nodePath} r={displayRows[i]} style={style} freshSince={freshRef.current} deco={deco} dropTarget={dropTarget} setDropTarget={setDropTarget} rowPaths={rowPaths} onOpen={openRow} onCommitEdit={commitEdit} onMove={moveTo} menuFor={menuFor} />} />
         </div>
       </ContextMenu>
     </div>
@@ -246,12 +254,14 @@ export function FileTree() {
 /** Imperative actions bridged to commands (filled by the mounted tree). */
 export const explorerActions: { current: Partial<Record<'rename' | 'delete' | 'copy' | 'cut' | 'paste' | 'newFile' | 'newFolder' | 'reveal', (args?: unknown) => void>> } = { current: {} }
 
-function Row({ r, style, deco, dropTarget, setDropTarget, rowPaths, onOpen, onCommitEdit, onMove, menuFor }: {
-  r: TreeRow; style: React.CSSProperties; deco: { files: Map<string, GitDeco>; dirs: Map<string, DirState> }; dropTarget: string | null; setDropTarget: (p: string | null) => void; rowPaths: string[]
+function Row({ r, style, deco, dropTarget, setDropTarget, rowPaths, onOpen, onCommitEdit, onMove, menuFor, freshSince }: {
+  r: TreeRow; style: React.CSSProperties; freshSince: { paths: string[]; at: number }; deco: { files: Map<string, GitDeco>; dirs: Map<string, DirState> }; dropTarget: string | null; setDropTarget: (p: string | null) => void; rowPaths: string[]
   onOpen: (r: TreeRow, preview?: boolean) => void; onCommitEdit: (v: string) => void; onMove: (paths: string[], dir: string) => void; menuFor: (r: TreeRow) => MenuEntry[]
 }) {
   const ex = useExplorer()
   const isDir = r.entry.kind === 'dir'
+  // Rows revealed by a folder that was expanded within the last few hundred ms fade up once (virtual rows remount on scroll, so this is time-bounded).
+  const fresh = freshSince.at > Date.now() - 400 && freshSince.paths.some((p) => r.nodePath.startsWith(p + '/'))
   const editing = ex.editing && ((ex.editing.kind === 'rename' && ex.editing.path === r.entry.path) || (ex.editing.kind !== 'rename' && r.nodePath.endsWith('/__new__')))
   const selected = !!ex.selected[r.nodePath]
   const focused = ex.focused === r.nodePath
@@ -264,16 +274,16 @@ function Row({ r, style, deco, dropTarget, setDropTarget, rowPaths, onOpen, onCo
   return (
     <ContextMenu items={() => menuFor(r)} onOpenChange={(o) => { if (o && !selected) ex.select(r.nodePath) }}>
       <div style={{ ...style, paddingLeft: 8 + r.depth * 12 }} draggable={!editing} title={r.entry.path}
-        className={cn('relative flex items-center gap-1 pr-2 text-xs cursor-pointer select-none group/row', selected ? 'bg-selected' : 'hover:bg-hover', focused && selected && 'group-data-[kb=true]/tree:ring-1 group-data-[kb=true]/tree:ring-inset group-data-[kb=true]/tree:ring-border-strong', dropTarget === r.nodePath && isDir && 'bg-selected/60', dimmed && 'opacity-50')}
+        className={cn('relative flex items-center gap-1 pr-2 text-xs cursor-pointer select-none group/row transition-base', fresh && 'animate-fade-up', selected ? 'bg-selected' : 'hover:bg-hover', focused && selected && 'group-data-[kb=true]/tree:ring-1 group-data-[kb=true]/tree:ring-inset group-data-[kb=true]/tree:ring-border-strong', dropTarget === r.nodePath && isDir && 'bg-selected/60', dimmed && 'opacity-50')}
         onClick={(e) => { ex.select(r.nodePath, { toggle: e.metaKey || e.ctrlKey, range: e.shiftKey, rows: rowPaths }); if (!e.metaKey && !e.ctrlKey && !e.shiftKey) onOpen(r, true) }}
         onDoubleClick={() => { if (!isDir) onOpen(r, false) }}
         onDragStart={(e) => { const paths = selected ? Object.keys(ex.selected) : [r.entry.path]; e.dataTransfer.setData('application/x-caret-path', r.entry.path); e.dataTransfer.setData('application/x-caret-paths', paths.join('\n')); e.dataTransfer.setData('text/plain', r.entry.path); e.dataTransfer.effectAllowed = 'copyMove' }}
         onDragOver={(e) => { if (isDir && e.dataTransfer.types.includes('application/x-caret-path')) { e.preventDefault(); e.stopPropagation(); setDropTarget(r.nodePath) } }}
         onDrop={(e) => { if (!isDir) return; e.preventDefault(); e.stopPropagation(); setDropTarget(null); const paths = (e.dataTransfer.getData('application/x-caret-paths') || e.dataTransfer.getData('application/x-caret-path')).split('\n').filter(Boolean); if (paths.length) onMove(paths, r.nodePath) }}>
         {/* Indent guides: one hairline per ancestor level, aligned with that level's chevron column. */}
-        {Array.from({ length: r.depth }, (_, k) => <span key={k} aria-hidden className="absolute top-0 bottom-0 w-px bg-border pointer-events-none" style={{ left: 8 + k * 12 + 7 }} />)}
+        {Array.from({ length: r.depth }, (_, k) => <span key={k} aria-hidden className="caret-guide absolute top-0 bottom-0 w-px bg-border pointer-events-none" style={{ left: 8 + k * 12 + 7 }} />)}
         {/* Folders: chevron only (Seti style); files: the type icon sits in the same column so names align. */}
-        <span className="size-4 shrink-0 flex items-center justify-center text-muted">{isDir ? (r.loading ? <Loader2 className="size-3.5 spin" /> : r.expanded ? <ChevronDown className="size-3.5" /> : <ChevronRight className="size-3.5" />) : fileIconFor(r.entry.name || 'file', false)}</span>
+        <span className="size-4 shrink-0 flex items-center justify-center text-muted">{isDir ? (r.loading ? <Loader2 className="size-3.5 spin" /> : <ChevronRight className="size-3.5 caret-chevron" data-open={r.expanded} />) : fileIconFor(r.entry.name || 'file', false)}</span>
         {editing ? <InlineEdit initial={ex.editing!.kind === 'rename' ? r.entry.name : ''} isDir={isDir} onCommit={onCommitEdit} onCancel={() => ex.set({ editing: null })} />
           : <span className={cn('truncate flex-1', fileDeco?.cls, !fileDeco && dirCls)}>{r.label}</span>}
         {!editing && fileDeco?.letter && <span className={cn('text-[10px] font-semibold shrink-0', fileDeco.cls)}>{fileDeco.letter}</span>}

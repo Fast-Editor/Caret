@@ -1,4 +1,5 @@
 /** Shared form/UI primitives for the Settings and Source Control modules (radix-ui based, token-styled). */
+import '@/components/common/motion.css'
 import { useEffect, useId, useRef, useState, type ReactNode, type KeyboardEvent } from 'react'
 import { createRoot } from 'react-dom/client'
 import { AlertDialog, Dialog as RDialog, DropdownMenu, Select as RSelect, Switch, Tooltip as RTooltip } from 'radix-ui'
@@ -26,8 +27,8 @@ export function confirmDialog(opts: ConfirmOptions): Promise<boolean> {
     root.render(
       <AlertDialog.Root open onOpenChange={(o) => { if (!o) done(false) }}>
         <AlertDialog.Portal>
-          <AlertDialog.Overlay className="fixed inset-0 bg-black/40 z-[1000]" />
-          <AlertDialog.Content className="fixed z-[1001] left-1/2 top-1/3 -translate-x-1/2 w-[420px] max-w-[92vw] rounded-md border border-border bg-panel p-4 shadow-[var(--shadow)] text-fg">
+          <AlertDialog.Overlay data-caret-overlay className="fixed inset-0 bg-black/40 backdrop-blur-sm z-[1000]" />
+          <AlertDialog.Content data-caret-pop className="fixed z-[1001] left-1/2 top-1/3 -translate-x-1/2 w-[420px] max-w-[92vw] rounded-lg surface-float p-4 text-fg">
             <AlertDialog.Title className="text-sm font-semibold mb-1">{opts.title}</AlertDialog.Title>
             {opts.message && <AlertDialog.Description className="text-xs text-muted mb-4 whitespace-pre-wrap">{opts.message}</AlertDialog.Description>}
             <div className="flex justify-end gap-2 mt-3">
@@ -54,8 +55,8 @@ export function promptDialog(opts: { title: string; message?: string; placeholde
       return (
         <RDialog.Root open onOpenChange={(o) => { if (!o) done(null) }}>
           <RDialog.Portal>
-            <RDialog.Overlay className="fixed inset-0 bg-black/40 z-[1000]" />
-            <RDialog.Content className="fixed z-[1001] left-1/2 top-1/3 -translate-x-1/2 w-[440px] max-w-[92vw] rounded-md border border-border bg-panel p-4 shadow-[var(--shadow)] text-fg">
+            <RDialog.Overlay data-caret-overlay className="fixed inset-0 bg-black/40 backdrop-blur-sm z-[1000]" />
+            <RDialog.Content data-caret-pop className="fixed z-[1001] left-1/2 top-1/3 -translate-x-1/2 w-[440px] max-w-[92vw] rounded-lg surface-float p-4 text-fg">
               <RDialog.Title className="text-sm font-semibold mb-1">{opts.title}</RDialog.Title>
               {opts.message && <RDialog.Description className="text-xs text-muted mb-3">{opts.message}</RDialog.Description>}
               <TextInput autoFocus value={v} placeholder={opts.placeholder} onChange={setV} onKeyDown={(e) => { if (e.key === 'Enter' && !err) done(v); if (e.key === 'Escape') done(null) }} />
@@ -84,7 +85,7 @@ export function Button({ variant = 'default', size = 'md', className, loading, c
         'inline-flex items-center gap-1.5 rounded-[var(--radius)] border text-xs whitespace-nowrap transition-colors disabled:opacity-50 disabled:pointer-events-none',
         size === 'sm' ? 'h-6 px-2' : 'h-7 px-3',
         variant === 'default' && 'bg-input border-border hover:bg-hover',
-        variant === 'primary' && 'bg-accent text-accent-fg border-transparent hover:bg-accent-hover font-medium',
+        variant === 'primary' && 'bg-accent text-accent-fg border-transparent hover:bg-accent-hover font-medium press',
         variant === 'danger' && 'bg-danger/90 text-white border-transparent hover:bg-danger',
         variant === 'ghost' && 'bg-transparent border-transparent hover:bg-hover text-muted hover:text-fg',
         variant === 'link' && 'bg-transparent border-transparent text-accent hover:underline px-0 h-auto',
@@ -122,7 +123,7 @@ export function Toggle({ checked, onChange, disabled, label }: { checked: boolea
   return (
     <Switch.Root checked={checked} onCheckedChange={onChange} disabled={disabled} aria-label={label}
       className={cn('relative h-[18px] w-[32px] rounded-full border transition-colors disabled:opacity-50', checked ? 'bg-accent border-accent' : 'bg-input border-border-strong')}>
-      <Switch.Thumb className={cn('block h-[14px] w-[14px] rounded-full bg-white shadow transition-transform translate-x-[1px]', checked && 'translate-x-[15px]')} />
+      <Switch.Thumb className={cn('block h-[14px] w-[14px] rounded-full bg-white shadow transition-transform duration-[var(--dur-fast)] ease-[var(--ease)] translate-x-[1px]', checked && 'translate-x-[15px]')} />
     </Switch.Root>
   )
 }
@@ -240,10 +241,10 @@ export function Spinner({ size = 14, className }: { size?: number; className?: s
 
 export function Section({ title, description, actions, children, className }: { title: ReactNode; description?: ReactNode; actions?: ReactNode; children: ReactNode; className?: string }) {
   return (
-    <section className={cn('mb-7', className)}>
+    <section className={cn('mb-4', className)}>
       <div className="flex items-start justify-between gap-3 mb-2">
         <div>
-          <h3 className="text-[13px] font-semibold">{title}</h3>
+          <h3 className="text-[12px] font-semibold text-muted">{title}</h3>
           {description && <p className="text-[11px] text-muted mt-0.5 max-w-[640px]">{description}</p>}
         </div>
         {actions && <div className="flex items-center gap-1.5 shrink-0">{actions}</div>}
@@ -256,7 +257,7 @@ export function Section({ title, description, actions, children, className }: { 
 export function Row({ title, description, modified, onReset, children, warning, vertical }: { title: ReactNode; description?: ReactNode; modified?: boolean; onReset?: () => void; children?: ReactNode; warning?: ReactNode; vertical?: boolean }) {
   const id = useId()
   return (
-    <div className={cn('px-3 py-2.5 flex gap-4', vertical ? 'flex-col' : 'items-center justify-between')}>
+    <div className={cn('px-3 py-3 flex gap-4 transition-base', vertical ? 'flex-col' : 'items-center justify-between')}>
       <div className="min-w-0 flex-1">
         <div className="flex items-center gap-1.5">
           {modified && <span title="Modified (click to reset)" onClick={onReset} className="h-1.5 w-1.5 rounded-full bg-accent shrink-0 cursor-pointer" />}
@@ -287,8 +288,8 @@ export function Dialog({ open, onOpenChange, title, description, children, foote
   return (
     <RDialog.Root open={open} onOpenChange={onOpenChange}>
       <RDialog.Portal>
-        <RDialog.Overlay className="fixed inset-0 bg-black/40 z-[1000]" />
-        <RDialog.Content style={{ width, maxWidth: '94vw' }} className="fixed z-[1001] left-1/2 top-[12vh] -translate-x-1/2 max-h-[78vh] flex flex-col rounded-md border border-border bg-panel shadow-[var(--shadow)] text-fg outline-none">
+        <RDialog.Overlay data-caret-overlay className="fixed inset-0 bg-black/40 backdrop-blur-sm z-[1000]" />
+        <RDialog.Content data-caret-pop style={{ width, maxWidth: '94vw' }} className="fixed z-[1001] left-1/2 top-[12vh] -translate-x-1/2 max-h-[78vh] flex flex-col rounded-lg surface-float text-fg outline-none">
           <div className="flex items-start justify-between px-4 pt-3 pb-2 border-b border-border">
             <div>
               <RDialog.Title className="text-sm font-semibold">{title}</RDialog.Title>

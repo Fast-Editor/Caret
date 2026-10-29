@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { ChevronDown, ChevronRight, Copy, GitCommitHorizontal } from 'lucide-react'
+import { ChevronRight, Copy, GitCommitHorizontal } from 'lucide-react'
 import { useGit } from '@/store/git'
 import { useWorkspace } from '@/store/workspace'
 import { api } from '@/lib/api'
@@ -16,7 +16,7 @@ export function History() {
   if (!status?.isRepo) return null
   return (
     <div className="border-t border-border">
-      <button onClick={() => setOpen(!open)} aria-expanded={open} className="w-full flex items-center gap-1 h-6 px-1 text-[11px] font-semibold uppercase tracking-wide text-muted hover:bg-hover/50">{open ? <ChevronDown size={12} /> : <ChevronRight size={12} />}History</button>
+      <button onClick={() => setOpen(!open)} aria-expanded={open} className="w-full flex items-center gap-1 h-6 px-1 text-[11px] font-semibold text-muted hover:bg-hover/50"><ChevronRight size={12} className="caret-chevron" data-open={open} />History</button>
       {open && (
         <div className="pb-1">
           {log.length === 0 && !loadingLog && <div className="px-3 py-3 text-xs text-muted">No commits yet</div>}

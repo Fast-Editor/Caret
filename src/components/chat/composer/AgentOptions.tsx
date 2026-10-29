@@ -8,7 +8,7 @@ import { subscribe } from '@/lib/bus'
 import { CARET_AGENT } from './AgentPicker'
 
 const itemCls = 'flex items-center gap-2 px-2 min-h-7 py-1 rounded text-[12px] outline-none data-[highlighted]:bg-selected cursor-pointer select-none'
-const contentCls = 'z-40 min-w-[220px] rounded-md border border-border bg-tooltip p-1 shadow-[var(--shadow)] text-fg'
+const contentCls = 'z-40 min-w-[220px] rounded-md surface-float p-1 text-fg'
 
 function iconFor(category?: string, id?: string) {
   if (category === 'model' || id === 'model') return Cpu
@@ -84,7 +84,7 @@ function OptionPicker({ option, onPick }: { option: AcpConfigOption; onPick: (va
         </button>
       </Popover.Trigger>
       <Popover.Portal>
-        <Popover.Content side="top" align="start" sideOffset={6} className={`${contentCls} w-[300px] p-0`}>
+        <Popover.Content data-caret-pop side="top" align="start" sideOffset={6} className={`${contentCls} w-[300px] p-0`}>
           {searchable
             ? <div className="flex items-center gap-1.5 px-2 h-8 border-b border-border"><Search size={12} className="text-faint" /><input autoFocus value={q} onChange={(e) => setQ(e.target.value)} placeholder={`Search ${option.name.toLowerCase()}…`} className="flex-1 bg-transparent outline-none text-[12px]" /></div>
             : <div className="px-2 py-1 text-[10.5px] uppercase tracking-wide text-faint border-b border-border">{option.name}</div>}

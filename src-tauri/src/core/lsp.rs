@@ -135,11 +135,13 @@ async fn spawn_server(app: AppHandle, config: LspServerConfig, root: PathBuf, on
     let st = app.state::<LspState>();
     let id = format!("{}-{}", config.id, &uuid::Uuid::new_v4().to_string()[..8]);
     let key = format!("{}|{}", config.id, root.display());
-    let exe = which::which(&config.command).map_err(|_| CaretError::new("missing", format!("{} not found on PATH{}", config.command, config.install_hint.as_ref().map(|h| format!(". Install: {h}")).unwrap_or_default())));
+    // Resolve against the augmented PATH (Homebrew, ~/.local/bin, nvm, …): a Finder-launched app inherits launchd's
+    // minimal PATH, so plain `which` misses user-installed servers like rust-analyzer or jdtls.
+    let exe = crate::acp::process::resolve_command(&config.command).or_else(|| which::which(&config.command).ok()).ok_or_else(|| CaretError::new("missing", format!("{} not found on PATH{}", config.command, config.install_hint.as_ref().map(|h| format!(". Install: {h}")).unwrap_or_default())));
     let make = |state: &str, error: Option<String>, pid, stdin, child| Arc::new(LspServer { id: id.clone(), config: config.clone(), root: root.clone(), stdin: tokio::sync::Mutex::new(stdin), child: tokio::sync::Mutex::new(child), state: RwLock::new(state.into()), error: RwLock::new(error), pid, channel: RwLock::new(on_message.clone()), stderr_tail: Mutex::new(VecDeque::new()), internal_id: AtomicI64::new(1) });
     let exe = match exe { Ok(e) => e, Err(e) => { let srv = make("missing", Some(e.message.clone()), None, None, None); st.servers.insert(id.clone(), srv.clone()); st.by_key.insert(key, id.clone()); broadcast(&app); return Ok(srv); } };
     let mut cmd = tokio::process::Command::new(&exe);
-    cmd.args(&config.args).current_dir(&root).stdin(std::process::Stdio::piped()).stdout(std::process::Stdio::piped()).stderr(std::process::Stdio::piped()).kill_on_drop(true);
+    cmd.args(&config.args).current_dir(&root).env("PATH", crate::acp::process::augmented_path()).stdin(std::process::Stdio::piped()).stdout(std::process::Stdio::piped()).stderr(std::process::Stdio::piped()).kill_on_drop(true);
     if let Some(env) = &config.env { for (k, v) in env { cmd.env(k, v); } }
     let mut child = match cmd.spawn() { Ok(c) => c, Err(e) => { let srv = make("error", Some(format!("failed to start {}: {e}", config.command)), None, None, None); st.servers.insert(id.clone(), srv.clone()); st.by_key.insert(key, id.clone()); broadcast(&app); return Ok(srv); } };
     let pid = child.id();
@@ -219,7 +221,7 @@ pub fn init(app: &AppHandle) {
 #[tauri::command]
 pub fn lsp_configs(settings: State<'_, SettingsState>) -> Result<Vec<LspConfigEntry>> {
     let s = settings.effective();
-    Ok(s.lsp.servers.into_iter().map(|c| { let installed = which::which(&c.command).is_ok(); LspConfigEntry { config: c, installed } }).collect())
+    Ok(s.lsp.servers.into_iter().map(|c| { let installed = crate::acp::process::resolve_command(&c.command).is_some() || which::which(&c.command).is_ok(); LspConfigEntry { config: c, installed } }).collect())
 }
 
 #[tauri::command]

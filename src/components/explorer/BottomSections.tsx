@@ -1,5 +1,6 @@
+import { Collapsible } from '@/components/common/Collapsible'
 import { useEffect, useState } from 'react'
-import { ChevronDown, ChevronRight, GitCommitHorizontal, Loader2 } from 'lucide-react'
+import { ChevronRight, GitCommitHorizontal, Loader2 } from 'lucide-react'
 import { api } from '@/lib/api'
 import { runCommand } from '@/lib/commands'
 import { cn } from '@/components/common'
@@ -31,10 +32,10 @@ export function ExplorerBottomSections() {
 function Section({ title, collapsed, onToggle, children }: { title: string; collapsed: boolean; onToggle: () => void; children: React.ReactNode }) {
   return (
     <div className="border-t border-border first:border-t-0">
-      <button type="button" onClick={onToggle} className="w-full flex items-center gap-1 h-[22px] px-1 text-[11px] font-semibold uppercase tracking-wide text-muted hover:text-fg">
-        {collapsed ? <ChevronRight className="size-3.5" /> : <ChevronDown className="size-3.5" />}{title}
+      <button type="button" onClick={onToggle} className="w-full flex items-center gap-1 h-[22px] px-1 text-[11px] font-semibold text-muted hover:text-fg">
+        <ChevronRight className="size-3.5 caret-chevron" data-open={!collapsed} />{title}
       </button>
-      {!collapsed && children}
+      <Collapsible open={!collapsed}>{children}</Collapsible>
     </div>
   )
 }

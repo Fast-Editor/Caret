@@ -118,9 +118,13 @@ export class LspClient {
     })
   }
   notify(method: string, params: unknown): void { void this.send({ jsonrpc: '2.0', method, params }) }
+  private sendChain: Promise<unknown> = Promise.resolve()
   private send(message: LspRawMessage): Promise<void> {
     if (this.closed) return Promise.resolve()
-    return api.lsp.send(this.serverId, message).catch((e) => { console.warn('[lsp] send failed', this.config.id, e); throw e })
+    // Writes are chained: separate Tauri invokes are not ordered, and a didChange must reach the server before the request sent right after it.
+    const p = this.sendChain.then(() => api.lsp.send(this.serverId, message))
+    this.sendChain = p.catch(() => {})
+    return p.catch((e) => { console.warn('[lsp] send failed', this.config.id, e); throw e })
   }
 
   // ─── document sync helpers ───

@@ -66,16 +66,67 @@
   --color-danger: var(--danger); --color-warning: var(--warning); --color-success: var(--success); --color-info: var(--info);
   --color-diff-add: var(--diff-add-bg); --color-diff-del: var(--diff-del-bg); --color-diff-add-fg: var(--diff-add-fg); --color-diff-del-fg: var(--diff-del-fg);
   --font-ui: var(--font-ui); --font-mono: var(--font-mono);
-  --radius-md: var(--radius);
+  --color-float: var(--bg-float);
+  /* Softer geometry everywhere `rounded-*` is used: cards/inputs/popovers 8px, dialogs 10px, large surfaces 14px. */
+  --radius-sm: 6px; --radius-md: 8px; --radius-lg: 10px; --radius-xl: 14px;
+  --shadow-float: var(--shadow-float);
+  --ease-out: var(--ease);
 }
+
+
+/* ───────── Motion tokens ─────────
+   Everything animates with the same three durations and one ease-out curve; `data-motion` on <html> (Settings →
+   Appearance → Motion) scales them, and `off` / the OS reduce-motion preference zero them. Animate transform/opacity
+   (and colours) only — never layout properties — so interactions stay at 60 fps. */
+:root {
+  --dur-fast: 120ms; --dur-base: 180ms; --dur-slow: 240ms;
+  --ease: cubic-bezier(0.22, 1, 0.36, 1);        /* ease-out quint: quick start, soft landing */
+  --ease-in-out: cubic-bezier(0.65, 0, 0.35, 1);
+}
+html[data-motion="expressive"] { --dur-fast: 160ms; --dur-base: 240ms; --dur-slow: 320ms; }
+html[data-motion="off"], html.reduce-motion { --dur-fast: 0ms; --dur-base: 0ms; --dur-slow: 0ms; }
+@media (prefers-reduced-motion: reduce) { html:not([data-motion="expressive"]) { --dur-fast: 0ms; --dur-base: 0ms; --dur-slow: 0ms; } }
+
+@layer base {
+  /* Hover / press / selection changes fade instead of snapping. Transform is included so press feedback can scale. */
+  button, [role=button], a, [role=option], [role=menuitem], [role=tab], [role=treeitem], input, textarea, select, .transition-base {
+    transition: background-color var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease), border-color var(--dur-fast) var(--ease),
+      opacity var(--dur-fast) var(--ease), transform var(--dur-fast) var(--ease), box-shadow var(--dur-fast) var(--ease);
+  }
+}
+
+@keyframes caret-fade { from { opacity: 0 } to { opacity: 1 } }
+@keyframes caret-fade-up { from { opacity: 0; transform: translateY(4px) } to { opacity: 1; transform: none } }
+@keyframes caret-fade-down { from { opacity: 0; transform: translateY(-4px) } to { opacity: 1; transform: none } }
+@keyframes caret-pop { from { opacity: 0; transform: scale(0.98) } to { opacity: 1; transform: none } }
+@keyframes caret-slide-in-right { from { opacity: 0; transform: translateX(12px) } to { opacity: 1; transform: none } }
+@keyframes caret-slide-in-left { from { opacity: 0; transform: translateX(-12px) } to { opacity: 1; transform: none } }
+@keyframes caret-breathe { 0%, 100% { opacity: .45 } 50% { opacity: 1 } }
+
+/* Entry animations (apply on mount). Exits: toggle `.is-leaving` and keep the node mounted for --dur-slow (see src/lib/motion.ts usePresence). */
+@utility animate-fade { animation: caret-fade var(--dur-base) var(--ease) both; }
+@utility animate-fade-up { animation: caret-fade-up var(--dur-base) var(--ease) both; }
+@utility animate-fade-down { animation: caret-fade-down var(--dur-base) var(--ease) both; }
+@utility animate-pop { animation: caret-pop var(--dur-fast) var(--ease) both; }
+@utility animate-slide-in-right { animation: caret-slide-in-right var(--dur-base) var(--ease) both; }
+@utility animate-slide-in-left { animation: caret-slide-in-left var(--dur-base) var(--ease) both; }
+@utility animate-breathe { animation: caret-breathe 1.6s var(--ease-in-out) infinite; }
+.is-leaving { opacity: 0 !important; transform: translateY(4px) scale(0.99); pointer-events: none; transition: opacity var(--dur-slow) var(--ease), transform var(--dur-slow) var(--ease); }
+/* Floating surface: tone + shadow instead of a hard border. */
+@utility surface-float { background: var(--bg-float); box-shadow: var(--shadow-float); border: 1px solid color-mix(in srgb, var(--border) 60%, transparent); }
+/* Press feedback for primary actions. */
+@utility press { &:active:not(:disabled) { transform: scale(0.98); } }
 
 html, body, #root { height: 100%; margin: 0; overflow: hidden; }
 body { background: var(--bg-app); color: var(--fg); font-family: var(--font-ui); font-size: 13px; -webkit-font-smoothing: antialiased; user-select: none; }
 .selectable { user-select: text; }
 * { box-sizing: border-box; }
-::-webkit-scrollbar { width: 10px; height: 10px; }
-::-webkit-scrollbar-thumb { background: transparent; border-radius: 10px; border: 2px solid transparent; background-clip: padding-box; }
-*:hover > ::-webkit-scrollbar-thumb, ::-webkit-scrollbar-thumb:hover { background-color: var(--scrollbar); }
+/* Overlay scrollbars: thin, invisible until the container is hovered or scrolling (`.is-scrolling` is set by the layout for ~700 ms). */
+::-webkit-scrollbar { width: 8px; height: 8px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background-color: transparent; border-radius: 8px; border: 2px solid transparent; background-clip: padding-box; transition: background-color var(--dur-base) var(--ease); }
+*:hover > ::-webkit-scrollbar-thumb, .is-scrolling::-webkit-scrollbar-thumb { background-color: var(--scrollbar); }
+::-webkit-scrollbar-thumb:hover, ::-webkit-scrollbar-thumb:active { background-color: color-mix(in srgb, var(--scrollbar) 70%, var(--fg) 30%); }
 ::-webkit-scrollbar-corner { background: transparent; }
 /* Element resets live in the base layer so Tailwind utilities (e.g. `text-accent-fg` on a primary button) win over them. */
 @layer base {

@@ -23,7 +23,7 @@ export function ActivityBar() {
   useEffect(() => subscribe<{ running: number }>('agents.status', (p) => setRunning(p?.running ?? 0)), [])
   const changed = git ? git.staged.length + git.unstaged.length + git.untracked.length + git.conflicted.length : 0
   return (
-    <div className="w-12 shrink-0 bg-sidebar border-r border-border flex flex-col items-center py-1">
+    <div className="w-12 shrink-0 bg-app flex flex-col items-center py-1">
       {ITEMS.map((it) => {
         const active = ui.sidebarVisible && ui.sidebarView === it.id
         const badge = it.id === 'scm' ? changed : it.id === 'agents' ? running : 0

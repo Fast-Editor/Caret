@@ -1,0 +1,26 @@
+/* Motion for popovers, menus, dialogs, collapsibles and toasts. Uses the global tokens (--dur-*, --ease) so
+   Settings → Appearance → Motion and the OS reduce-motion preference scale or zero everything here too. */
+
+/* Radix Popover/DropdownMenu/ContextMenu/Dialog content: Radix keeps the node mounted until the closed animation ends. */
+[data-caret-pop][data-state="open"] { animation: caret-pop var(--dur-fast) var(--ease) both; }
+[data-caret-pop][data-state="closed"] { animation: caret-fade-out calc(var(--dur-fast) * 0.75) var(--ease) both; }
+[data-caret-overlay][data-state="open"] { animation: caret-fade var(--dur-base) var(--ease) both; }
+[data-caret-overlay][data-state="closed"] { animation: caret-fade-out var(--dur-fast) var(--ease) both; }
+@keyframes caret-fade-out { from { opacity: 1; transform: none } to { opacity: 0; transform: scale(0.98) } }
+
+/* Collapsible section bodies (explorer sections, SCM groups, search files, problems groups). */
+.caret-collapse { display: grid; grid-template-rows: 1fr; opacity: 1; transition: grid-template-rows var(--dur-base) var(--ease), opacity var(--dur-base) var(--ease); }
+.caret-collapse[data-collapsed="true"] { grid-template-rows: 0fr; opacity: 0; }
+.caret-collapse > * { overflow: hidden; min-height: 0; }
+
+/* Disclosure chevrons rotate instead of swapping icons. */
+.caret-chevron { transition: transform var(--dur-base) var(--ease); }
+.caret-chevron[data-open="true"] { transform: rotate(90deg); }
+
+/* Explorer indent guides only when the tree is being used. */
+.caret-guide { opacity: 0; transition: opacity var(--dur-base) var(--ease); }
+[data-keyctx="explorer"]:hover .caret-guide, [data-keyctx="explorer"]:focus-within .caret-guide { opacity: 1; }
+
+/* Toasts: slide in from the right edge; leave by fading out while the stack closes the gap. */
+.caret-toast { animation: caret-slide-in-right var(--dur-base) var(--ease) both; transition: opacity var(--dur-fast) var(--ease), transform var(--dur-fast) var(--ease); }
+.caret-toast[data-leaving="true"] { opacity: 0; transform: translateX(12px); pointer-events: none; }

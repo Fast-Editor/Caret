@@ -24,7 +24,7 @@ export function SymbolPicker() {
   const go = (s: FlatSymbol) => { setOpen(false); const ed = activeEditor(); if (!ed) return; ed.revealRangeInCenter(s.selectionRange); ed.setSelection(s.selectionRange); ed.focus() }
   return (
     <div className="fixed inset-0 z-[1050] flex items-start justify-center pt-[12vh]" onMouseDown={() => setOpen(false)}>
-      <Command className="w-[560px] max-h-[60vh] flex flex-col rounded-md border border-border bg-panel shadow-[var(--shadow)] text-sm" onMouseDown={(e) => e.stopPropagation()} onKeyDown={(e) => { if (e.key === 'Escape') setOpen(false) }} filter={(value, search) => value.toLowerCase().includes(search.toLowerCase()) ? 1 : 0}>
+      <Command className="w-[560px] max-h-[60vh] flex flex-col rounded-md surface-float animate-pop text-sm" onMouseDown={(e) => e.stopPropagation()} onKeyDown={(e) => { if (e.key === 'Escape') setOpen(false) }} filter={(value, search) => value.toLowerCase().includes(search.toLowerCase()) ? 1 : 0}>
         <Command.Input autoFocus value={q} onValueChange={setQ} placeholder="Go to symbol in editor… (type @ for grouped)" className="px-3 h-9 bg-transparent outline-none border-b border-border" />
         <Command.List className="overflow-auto p-1">
           <Command.Empty className="px-3 py-2 text-muted text-xs">No symbols</Command.Empty>

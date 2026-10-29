@@ -9,6 +9,9 @@ use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::num::NonZeroUsize;
+use std::time::Instant;
+use crate::ai::llm::ResolvedModel;
+use crate::core::settings::Settings;
 use tauri::{AppHandle, Manager};
 use tokio::sync::watch;
 
@@ -58,9 +61,48 @@ pub struct NextEditResult {
 pub struct TabState {
     cache: Mutex<LruCache<String, String>>,
     inflight: Mutex<HashMap<String, watch::Receiver<Option<Option<String>>>>>,
+    /// provider id → until when it is treated as unreachable (after a failed Tab request), so keystrokes don't keep
+    /// paying for a dead local proxy and fall straight through to the default model instead.
+    down: Mutex<HashMap<String, Instant>>,
 }
 impl Default for TabState {
-    fn default() -> Self { Self { cache: Mutex::new(LruCache::new(NonZeroUsize::new(200).unwrap())), inflight: Mutex::new(HashMap::new()) } }
+    fn default() -> Self { Self { cache: Mutex::new(LruCache::new(NonZeroUsize::new(200).unwrap())), inflight: Mutex::new(HashMap::new()), down: Mutex::new(HashMap::new()) } }
+}
+
+const PROVIDER_COOLDOWN: std::time::Duration = std::time::Duration::from_secs(45);
+
+/// The fast (Tab) model plus a fallback (the default model, when different). While the fast model's provider is in
+/// cooldown the fallback is returned directly.
+fn pick_for_tab(st: &TabState, settings: &Settings, secrets: &SettingsState) -> Result<(ResolvedModel, Option<ResolvedModel>)> {
+    let fast = pick_model(settings, secrets, None, true)?;
+    // Fallback = the default model when it lives on another provider, else the first enabled model on any other usable
+    // provider (a dead local proxy must not take every model with it).
+    let other_provider = |m: &ResolvedModel| m.model.id != fast.model.id && m.provider.id != fast.provider.id;
+    let fallback = llm::resolve_model(settings, secrets, None).ok().filter(|d| other_provider(d)).or_else(|| {
+        settings.models.iter().filter(|m| m.enabled && m.provider_id != fast.provider.id)
+            .filter_map(|m| llm::resolve_model(settings, secrets, Some(&m.id)).ok())
+            .find(|r| crate::ai::util::usable(&r.provider, secrets))
+    });
+    let down = st.down.lock().get(&fast.provider.id).map(|t| *t > Instant::now()).unwrap_or(false);
+    if down { if let Some(d) = fallback { return Ok((d, None)); } }
+    Ok((fast, fallback))
+}
+fn mark_provider_down(st: &TabState, provider_id: &str) { st.down.lock().insert(provider_id.to_string(), Instant::now() + PROVIDER_COOLDOWN); }
+
+/// Run a single-shot request, retrying once on the fallback model when the primary's provider fails (not on cancel).
+async fn complete_with_fallback(st: &TabState, primary: ResolvedModel, fallback: Option<ResolvedModel>, req: LlmRequest, cancel: tokio_util::sync::CancellationToken, purpose: &str) -> Result<(String, llm::UsageDelta, ResolvedModel)> {
+    match llm::complete_text(&primary, req.clone(), cancel.clone()).await {
+        Ok((raw, usage)) => Ok((raw, usage, primary)),
+        Err(e) if e.code != "cancelled" && fallback.is_some() => {
+            tracing::warn!(purpose, provider = %primary.provider.id, model = %primary.model.id, error = %e.message, "fast model failed; falling back to the default model");
+            mark_provider_down(st, &primary.provider.id);
+            let fb = fallback.unwrap();
+            let mut req2 = req; req2.model = fb.model.clone();
+            let (raw, usage) = llm::complete_text(&fb, req2, cancel).await?;
+            Ok((raw, usage, fb))
+        }
+        Err(e) => Err(e),
+    }
 }
 
 const SYSTEM: &str = "You are a code completion engine inside a code editor. You receive the text before the cursor (<prefix>) and after the cursor (<suffix>) and must produce ONLY the text to insert at the cursor.\n\nRules:\n- Output the insertion wrapped exactly as <completion>…</completion>. No explanations, no markdown fences.\n- Continue precisely from the cursor position: never repeat text already in the prefix, never duplicate text that already appears at the start of the suffix.\n- Match the file's language, indentation, naming and style; use surrounding code, recent edits and diagnostics as hints for intent.\n- Stop at a natural boundary (end of statement, block, or line). Produce at most {MAX_LINES} line(s).\n- If no sensible completion exists, output <completion></completion>.";
@@ -178,7 +220,9 @@ pub async fn complete(app: &AppHandle, req: CompletionRequest) -> Result<Complet
     if let Some(mut rx) = existing {
         let _ = tokio::time::timeout(std::time::Duration::from_secs(20), async { while rx.borrow().is_none() { if rx.changed().await.is_err() { break; } } }).await;
         let v = rx.borrow().clone().flatten();
-        return Ok(CompletionResult { request_id: req.request_id, text: v.unwrap_or_default(), model_id: None, latency_ms: started.elapsed().as_millis() as u64, cached: true });
+        // Only reuse a real answer. If the earlier identical request was cancelled or failed, fall through and run our own.
+        if let Some(text) = v { return Ok(CompletionResult { request_id: req.request_id, text, model_id: None, latency_ms: started.elapsed().as_millis() as u64, cached: true }); }
+        if let Some(hit) = st.cache.lock().get(&key) { return Ok(CompletionResult { request_id: req.request_id, text: hit.clone(), model_id: None, latency_ms: started.elapsed().as_millis() as u64, cached: true }); }
     }
     let (tx, rx) = watch::channel::<Option<Option<String>>>(None);
     st.inflight.lock().insert(key.clone(), rx);
@@ -186,7 +230,7 @@ pub async fn complete(app: &AppHandle, req: CompletionRequest) -> Result<Complet
     impl Drop for Cleanup<'_> { fn drop(&mut self) { self.0.inflight.lock().remove(&self.1); let _ = self.2.send(Some(self.3.take())); } }
     let mut cleanup = Cleanup(&st, key.clone(), tx, None);
 
-    let resolved = pick_model(&settings, &settings_state, None, true)?;
+    let (resolved, fallback) = pick_for_tab(&st, &settings, &settings_state)?;
     let max_lines = if req.multiline { settings.tab.max_lines.max(1) as usize } else { 1 };
     let mut llm_req = LlmRequest::new(resolved.model.clone()).no_thinking().max_tokens(if req.multiline { 256 } else { 96 }).purpose("tab");
     llm_req.system = vec![crate::ai::llm::SystemBlock { text: SYSTEM.replace("{MAX_LINES}", &max_lines.to_string()), cache: true }];
@@ -194,9 +238,13 @@ pub async fn complete(app: &AppHandle, req: CompletionRequest) -> Result<Complet
     llm_req.temperature = Some(0.1);
     llm_req.stop = vec!["</completion>".into()];
     let guard = cancel::Guard::new(&req.request_id);
-    let (raw, usage) = llm::complete_text(&resolved, llm_req, guard.token()).await?;
+    let (raw, usage, resolved) = complete_with_fallback(&st, resolved, fallback, llm_req, guard.token(), "tab").await?;
     tracing::debug!(model = %resolved.model.id, input = usage.input_tokens, output = usage.output_tokens, ms = started.elapsed().as_millis() as u64, "tab completion");
     let text = clean_completion(&raw, &req.prefix, &req.suffix, max_lines).unwrap_or_default();
+    if text.is_empty() {
+        // Usually the model echoed the file or answered in prose; keep the head of the raw answer so the pattern can be diagnosed from the log.
+        tracing::debug!(model = %resolved.model.id, output = usage.output_tokens, raw = %head_chars(&raw, 300).replace('\n', "⏎"), "tab completion produced nothing usable");
+    }
     if !text.is_empty() { st.cache.lock().put(key, text.clone()); }
     cleanup.3 = Some(text.clone());
     Ok(CompletionResult { request_id: req.request_id, text, model_id: Some(resolved.model.id.clone()), latency_ms: started.elapsed().as_millis() as u64, cached: false })
@@ -219,13 +267,14 @@ pub async fn next_edit(app: &AppHandle, req: NextEditRequest) -> Result<NextEdit
     for (i, l) in lines[start..end].iter().enumerate() { numbered.push_str(&format!("{:>5}| {}\n", start + i + 1, l)); }
     let mut edits = String::new();
     for e in req.recent_edits.iter().rev().take(5).rev() { edits.push_str(&format!("line {}:\n- {}\n+ {}\n", e.line, head_chars(&e.before, 400), head_chars(&e.after, 400))); }
-    let resolved = pick_model(&settings, &settings_state, None, true)?;
+    let st = app.state::<TabState>();
+    let (resolved, fallback) = pick_for_tab(&st, &settings, &settings_state)?;
     let mut llm_req = LlmRequest::new(resolved.model.clone()).no_thinking().max_tokens(600).purpose("next-edit");
     llm_req.system = vec![crate::ai::llm::SystemBlock { text: NEXT_EDIT_SYSTEM.into(), cache: true }];
     llm_req.messages = vec![crate::ai::llm::Message::user_text(format!("Language: {}\nFile: {}\nCursor line: {}\n\nRecent edits:\n{}\nFile (lines {}-{}):\n{}", req.language, req.path, req.cursor_line, edits, start + 1, end, numbered))];
     llm_req.temperature = Some(0.0);
     let guard = cancel::Guard::new(&req.request_id);
-    let (raw, _) = llm::complete_text(&resolved, llm_req, guard.token()).await?;
+    let (raw, _, _resolved) = complete_with_fallback(&st, resolved, fallback, llm_req, guard.token(), "next-edit").await?;
     let mut out = NextEditResult { request_id: req.request_id.clone(), found: false, ..Default::default() };
     let Some(v) = extract_json(&raw) else { return Ok(out) };
     if v["found"].as_bool() != Some(true) { return Ok(out); }

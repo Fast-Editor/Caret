@@ -1,0 +1,51 @@
+/* Chat-stream motion. Every duration/ease comes from the tokens in styles.css, so `data-motion="off"` on <html>
+   (or the OS reduce-motion preference) collapses all of this to instant state changes. Keyframes `caret-*` are
+   global (styles.css). */
+
+/* Height-animated disclosure without measuring: grid-template-rows 0fr → 1fr (see Collapse.tsx). */
+.chat-collapse { display: grid; grid-template-rows: 0fr; opacity: 0; transition: grid-template-rows var(--dur-base) var(--ease), opacity var(--dur-base) var(--ease); }
+.chat-collapse[data-open="true"] { grid-template-rows: 1fr; opacity: 1; }
+.chat-collapse > .chat-collapse-inner { min-height: 0; overflow: hidden; }
+
+/* Disclosure chevron: one icon, rotated, instead of swapping glyphs. */
+.chat-chevron { transition: transform var(--dur-base) var(--ease); }
+.chat-chevron[data-open="true"] { transform: rotate(90deg); }
+
+/* Gentle entry for stream items (tool cards, queued rows): a 6px slide reads as "arrived", not "flew in". */
+@keyframes chat-slide-in { from { opacity: 0; transform: translateX(-6px) } to { opacity: 1; transform: none } }
+.chat-enter-slide { animation: chat-slide-in var(--dur-base) var(--ease) both; }
+
+/* Row exit: fade + fold the fixed-height row to 0 (rows are h-7 / h-6 so the height is animatable). */
+.chat-row-out { opacity: 0 !important; transform: translateX(6px); height: 0 !important; min-height: 0 !important; padding-top: 0 !important; padding-bottom: 0 !important; margin: 0 !important; overflow: hidden; pointer-events: none;
+  transition: opacity var(--dur-fast) var(--ease), transform var(--dur-fast) var(--ease), height var(--dur-slow) var(--ease), padding var(--dur-slow) var(--ease), margin var(--dur-slow) var(--ease); }
+
+/* Streaming caret: drawn as ::after on the last block of the live text so it sits inline at the end of the text. */
+.chat-live > p:last-child::after, .chat-live > ul:last-child > li:last-child::after, .chat-live > ol:last-child > li:last-child::after,
+.chat-live > h1:last-child::after, .chat-live > h2:last-child::after, .chat-live > h3:last-child::after, .chat-live > blockquote:last-child > p:last-child::after,
+.chat-live > :last-child:not(p):not(ul):not(ol):not(h1):not(h2):not(h3):not(blockquote)::after {
+  content: ''; display: inline-block; width: 2px; height: 0.95em; margin-left: 2px; vertical-align: -0.12em; border-radius: 1px; background: var(--fg);
+  animation: caret-breathe 1.1s var(--ease-in-out) infinite;
+}
+.chat-live:empty::after { content: ''; display: inline-block; width: 2px; height: 0.95em; border-radius: 1px; background: var(--fg); animation: caret-breathe 1.1s var(--ease-in-out) infinite; }
+html[data-motion="off"] .chat-live > :last-child::after, html[data-motion="off"] .chat-live:empty::after { animation: none; }
+
+/* Breathing dots for the "thinking" states (staggered through --i). */
+.chat-dots { display: inline-flex; align-items: center; gap: 3px; }
+.chat-dots > i { width: 4px; height: 4px; border-radius: 9999px; background: currentColor; animation: caret-breathe 1.2s var(--ease-in-out) infinite; animation-delay: calc(var(--i, 0) * 160ms); }
+html[data-motion="off"] .chat-dots > i { animation: none; opacity: .7; }
+
+/* Composer textarea grows/shrinks smoothly (height is set from JS after measuring, see Composer.tsx resize()). */
+.chat-composer-ta { transition: height var(--dur-fast) var(--ease); overflow-y: auto; }
+
+/* Send ↔ Stop share one slot and crossfade instead of swapping. */
+.chat-send-slot { position: relative; width: 24px; height: 24px; flex: none; }
+.chat-send-slot > button { position: absolute; inset: 0; transition: opacity var(--dur-fast) var(--ease), transform var(--dur-fast) var(--ease), background-color var(--dur-fast) var(--ease); }
+.chat-send-slot > button[data-active="false"] { opacity: 0; transform: scale(0.75); pointer-events: none; }
+
+/* Hover-lift for cards (empty-state mode cards). */
+.chat-lift { transition: transform var(--dur-fast) var(--ease), box-shadow var(--dur-fast) var(--ease), background-color var(--dur-fast) var(--ease), border-color var(--dur-fast) var(--ease); }
+.chat-lift:hover { transform: translateY(-1px); box-shadow: var(--shadow-float); }
+html[data-motion="off"] .chat-lift:hover { transform: none; box-shadow: none; }
+
+/* Task progress bar */
+.chat-progress { transition: width var(--dur-slow) var(--ease); }

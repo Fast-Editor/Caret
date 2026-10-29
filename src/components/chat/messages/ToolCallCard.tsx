@@ -1,11 +1,12 @@
 import { memo, useState } from 'react'
-import { BookOpen, Bot, Brain, Check, ChevronRight, CircleX, FileDiff, Globe, ListChecks, LoaderCircle, Pencil, Search, Server, ShieldCheck, ShieldAlert, ShieldOff, SquareTerminal, Ban, Globe as Browser, FileText } from 'lucide-react'
+import { BookOpen, Bot, Brain, Check, CircleX, FileDiff, Globe, ListChecks, LoaderCircle, Pencil, Search, Server, ShieldCheck, ShieldAlert, ShieldOff, SquareTerminal, Ban, Globe as Browser, FileText } from 'lucide-react'
 import type { ApprovalOption, CommandClassification, CommandRisk, ToolCallRecord } from '@/types'
 import { toolGroup, toolTitle, fmtDuration } from '../util'
 import { DiffView } from '../DiffView'
 import { useChat } from '@/store/chat'
 import { runCommand, hasCommand } from '@/lib/commands'
 import { Markdown } from '@/lib/markdown'
+import { Chevron, Collapse } from '../Collapse'
 
 const ICONS: Record<string, typeof Bot> = { read: FileText, search: Search, edit: Pencil, shell: SquareTerminal, web: Globe, plan: ListChecks, memory: Brain, mcp: Server, browser: Browser, agent: Bot, other: BookOpen }
 
@@ -13,8 +14,8 @@ function StatusIcon({ status }: { status: ToolCallRecord['status'] }) {
   switch (status) {
     case 'running': case 'pending': return <LoaderCircle size={12} className="spin text-muted" />
     case 'awaiting-approval': return <ShieldCheck size={12} className="text-warning" />
-    case 'done': return <Check size={12} className="text-success" />
-    case 'error': return <CircleX size={12} className="text-danger" />
+    case 'done': return <Check size={12} className="text-success animate-pop" />
+    case 'error': return <CircleX size={12} className="text-danger animate-pop" />
     case 'rejected': case 'cancelled': return <Ban size={12} className="text-faint" />
   }
 }
@@ -69,7 +70,7 @@ function ApprovalBox({ call }: { call: ToolCallRecord }) {
   const Icon = blocked ? ShieldOff : danger ? ShieldAlert : ShieldCheck
   const tone = blocked || danger ? 'danger' : 'warning'
   return (
-    <div className={`mt-2 rounded-md border p-2 text-[12px] ${tone === 'danger' ? 'border-danger/40 bg-danger/5' : 'border-warning/40 bg-warning/5'}`}>
+    <div className={`mt-2 rounded-md border p-2 text-[12px] animate-fade-up ${tone === 'danger' ? 'border-danger/40 bg-danger/5' : 'border-warning/40 bg-warning/5'}`} data-testid="approval-card">
       <div className={`flex items-center gap-1.5 font-medium ${tone === 'danger' ? 'text-danger' : 'text-warning'}`}><Icon size={13} /> {a.title}{a.agentId && <span className="ml-1 px-1 rounded bg-input text-[10px] text-muted font-normal">{a.agentId}</span>}</div>
       {a.detail && a.detail !== a.command && <div className="text-muted mt-0.5 whitespace-pre-wrap break-words">{a.detail}</div>}
       {a.command && <pre className="mono mt-1.5 p-1.5 rounded bg-editor border border-border overflow-x-auto selectable">{a.cwd ? <span className="text-faint">{a.cwd.split('/').pop()} $ </span> : null}{a.command}</pre>}
@@ -79,7 +80,7 @@ function ApprovalBox({ call }: { call: ToolCallRecord }) {
       <div className="flex flex-wrap gap-1.5 mt-2">
         {options.map((o) => (
           <button key={o} type="button" onClick={() => void approve(a.approvalId, o)} title={o === 'allow-always' && a.allowAlwaysPattern ? `Always allow "${a.allowAlwaysPattern}"` : OPTION_LABEL[o]}
-            className={`px-2 h-6 rounded border text-[11.5px] ${o.startsWith('allow') ? (o === 'allow' ? (danger ? 'bg-danger text-white border-danger hover:opacity-90' : 'bg-accent text-accent-fg border-accent hover:bg-accent-hover') : 'border-border hover:bg-hover') : 'border-border text-danger hover:bg-hover'}`}>
+            className={`px-2 h-6 rounded border text-[11.5px] press ${o.startsWith('allow') ? (o === 'allow' ? (danger ? 'bg-danger text-white border-danger hover:opacity-90' : 'bg-accent text-accent-fg border-accent hover:bg-accent-hover') : 'border-border hover:bg-hover') : 'border-border text-danger hover:bg-hover'}`}>
             {OPTION_LABEL[o]}{o === 'allow' ? ' ⏎' : ''}
           </button>
         ))}
@@ -102,9 +103,9 @@ export const ToolCallCard = memo(function ToolCallCard({ call, sessionId }: { ca
   const openDiff = (changeId?: string) => { if (changeId) { const c = useChat.getState().loaded[sessionId]?.pendingChanges.find((x) => x.changeId === changeId); void useChat.getState().loadChange(changeId).then((pc) => { if (pc && hasCommand('editor.openDiff')) void runCommand('editor.openDiff', { path: pc.path, original: pc.before ?? '', modified: pc.after ?? '', title: `${c?.kind ?? 'change'}: ${pc.path.split('/').pop()}`, changeId, sessionId }) }) } }
 
   return (
-    <div className={`my-1 rounded-md border text-[12px] ${call.status === 'awaiting-approval' ? 'border-warning/50' : call.status === 'error' ? 'border-danger/40' : 'border-border'} bg-panel/60`}>
-      <button type="button" onClick={() => setOpen((o) => !o)} className="w-full flex items-center gap-2 px-2 h-7 text-left hover:bg-hover rounded-md" title={call.name}>
-        <ChevronRight size={12} className={`text-faint transition-transform ${expanded ? 'rotate-90' : ''}`} />
+    <div className={`my-1 rounded-md border text-[12px] chat-enter-slide ${call.status === 'awaiting-approval' ? 'border-warning/50' : call.status === 'error' ? 'border-danger/40' : 'border-border'} bg-panel/60`} data-tool-status={call.status}>
+      <button type="button" onClick={() => setOpen((o) => !o)} className="w-full flex items-center gap-2 px-2 h-7 text-left hover:bg-hover rounded-md" title={call.name} aria-expanded={expanded}>
+        <Chevron open={expanded} size={12} className="text-faint" />
         <Icon size={13} className="text-muted shrink-0" />
         <span className="truncate-1 flex-1">
           {title}
@@ -118,7 +119,7 @@ export const ToolCallCard = memo(function ToolCallCard({ call, sessionId }: { ca
         {dur && <span className="text-[10.5px] text-faint">{dur}</span>}
         <StatusIcon status={call.status} />
       </button>
-      {expanded && (
+      <Collapse open={expanded}>
         <div className="px-2 pb-2 pt-0.5 border-t border-border/60">
           {call.status === 'awaiting-approval' && <ApprovalBox call={call} />}
           {isShell && (call.command || input?.command) ? (
@@ -135,7 +136,7 @@ export const ToolCallCard = memo(function ToolCallCard({ call, sessionId }: { ca
           {call.fileChanges && call.fileChanges.length > 0 && (
             <div className="mt-1.5 flex flex-col gap-0.5">
               {call.fileChanges.map((fc) => (
-                <button key={fc.changeId} type="button" onClick={() => openDiff(fc.changeId)} className="flex items-center gap-2 px-1.5 h-6 rounded hover:bg-hover text-left text-[11.5px]">
+                <button key={fc.changeId} type="button" onClick={() => openDiff(fc.changeId)} className="flex items-center gap-2 px-1.5 h-6 rounded hover:bg-hover text-left text-[11.5px] press animate-fade">
                   <FileDiff size={12} className="text-muted" /><span className="truncate-1 flex-1 mono">{fc.path.split('/').slice(-2).join('/')}</span>
                   <span className="text-diff-add-fg">+{fc.additions}</span><span className="text-diff-del-fg">−{fc.deletions}</span>
                   <span className={`text-[10px] uppercase ${fc.status === 'accepted' ? 'text-success' : fc.status === 'rejected' ? 'text-faint' : 'text-warning'}`}>{fc.status}</span>
@@ -149,7 +150,7 @@ export const ToolCallCard = memo(function ToolCallCard({ call, sessionId }: { ca
           {call.subagentSessionId && <button type="button" onClick={() => void useChat.getState().selectSession(call.subagentSessionId!)} className="mt-1.5 text-[11px] text-accent hover:underline">Open subagent transcript →</button>}
           {call.summary && <div className="mt-1.5 text-muted text-[11.5px]">{call.summary}</div>}
         </div>
-      )}
+      </Collapse>
     </div>
   )
 })

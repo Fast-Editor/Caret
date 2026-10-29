@@ -5,6 +5,7 @@ import { IconButton, cn } from '@/components/common'
 import { useNotifications, type Toast } from '@/store/notifications'
 import { Events, on } from '@/lib/tauri'
 import type { Notification } from '@/types'
+import '@/components/common/motion.css'
 
 const ICONS = { info: Info, warn: AlertTriangle, error: XCircle, success: CheckCircle2 } as const
 const COLORS = { info: 'text-info', warn: 'text-warning', error: 'text-danger', success: 'text-success' } as const
@@ -13,7 +14,7 @@ function ToastCard({ t, compact }: { t: Toast; compact?: boolean }) {
   const { dismiss, actionHandlers } = useNotifications()
   const Icon = ICONS[t.level]
   return (
-    <div role="status" className={cn('pointer-events-auto rounded-md border border-border bg-tooltip shadow-[var(--shadow)] text-xs', compact ? 'p-2' : 'p-3 w-[360px]')}>
+    <div role="status" data-leaving={!!t.leaving} className={cn('pointer-events-auto rounded-md surface-float text-xs', !compact && 'caret-toast', compact ? 'p-2' : 'p-3 w-[360px]')}>
       <div className="flex items-start gap-2">
         <Icon className={cn('size-4 shrink-0 mt-px', COLORS[t.level])} />
         <div className="flex-1 min-w-0">
@@ -58,7 +59,7 @@ export function NotificationBell() {
         </button>
       </Popover.Trigger>
       <Popover.Portal>
-        <Popover.Content side="top" align="end" sideOffset={6} className="z-[900] w-[380px] max-h-[60vh] rounded-md border border-border bg-panel shadow-[var(--shadow)] flex flex-col">
+        <Popover.Content data-caret-pop side="top" align="end" sideOffset={6} className="z-[900] w-[380px] max-h-[60vh] rounded-md surface-float flex flex-col">
           <div className="flex items-center justify-between px-3 h-8 border-b border-border text-xs">
             <span className="font-medium">Notifications</span>
             <IconButton icon={<Trash2 />} label="Clear all" size="xs" onClick={clearHistory} />

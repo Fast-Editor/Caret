@@ -1,0 +1,20 @@
+/* Layout motion: pane toggles, editor content crossfade, resize handles, scroll-reveal scrollbars.
+   Durations come from the motion tokens; `body.is-resizing` (set by ResizeHandle while dragging) disables the pane transitions. */
+.pane { transition: width var(--dur-base) var(--ease), height var(--dur-base) var(--ease), opacity var(--dur-base) var(--ease); will-change: width, height; }
+.pane > .pane-inner { transition: transform var(--dur-base) var(--ease), opacity var(--dur-base) var(--ease); height: 100%; }
+.pane[data-open="false"] { opacity: 0; pointer-events: none; }
+.pane[data-open="false"][data-axis="x"][data-edge="start"] > .pane-inner { transform: translateX(-12px); }
+.pane[data-open="false"][data-axis="x"][data-edge="end"] > .pane-inner { transform: translateX(12px); }
+.pane[data-open="false"][data-axis="y"] > .pane-inner { transform: translateY(12px); }
+body.is-resizing .pane, body.is-resizing .pane > .pane-inner { transition: none !important; will-change: auto; }
+
+/* Editor content swap: restart on tab change (class toggled in EditorGroupView). Starts at 0.4 so the editor never flashes black. */
+@keyframes caret-tab-swap { from { opacity: 0.4 } to { opacity: 1 } }
+.tab-swap { animation: caret-tab-swap var(--dur-fast) var(--ease) both; }
+
+/* Resize handles: a 2px line that fades in on hover (slight delay so passing the pointer over it does not flicker). */
+.resize-line { background-color: transparent; transition: background-color var(--dur-fast) var(--ease) 80ms; }
+.group\/handle:hover .resize-line, .resize-line[data-dragging="true"] { background-color: var(--border-strong); }
+
+/* Layout-mode / zen switches crossfade their content. */
+.layout-swap { animation: caret-fade var(--dur-base) var(--ease) both; }

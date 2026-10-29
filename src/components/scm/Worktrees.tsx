@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { ChevronDown, ChevronRight, FolderGit2, Plus, SquareTerminal, Trash2, Lock } from 'lucide-react'
+import { ChevronRight, FolderGit2, Plus, SquareTerminal, Trash2, Lock } from 'lucide-react'
 import { useGit } from '@/store/git'
 import { useWorkspace } from '@/store/workspace'
 import { runCommand } from '@/lib/commands'
@@ -21,8 +21,8 @@ export function Worktrees() {
   }
   return (
     <div className="border-t border-border">
-      <div className="group flex items-center h-6 px-1 text-[11px] font-semibold uppercase tracking-wide text-muted hover:bg-hover/50">
-        <button onClick={() => setOpen(!open)} aria-expanded={open} className="flex items-center gap-1 flex-1 h-full text-left">{open ? <ChevronDown size={12} /> : <ChevronRight size={12} />}Worktrees{worktrees.length > 1 && <span className="ml-1 px-1 rounded-full bg-hover text-[10px] font-normal">{worktrees.length}</span>}</button>
+      <div className="group flex items-center h-6 px-1 text-[11px] font-semibold text-muted hover:bg-hover/50 transition-base">
+        <button onClick={() => setOpen(!open)} aria-expanded={open} className="flex items-center gap-1 flex-1 h-full text-left"><ChevronRight size={12} className="caret-chevron" data-open={open} />Worktrees{worktrees.length > 1 && <span className="ml-1 px-1 rounded-full bg-hover text-[10px] font-normal">{worktrees.length}</span>}</button>
         <div className="hidden group-hover:flex"><IconButton title="Add worktree" onClick={() => setAdd(true)}><Plus size={12} /></IconButton></div>
       </div>
       {open && (

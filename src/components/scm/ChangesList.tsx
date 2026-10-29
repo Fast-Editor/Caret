@@ -1,5 +1,6 @@
+import { Collapsible } from '@/components/common/Collapsible'
 import { useCallback, useMemo, useState } from 'react'
-import { ChevronDown, ChevronRight, FileDiff, Minus, Plus, Undo2, ExternalLink } from 'lucide-react'
+import { ChevronRight, FileDiff, Minus, Plus, Undo2, ExternalLink } from 'lucide-react'
 import { useGit } from '@/store/git'
 import { useWorkspace } from '@/store/workspace'
 import { runCommand } from '@/lib/commands'
@@ -63,8 +64,8 @@ function SectionView({ section, collapsed, onToggle, selected, onSelect }: { sec
   }
   return (
     <div>
-      <div className="group flex items-center h-6 px-1 text-[11px] font-semibold uppercase tracking-wide text-muted hover:bg-hover/50">
-        <button onClick={onToggle} className="flex items-center gap-1 flex-1 min-w-0 h-full text-left" aria-expanded={!collapsed}>{collapsed ? <ChevronRight size={12} /> : <ChevronDown size={12} />}<span className="truncate-1">{section.title}</span><span className="ml-1 px-1 rounded-full bg-hover text-[10px] font-normal">{section.items.length}</span></button>
+      <div className="group flex items-center h-6 px-1 text-[11px] font-semibold text-muted hover:bg-hover/50 transition-base">
+        <button onClick={onToggle} className="flex items-center gap-1 flex-1 min-w-0 h-full text-left" aria-expanded={!collapsed}><ChevronRight size={12} className="caret-chevron" data-open={!collapsed} /><span className="truncate-1">{section.title}</span><span className="ml-1 px-1 rounded-full bg-hover text-[10px] font-normal">{section.items.length}</span></button>
         <div className="hidden group-hover:flex items-center gap-0.5">
           {section.id === 'staged' ? <IconButton title="Unstage all" onClick={() => act(unstageAll, 'Unstage all')}><Minus size={12} /></IconButton> : <>
             {(section.id === 'unstaged' || section.id === 'untracked') && <IconButton title="Discard all" onClick={discardAll}><Undo2 size={12} /></IconButton>}
@@ -72,7 +73,7 @@ function SectionView({ section, collapsed, onToggle, selected, onSelect }: { sec
           </>}
         </div>
       </div>
-      {!collapsed && section.items.map((c) => <ChangeRow key={c.path} c={c} section={section.id} selected={selected.has(`${section.id}:${c.path}`)} onSelect={(e) => onSelect(`${section.id}:${c.path}`, e)} selectedPaths={[...selected].filter((k) => k.startsWith(section.id + ':')).map((k) => k.slice(section.id.length + 1))} />)}
+      <Collapsible open={!collapsed}>{section.items.map((c) => <ChangeRow key={c.path} c={c} section={section.id} selected={selected.has(`${section.id}:${c.path}`)} onSelect={(e) => onSelect(`${section.id}:${c.path}`, e)} selectedPaths={[...selected].filter((k) => k.startsWith(section.id + ':')).map((k) => k.slice(section.id.length + 1))} />)}</Collapsible>
     </div>
   )
 }

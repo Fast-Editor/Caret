@@ -1,4 +1,4 @@
-import { ChevronDown, ChevronRight, CopyMinus, Eye, EyeOff, FilePlus2, FolderOpen, FolderPlus, Locate, RefreshCw, X } from 'lucide-react'
+import { ChevronRight, CopyMinus, Eye, EyeOff, FilePlus2, FolderOpen, FolderPlus, Locate, RefreshCw, X } from 'lucide-react'
 import { useEffect, useRef } from 'react'
 import { open as openDialog } from '@tauri-apps/plugin-dialog'
 import { IconButton, Input, Button, cn } from '@/components/common'
@@ -24,7 +24,7 @@ export function ExplorerView() {
         <Button variant="primary" icon={<FolderOpen className="size-3.5" />} onClick={() => void runCommand('workspace.openFolder')}>Open Folder</Button>
         {recent.length > 0 && (
           <div>
-            <div className="text-[11px] uppercase tracking-wide text-faint mb-1">Recent</div>
+            <div className="text-[11px] font-semibold text-faint mb-1">Recent</div>
             {recent.slice(0, 8).map((r) => (
               <button key={r.path} disabled={!r.exists} title={r.path} onClick={() => void runCommand('workspace.openFolder', { path: r.path })} className="block w-full text-left truncate rounded px-1.5 h-6 hover:bg-hover disabled:opacity-40">
                 <span className="text-fg">{r.name}</span> <span className="text-faint">{r.path.replace(/^\/Users\/[^/]+/, '~')}</span>
@@ -39,8 +39,8 @@ export function ExplorerView() {
     <div className="flex flex-col h-full">
       <OpenEditors />
       <div className="flex items-center gap-0.5 h-[26px] px-1 shrink-0 group/head">
-        <button onClick={() => ex.set({ treeCollapsed: !ex.treeCollapsed })} className="flex items-center gap-1 text-[11px] font-semibold uppercase tracking-wide text-muted hover:text-fg truncate flex-1 min-w-0">
-          {ex.treeCollapsed ? <ChevronRight className="size-3.5 shrink-0" /> : <ChevronDown className="size-3.5 shrink-0" />}<span className="truncate" title={ws.root}>{ws.name}</span>
+        <button onClick={() => ex.set({ treeCollapsed: !ex.treeCollapsed })} className="flex items-center gap-1 text-[11px] font-semibold text-muted hover:text-fg truncate flex-1 min-w-0">
+          <ChevronRight className="size-3.5 shrink-0 caret-chevron" data-open={!ex.treeCollapsed} /><span className="truncate" title={ws.root}>{ws.name}</span>
         </button>
         {/* Hover-only actions: `hidden` (not opacity-0) so they reserve no width and the workspace name can use it. */}
         <div className="hidden group-hover/head:flex items-center shrink-0">

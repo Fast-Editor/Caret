@@ -60,10 +60,10 @@ function ChangesColumn({ sessionId }: { sessionId: string }) {
       <div className="flex-1 overflow-y-auto">
         {changes.map((c) => <ChangeRow key={c.changeId} sessionId={sessionId} changeId={c.changeId} />)}
         {changes.length === 0 && <div className="px-3 py-6 text-center text-faint text-[11.5px]">No {showAll ? '' : 'pending '}changes</div>}
-        {session.todos.length > 0 && <div className="mt-2 flex items-center gap-1.5 px-3 h-7 text-[11px] uppercase tracking-wide text-muted"><ListChecks size={12} /> Tasks</div>}
+        {session.todos.length > 0 && <div className="mt-2 flex items-center gap-1.5 px-3 h-7 text-[11px] font-semibold text-muted"><ListChecks size={12} /> Tasks</div>}
         <TodoList sessionId={sessionId} todos={session.todos} />
         {checkpoints && checkpoints.length > 0 && (
-          <div className="mt-2"><div className="flex items-center gap-1.5 px-3 h-7 text-[11px] uppercase tracking-wide text-muted"><Undo2 size={12} /> Checkpoints</div>
+          <div className="mt-2"><div className="flex items-center gap-1.5 px-3 h-7 text-[11px] font-semibold text-muted"><Undo2 size={12} /> Checkpoints</div>
             {checkpoints.map((cp) => <button key={cp.id} type="button" onClick={() => { if (window.confirm(`Restore ${cp.files.length} file(s) to "${cp.label}"?`)) void restore(sessionId, cp.id) }} className="w-full flex items-center gap-2 px-3 h-7 text-left hover:bg-hover text-[11.5px]"><span className="truncate-1 flex-1">{cp.label}</span><span className="text-faint">{cp.files.length} files · {fmtRelative(cp.createdAt)}</span></button>)}
           </div>
         )}

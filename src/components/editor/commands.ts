@@ -168,7 +168,7 @@ function wireBusTopics(): void {
     if (cursorKey !== lastCursor) { lastCursor = cursorKey; busEmit('editor.cursor', tab?.path ? { line: s.cursor.line, column: s.cursor.column, selection: s.cursor.selected || undefined } : null) }
     const enabled = useSettings.getState().settings?.tab.enabled ?? true
     const tabKey = `${enabled}:${s.tabStatus}`
-    if (tabKey !== lastTabStatus) { lastTabStatus = tabKey; busEmit('tab.status', { enabled: enabled && s.tabStatus !== 'off', busy: s.tabStatus === 'loading' }) }
+    if (tabKey !== lastTabStatus) { lastTabStatus = tabKey; busEmit('tab.status', { enabled: enabled && s.tabStatus !== 'off', busy: s.tabStatus === 'loading', error: s.tabStatus === 'error' }) }
   }
   useEditor.subscribe(publish)
   useSettings.subscribe(publish)

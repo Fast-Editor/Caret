@@ -1,4 +1,5 @@
-import { ChevronDown, ChevronRight, X, Circle } from 'lucide-react'
+import { Collapsible } from '@/components/common/Collapsible'
+import { ChevronRight, X, Circle } from 'lucide-react'
 import { useCallback, useEffect, useState } from 'react'
 import { runCommand, hasCommand } from '@/lib/commands'
 import { subscribe } from '@/lib/bus'
@@ -25,11 +26,11 @@ export function OpenEditors() {
   if (!hasCommand('editor.getOpenFiles') || files.length === 0) return null
   return (
     <div className="shrink-0 border-b border-border">
-      <button onClick={() => useExplorer.setState({ openEditorsCollapsed: !collapsed })} className="w-full flex items-center gap-1 h-[22px] px-1 text-[11px] font-semibold uppercase tracking-wide text-muted hover:text-fg">
-        {collapsed ? <ChevronRight className="size-3.5" /> : <ChevronDown className="size-3.5" />}Open Editors
-        <span className="ml-auto text-faint font-normal normal-case tracking-normal">{files.length}</span>
+      <button onClick={() => useExplorer.setState({ openEditorsCollapsed: !collapsed })} className="w-full flex items-center gap-1 h-[22px] px-1 text-[11px] font-semibold text-muted hover:text-fg">
+        <ChevronRight className="size-3.5 caret-chevron" data-open={!collapsed} />Open Editors
+        <span className="ml-auto text-faint font-normal">{files.length}</span>
       </button>
-      {!collapsed && (
+      <Collapsible open={!collapsed}>
         <div className="max-h-[200px] overflow-auto pb-1">
           {files.map((f) => (
             <div key={(f as { tabId?: string }).tabId ?? f.path} className={cn('group flex items-center gap-1.5 h-[22px] pl-4 pr-1 text-xs hover:bg-hover cursor-pointer', f.active && 'bg-selected')} onClick={() => void runCommand('editor.openFile', { path: f.path, focus: true })} title={f.path}>
@@ -44,7 +45,7 @@ export function OpenEditors() {
             </div>
           ))}
         </div>
-      )}
+      </Collapsible>
     </div>
   )
 }

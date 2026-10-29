@@ -15,6 +15,8 @@ import { ImageThumb } from './messages/Parts'
 import { detectTrigger, parseSlashCommand, replaceTrigger, type Trigger } from './mentions'
 import { baseName, fmtTokens, uid, MOD } from './util'
 import { getActiveFile } from '@/lib/chatBridge'
+import { usePresenceList } from './presence'
+import './chat.css'
 
 const MODE_SLASH = new Set(['agent', 'ask', 'plan', 'debug'])
 
@@ -45,6 +47,7 @@ export function Composer({ sessionId, autoFocusNonce }: { sessionId: string; aut
   const [tokens, setTokens] = useState<number | null>(null)
   const [dragOver, setDragOver] = useState(false)
   const model = resolveModel(draft.modelId)
+  const pills = usePresenceList(draft.context, (c) => c.id)
 
   useEffect(() => { taRef.current?.focus() }, [autoFocusNonce, sessionId])
   // Materialise the draft so selectors return a stable object.
@@ -53,7 +56,16 @@ export function Composer({ sessionId, autoFocusNonce }: { sessionId: string; aut
   useEffect(() => { let alive = true; const refresh = () => getActiveFile().then((f) => { if (alive) setActiveFile(f ? { path: f.path } : null) }); void refresh(); const onFocus = () => void refresh(); window.addEventListener('focusin', onFocus); return () => { alive = false; window.removeEventListener('focusin', onFocus) } }, [sessionId])
 
   // auto-grow
-  const resize = useCallback(() => { const ta = taRef.current; if (!ta) return; ta.style.height = 'auto'; const max = Math.max(120, window.innerHeight * 0.4); ta.style.height = `${Math.min(max, ta.scrollHeight)}px` }, [])
+  const resize = useCallback(() => {
+    const ta = taRef.current; if (!ta) return
+    const prev = ta.style.height
+    ta.style.height = 'auto'
+    const max = Math.max(120, window.innerHeight * 0.4)
+    const next = `${Math.min(max, ta.scrollHeight)}px`
+    // Restore the previous height and flush so the change to `next` is a transition (chat.css .chat-composer-ta), not a jump.
+    if (prev && prev !== next) { ta.style.height = prev; void ta.offsetHeight }
+    ta.style.height = next
+  }, [])
   useEffect(resize, [draft.text, resize])
 
   // token estimate (debounced)
@@ -148,16 +160,16 @@ export function Composer({ sessionId, autoFocusNonce }: { sessionId: string; aut
       {trigger?.kind === '@' && <MentionPicker query={trigger.query} sessionId={sessionId} onPick={pickMention} onClose={() => setTrigger(null)} />}
       {trigger?.kind === '/' && <SlashCommandPicker query={trigger.query} commands={slash} onPick={pickSlash} onClose={() => setTrigger(null)} />}
       <div className="flex flex-wrap items-center gap-1 px-2 pt-1.5">
-        <button type="button" onClick={insertAt} title="Add context (@)" className="flex items-center justify-center w-5 h-5 rounded border border-dashed border-border text-faint hover:text-fg hover:border-border-strong"><AtSign size={11} /></button>
+        <button type="button" onClick={insertAt} title="Add context (@)" className="flex items-center justify-center w-5 h-5 rounded border border-dashed border-border text-faint hover:text-fg hover:border-border-strong press"><AtSign size={11} /></button>
         {activeFile && !draft.context.some((c) => c.path === activeFile.path && c.kind === 'file') && (
           <ContextPill item={{ id: 'active', kind: 'active-file', label: 'Current file', path: activeFile.path }} dim={!draft.includeActiveFile} onRemove={draft.includeActiveFile ? () => update(sessionId, { includeActiveFile: false }) : undefined} onTogglePin={!draft.includeActiveFile ? () => update(sessionId, { includeActiveFile: true }) : undefined} small />
         )}
-        {draft.context.map((c) => <ContextPill key={c.id} item={c} small onRemove={() => removeContext(sessionId, c.id)} onTogglePin={() => update(sessionId, (d) => ({ context: d.context.map((x) => (x.id === c.id ? { ...x, pinned: !x.pinned } : x)) }))} />)}
-        {draft.useWorktree && <span className="inline-flex items-center gap-1 h-[18px] px-1 rounded border border-border text-[10.5px] text-muted" title={session?.worktreePath ?? 'Runs in an isolated git worktree'}><FolderGit2 size={10} /> worktree</span>}
+        {pills.map(({ key, item: c, leaving }) => <ContextPill key={key} item={c} small className={leaving ? 'is-leaving' : 'animate-pop'} onRemove={() => removeContext(sessionId, c.id)} onTogglePin={() => update(sessionId, (d) => ({ context: d.context.map((x) => (x.id === c.id ? { ...x, pinned: !x.pinned } : x)) }))} />)}
+        {draft.useWorktree && <span className="inline-flex items-center gap-1 h-[18px] px-1 rounded border border-border text-[10.5px] text-muted animate-pop" title={session?.worktreePath ?? 'Runs in an isolated git worktree'}><FolderGit2 size={10} /> worktree</span>}
       </div>
-      {draft.images.length > 0 && <div className="flex flex-wrap gap-2 px-2 pt-2">{draft.images.map((im) => <ImageThumb key={im.id} image={im} size={56} onRemove={() => update(sessionId, (d) => ({ images: d.images.filter((x) => x.id !== im.id) }))} />)}</div>}
+      {draft.images.length > 0 && <div className="flex flex-wrap gap-2 px-2 pt-2 animate-fade">{draft.images.map((im) => <ImageThumb key={im.id} image={im} size={56} onRemove={() => update(sessionId, (d) => ({ images: d.images.filter((x) => x.id !== im.id) }))} />)}</div>}
       <textarea ref={taRef} value={draft.text} onChange={onChange} onSelect={onSelect} onKeyDown={onKeyDown} onPaste={(e) => void onPaste(e)} placeholder={placeholder} rows={1} spellCheck
-        className="w-full resize-none bg-transparent px-2.5 py-2 outline-none text-[13px] leading-[1.5] placeholder:text-faint min-h-[40px]" />
+        className="chat-composer-ta w-full resize-none bg-transparent px-2.5 py-2 outline-none text-[13px] leading-[1.5] placeholder:text-faint min-h-[40px]" />
       <div className="flex items-center gap-0.5 px-1.5 pb-1.5">
         <AgentPicker sessionId={sessionId} />
         {(draft.agentId ?? CARET_AGENT) === CARET_AGENT ? (
@@ -173,12 +185,11 @@ export function Composer({ sessionId, autoFocusNonce }: { sessionId: string; aut
         <button type="button" onClick={() => void runCommand('settings.open', { page: 'agent' })} title={`Auto-run: ${autoRun}. Click to configure.`} className={`h-6 px-1.5 rounded hover:bg-hover text-[10.5px] ${autoRun === 'all' ? 'text-warning' : autoRun === 'off' ? 'text-faint' : 'text-muted'}`}>{autoRun === 'all' ? 'auto-run: all' : autoRun === 'off' ? 'auto-run: off' : 'auto-run'}</button>
         {tokens !== null && <span className="text-[10.5px] text-faint px-1" title="Estimated prompt tokens">~{fmtTokens(tokens)}</span>}
         <ContextRing used={used} total={ctxWindow} onClick={() => void api.chat.summarize(sessionId)} />
-        <button type="button" onClick={() => void attachImage()} title="Attach image" className="flex items-center justify-center w-6 h-6 rounded hover:bg-hover text-muted">{draft.images.length ? <ImageIcon size={13} /> : <Paperclip size={13} />}</button>
-        {busy ? (
-          <button type="button" onClick={() => void stop(sessionId)} title="Stop (Esc)" className="flex items-center justify-center w-6 h-6 rounded bg-danger/20 text-danger hover:bg-danger/30"><Square size={11} fill="currentColor" /></button>
-        ) : (
-          <button type="button" onClick={() => void doSend()} disabled={!draft.text.trim() && !draft.images.length} title={`Send (⏎)${draft.modelId === AUTO_MODEL ? ' · Auto model' : ''} · ${MOD}⏎ accepts changes`} className="flex items-center justify-center w-6 h-6 rounded bg-accent text-accent-fg hover:bg-accent-hover disabled:opacity-40 disabled:hover:bg-accent"><ArrowUp size={14} /></button>
-        )}
+        <button type="button" onClick={() => void attachImage()} title="Attach image" className="flex items-center justify-center w-6 h-6 rounded hover:bg-hover text-muted press">{draft.images.length ? <ImageIcon size={13} /> : <Paperclip size={13} />}</button>
+        <span className="chat-send-slot" data-busy={busy}>
+          <button type="button" onClick={() => void stop(sessionId)} data-active={busy} tabIndex={busy ? 0 : -1} aria-hidden={!busy} title="Stop (Esc)" className="flex items-center justify-center w-6 h-6 rounded bg-danger/20 text-danger hover:bg-danger/30 press"><Square size={11} fill="currentColor" /></button>
+          <button type="button" onClick={() => void doSend()} data-active={!busy} tabIndex={busy ? -1 : 0} aria-hidden={busy} disabled={!busy && !draft.text.trim() && !draft.images.length} title={`Send (⏎)${draft.modelId === AUTO_MODEL ? ' · Auto model' : ''} · ${MOD}⏎ accepts changes`} className="flex items-center justify-center w-6 h-6 rounded bg-accent text-accent-fg hover:bg-accent-hover disabled:opacity-40 disabled:hover:bg-accent press"><ArrowUp size={14} /></button>
+        </span>
       </div>
     </div>
   )

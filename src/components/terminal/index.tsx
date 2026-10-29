@@ -104,7 +104,7 @@ export function TerminalPanel() {
                 return (
                   <Menu key={id} items={() => tabMenu(id)}>
                     <div role="button" tabIndex={0} onClick={() => t.setActive(id)} onContextMenu={(e) => e.preventDefault()} data-status={status}
-                      className={cn('group flex items-center gap-1.5 h-[24px] px-1.5 rounded cursor-pointer hover:bg-hover', t.activeTerminalId === id && 'bg-selected text-fg')} title={[s?.cwd, hint].filter(Boolean).join(' — ')}>
+                      className={cn('group flex items-center gap-1.5 h-[24px] px-1.5 rounded cursor-pointer hover:bg-hover transition-base animate-fade-up', t.activeTerminalId === id && 'bg-selected text-fg')} title={[s?.cwd, hint].filter(Boolean).join(' — ')}>
                       <span className="relative shrink-0">
                         <TerminalSquare className={cn('size-3.5', s?.exitCode !== undefined ? 'text-danger' : 'text-muted')} />
                         {status !== 'idle' && <span className={cn('absolute -right-0.5 -bottom-0.5 size-1.5 rounded-full ring-1 ring-panel', STATUS_DOT[status].replace('text-', 'bg-'), (status === 'working' || status === 'waiting') && 'animate-pulse')} />}

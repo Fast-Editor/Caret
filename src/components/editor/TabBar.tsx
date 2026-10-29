@@ -1,11 +1,14 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { X, Pin, Circle, SplitSquareHorizontal, AlertTriangle, Settings2, Sparkles, FileText, Image as ImageIcon, GitCompare, Globe, ListChecks, Keyboard, Home, ShieldCheck } from 'lucide-react'
 import { useEditor, type EditorGroup, type EditorTab } from '@/store/editor'
 import { relPath } from '@/store/workspace'
 import { fileIconFor } from '@/components/explorer/fileIcons'
 import { tabDirHint } from '@/lib/tabHints'
 import { runCommand } from '@/lib/commands'
+import { duration } from '@/lib/motion'
+import { flipDeltas, playFlip, snapshotPositions } from '@/lib/flip'
 import { clsx } from 'clsx'
+import './tabbar.css'
 
 function TabIcon({ tab }: { tab: EditorTab }) {
   const cls = 'shrink-0 text-muted'
@@ -25,23 +28,65 @@ function TabIcon({ tab }: { tab: EditorTab }) {
   }
 }
 
+/** Tabs that were just closed stay in the strip for one exit animation, then drop out. */
+function useLeavingTabs(tabs: EditorTab[]): { tabs: EditorTab[]; leaving: Set<string> } {
+  const prev = useRef<EditorTab[]>(tabs)
+  const [leaving, setLeaving] = useState<Map<string, EditorTab>>(new Map())
+  useEffect(() => {
+    const ms = duration('fast')
+    const ids = new Set(tabs.map((t) => t.id))
+    const gone = prev.current.filter((t) => !ids.has(t.id))
+    prev.current = tabs
+    if (!gone.length || ms === 0) return
+    setLeaving((m) => { const n = new Map(m); for (const t of gone) n.set(t.id, t); return n })
+    const timer = window.setTimeout(() => setLeaving((m) => { const n = new Map(m); for (const t of gone) n.delete(t.id); return n }), ms + 20)
+    return () => window.clearTimeout(timer)
+  }, [tabs])
+  if (!leaving.size) return { tabs, leaving: new Set() }
+  // Re-insert leaving tabs at their previous index so neighbours slide rather than jump.
+  const merged = [...tabs]
+  const order = new Map<string, number>(); prev.current.forEach((t, i) => order.set(t.id, i))
+  for (const t of leaving.values()) { const at = order.get(t.id) ?? merged.length; merged.splice(Math.min(at, merged.length), 0, t) }
+  return { tabs: merged, leaving: new Set(leaving.keys()) }
+}
+
 export function TabBar({ group, active }: { group: EditorGroup; active: boolean }) {
   const { setActive, closeTab, keepTab, reorderTab, moveTab, pinTab, closeOthers, closeToRight, closeAll, split } = useEditor()
   const groupsCount = useEditor((s) => s.groups.length)
   const [menu, setMenu] = useState<{ x: number; y: number; tab: EditorTab } | null>(null)
   const scrollRef = useRef<HTMLDivElement>(null)
   const dragIdx = useRef<number | null>(null)
+  const { tabs: shownTabs, leaving } = useLeavingTabs(group.tabs)
+  // FLIP: snapshot tab x-positions before React re-lays them out, then animate from the old spot to the new one.
+  const positions = useRef<Record<string, number>>({})
+  const orderKey = group.tabs.map((t) => t.id).join('|')
+  useLayoutEffect(() => {
+    const el = scrollRef.current
+    const next = snapshotPositions(el, 'x')
+    playFlip(el, flipDeltas(positions.current, next), 'x', duration('base'))
+    positions.current = next
+  }, [orderKey])
+  // Sliding active underline: position it under the active tab whenever the active tab or the layout changes.
+  const [underline, setUnderline] = useState<{ left: number; width: number } | null>(null)
+  useLayoutEffect(() => {
+    const strip = scrollRef.current; const el = strip?.querySelector<HTMLElement>('[data-active="true"]')
+    if (!strip || !el) { setUnderline(null); return }
+    setUnderline({ left: el.offsetLeft, width: el.offsetWidth })
+  }, [group.activeTabId, orderKey])
   useEffect(() => { const el = scrollRef.current?.querySelector('[data-active="true"]'); el?.scrollIntoView({ block: 'nearest', inline: 'nearest' }) }, [group.activeTabId])
   useEffect(() => { if (!menu) return; const close = () => setMenu(null); window.addEventListener('mousedown', close, true); window.addEventListener('keydown', close, true); return () => { window.removeEventListener('mousedown', close, true); window.removeEventListener('keydown', close, true) } }, [menu])
   const dupTitles = new Map<string, number>(); for (const t of group.tabs) dupTitles.set(t.title, (dupTitles.get(t.title) ?? 0) + 1)
   return (
     <div className={clsx('h-[35px] shrink-0 flex items-stretch bg-panel', !active && 'opacity-90')} onDoubleClick={(e) => { if (e.target === e.currentTarget) void runCommand('file.new') }}>
-      <div ref={scrollRef} className="tabbar flex-1 flex items-stretch overflow-x-auto overflow-y-hidden min-w-0" onWheel={(e) => { if (e.deltaY && !e.deltaX) { e.currentTarget.scrollLeft += e.deltaY } }}>
-        {group.tabs.map((tab, i) => {
-          const isActive = tab.id === group.activeTabId
+      <div ref={scrollRef} className="tabbar relative flex-1 flex items-stretch overflow-x-auto overflow-y-hidden min-w-0" onWheel={(e) => { if (e.deltaY && !e.deltaX) { e.currentTarget.scrollLeft += e.deltaY } }}>
+        {underline && <div aria-hidden className="tab-underline" style={{ transform: `translateX(${underline.left}px)`, width: underline.width }} />}
+        {shownTabs.map((tab) => {
+          const i = group.tabs.findIndex((t) => t.id === tab.id)
+          const isLeaving = leaving.has(tab.id)
+          const isActive = !isLeaving && tab.id === group.activeTabId
           const hint = tabDirHint(tab.path, dupTitles.get(tab.title) ?? 0, relPath)
           return (
-            <div key={tab.id} data-active={isActive} draggable
+            <div key={tab.id} data-active={isActive} data-flip-id={tab.id} draggable={!isLeaving}
               onDragStart={(e) => { dragIdx.current = i; e.dataTransfer.setData('text/caret-tab', JSON.stringify({ group: group.id, tabId: tab.id })); e.dataTransfer.effectAllowed = 'move' }}
               onDragOver={(e) => { e.preventDefault(); e.dataTransfer.dropEffect = 'move' }}
               onDrop={(e) => { e.preventDefault(); const raw = e.dataTransfer.getData('text/caret-tab'); if (!raw) return; const { group: g, tabId } = JSON.parse(raw) as { group: string; tabId: string }; if (g === group.id) { const from = group.tabs.findIndex((t) => t.id === tabId); if (from >= 0) reorderTab(group.id, from, i) } else moveTab(g, tabId, group.id, i) }}
@@ -49,7 +94,7 @@ export function TabBar({ group, active }: { group: EditorGroup; active: boolean 
               onDoubleClick={(e) => { e.stopPropagation(); keepTab(group.id, tab.id) }}
               onContextMenu={(e) => { e.preventDefault(); setMenu({ x: e.clientX, y: e.clientY, tab }) }}
               title={tab.path ?? tab.title}
-              className={clsx('group relative flex items-center gap-1.5 pl-3 pr-1.5 min-w-[110px] max-w-[220px] border-r border-b border-r-border text-xs select-none', isActive ? 'bg-editor text-fg border-b-editor' : 'bg-panel text-muted hover:bg-hover border-b-border')}>
+              className={clsx('tab-item group relative flex items-center gap-1.5 pl-3 pr-1.5 min-w-[110px] max-w-[220px] text-xs select-none', isActive ? 'bg-editor text-fg' : 'bg-panel text-muted hover:bg-hover', isLeaving && 'tab-item-leaving')}>
               <TabIcon tab={tab} />
               <span className={clsx('truncate-1 flex-1', tab.preview && 'italic', tab.conflict && 'text-warning')}>{tab.title}{hint && <span className="text-faint ml-1 not-italic">{hint}</span>}</span>
               {tab.conflict && <AlertTriangle size={11} className="text-warning" />}
@@ -62,13 +107,13 @@ export function TabBar({ group, active }: { group: EditorGroup; active: boolean 
             </div>
           )
         })}
-        <div className="flex-1 min-w-[40px] border-b border-border" onDragOver={(e) => e.preventDefault()} onDrop={(e) => { const raw = e.dataTransfer.getData('text/caret-tab'); if (!raw) return; const { group: g, tabId } = JSON.parse(raw) as { group: string; tabId: string }; if (g === group.id) { const from = group.tabs.findIndex((t) => t.id === tabId); reorderTab(group.id, from, group.tabs.length - 1) } else moveTab(g, tabId, group.id) }} />
+        <div className="flex-1 min-w-[40px]" onDragOver={(e) => e.preventDefault()} onDrop={(e) => { const raw = e.dataTransfer.getData('text/caret-tab'); if (!raw) return; const { group: g, tabId } = JSON.parse(raw) as { group: string; tabId: string }; if (g === group.id) { const from = group.tabs.findIndex((t) => t.id === tabId); reorderTab(group.id, from, group.tabs.length - 1) } else moveTab(g, tabId, group.id) }} />
       </div>
-      <div className="flex items-center gap-0.5 px-1 border-l border-b border-border">
+      <div className="flex items-center gap-0.5 px-1">
         {groupsCount < 3 && <button className="p-1 rounded hover:bg-hover text-muted" title="Split editor right (⌘\)" onClick={() => split()}><SplitSquareHorizontal size={14} /></button>}
       </div>
       {menu && (
-        <div className="fixed z-[1000] min-w-[200px] py-1 rounded-md border border-border bg-tooltip text-xs shadow-[var(--shadow)]" style={{ top: menu.y, left: Math.min(menu.x, window.innerWidth - 220) }} onMouseDown={(e) => e.stopPropagation()}>
+        <div className="fixed z-[1000] min-w-[200px] py-1 rounded-md surface-float text-xs animate-pop" style={{ top: menu.y, left: Math.min(menu.x, window.innerWidth - 220) }} onMouseDown={(e) => e.stopPropagation()}>
           {[
             { l: 'Close', r: () => closeTab(group.id, menu.tab.id), k: '⌘W' },
             { l: 'Close Others', r: () => closeOthers(group.id, menu.tab.id) },

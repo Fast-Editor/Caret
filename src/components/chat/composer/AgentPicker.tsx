@@ -9,7 +9,7 @@ import { runCommand } from '@/lib/commands'
 import { emit as busEmit, subscribe } from '@/lib/bus'
 
 const itemCls = 'flex items-center gap-2 px-2 min-h-7 py-1 rounded text-[12px] outline-none data-[highlighted]:bg-selected cursor-pointer select-none data-[disabled]:opacity-50 data-[disabled]:cursor-default'
-const contentCls = 'z-40 min-w-[240px] rounded-md border border-border bg-tooltip p-1 shadow-[var(--shadow)] text-fg'
+const contentCls = 'z-40 min-w-[240px] rounded-md surface-float p-1 text-fg'
 
 export const CARET_AGENT = 'caret'
 
@@ -50,7 +50,7 @@ export function AgentPicker({ sessionId }: { sessionId: string }) {
         </button>
       </DropdownMenu.Trigger>
       <DropdownMenu.Portal>
-        <DropdownMenu.Content side="top" align="start" sideOffset={6} className={contentCls}>
+        <DropdownMenu.Content data-caret-pop side="top" align="start" sideOffset={6} className={contentCls}>
           <DropdownMenu.Label className="px-2 py-1 text-[10.5px] uppercase tracking-wide text-faint">Agent</DropdownMenu.Label>
           <DropdownMenu.Item className={itemCls} onSelect={() => choose(CARET_AGENT)}>
             <Sparkles size={13} className={agentId === CARET_AGENT ? 'text-accent' : 'text-muted'} />

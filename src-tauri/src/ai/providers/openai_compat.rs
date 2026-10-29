@@ -133,7 +133,12 @@ pub fn build_body(req: &LlmRequest, kind: &ProviderKind, include_stream_options:
                 if reasoning && model.supports_effort { body["reasoning_effort"] = json!(map_effort_openai(req.thinking.effort)); }
             } else if reasoning && model.supports_effort { body["reasoning_effort"] = json!(map_effort_openai(req.thinking.effort)); sampling_ok = false; }
         }
-        ProviderKind::Openrouter => { if reasoning { body["reasoning"] = json!({"effort": map_effort_openai(req.thinking.effort)}); } }
+        ProviderKind::Openrouter => {
+            if reasoning { body["reasoning"] = json!({"effort": map_effort_openai(req.thinking.effort)}); }
+            // Hybrid models (DeepSeek V4, Qwen3, …) reason by default; without an explicit off switch a small-budget
+            // request (Tab: 96–256 tokens) spends everything on hidden reasoning and returns an empty body.
+            else if !req.thinking.enabled { body["reasoning"] = json!({"enabled": false}); }
+        }
         ProviderKind::OpenaiCompatible => { if reasoning && model.supports_effort { body["reasoning_effort"] = json!(map_effort_openai(req.thinking.effort)); sampling_ok = false; } }
         _ => {}
     }
@@ -379,6 +384,17 @@ mod tests {
         // supports_effort + thinking → reasoning_effort, no temperature
         assert_eq!(b["reasoning_effort"], "high");
         assert!(b.get("temperature").is_none());
+    }
+
+    #[test]
+    fn openrouter_disables_reasoning_when_thinking_is_off() {
+        let req = LlmRequest::new(model("deepseek/deepseek-v4.1-flash")).no_thinking().max_tokens(200);
+        let b = build_body(&req, &ProviderKind::Openrouter, true);
+        assert_eq!(b["reasoning"]["enabled"], false);
+        let mut on = LlmRequest::new(model("deepseek/deepseek-v4.1-flash")).max_tokens(200); on.thinking.enabled = true; on.thinking.effort = Effort::Low;
+        let b = build_body(&on, &ProviderKind::Openrouter, true);
+        assert_eq!(b["reasoning"]["effort"], "low");
+        assert!(b["reasoning"].get("enabled").is_none());
     }
 
     #[test]

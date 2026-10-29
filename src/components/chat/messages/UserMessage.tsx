@@ -22,10 +22,10 @@ export const UserMessage = memo(function UserMessage({ message, sessionId, isLas
         {ctx.length > 0 && <div className="flex flex-wrap gap-1 mb-1.5">{ctx.map((c) => <ContextPill key={c.id} item={c} small />)}</div>}
         {images.length > 0 && <div className="flex flex-wrap gap-1.5 mb-1.5">{images.map((im) => <ImageThumb key={im.id} image={im} size={64} />)}</div>}
         {editing ? (
-          <div>
+          <div className="animate-fade">
             <textarea value={draft} onChange={(e) => setDraft(e.target.value)} autoFocus rows={Math.min(12, Math.max(2, draft.split('\n').length))} className="w-full bg-input border border-border rounded p-2 outline-none focus:border-accent resize-y selectable"
               onKeyDown={(e) => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); void editMessage(sessionId, message.id, draft) } if (e.key === 'Escape') setEditing(null) }} />
-            <div className="flex gap-1.5 mt-1.5 justify-end text-[11.5px]"><button type="button" onClick={() => setEditing(null)} className="px-2 h-6 rounded border border-border hover:bg-hover">Cancel</button><button type="button" onClick={() => void editMessage(sessionId, message.id, draft)} className="px-2 h-6 rounded bg-accent text-accent-fg">Save & resend ⌘⏎</button></div>
+            <div className="flex gap-1.5 mt-1.5 justify-end text-[11.5px]"><button type="button" onClick={() => setEditing(null)} className="px-2 h-6 rounded border border-border hover:bg-hover press">Cancel</button><button type="button" onClick={() => void editMessage(sessionId, message.id, draft)} className="px-2 h-6 rounded bg-accent text-accent-fg press">Save & resend ⌘⏎</button></div>
           </div>
         ) : (
           <div className="whitespace-pre-wrap break-words selectable leading-[1.55]">{text}</div>
@@ -34,8 +34,8 @@ export const UserMessage = memo(function UserMessage({ message, sessionId, isLas
       <div className="flex items-center gap-2 mt-0.5 h-4 opacity-0 group-hover/msg:opacity-100 transition-opacity">
         {message.checkpointId && <CheckpointLink sessionId={sessionId} checkpointId={message.checkpointId} />}
         <span className="flex-1" />
-        <button type="button" onClick={() => { setDraft(text); setEditing(message.id) }} title="Edit and resend" className="text-faint hover:text-fg"><Pencil size={11} /></button>
-        <button type="button" onClick={() => void copy()} title="Copy" className="text-faint hover:text-fg">{copied ? <Check size={11} className="text-success" /> : <Copy size={11} />}</button>
+        <button type="button" onClick={() => { setDraft(text); setEditing(message.id) }} title="Edit and resend" className="text-faint hover:text-fg press"><Pencil size={11} /></button>
+        <button type="button" onClick={() => void copy()} title="Copy" className="text-faint hover:text-fg press">{copied ? <Check size={11} className="text-success animate-pop" /> : <Copy size={11} />}</button>
       </div>
     </div>
   )

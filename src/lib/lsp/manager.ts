@@ -92,7 +92,7 @@ class LspManagerImpl {
   private ensureProviders(language: string): void {
     if (this.providersRegistered.has(language)) return
     this.providersRegistered.add(language)
-    this.disposables.push(...registerLspProviders(language, (model) => this.clientForModel(model)))
+    this.disposables.push(...registerLspProviders(language, (model) => { this.flushFor(model); return this.clientForModel(model) }))
   }
 
   /** Config whose languages include the model language (first wins). */
@@ -113,6 +113,14 @@ class LspManagerImpl {
     const cfg = this.configFor(model); if (!cfg) return null
     const c = this.clients.get(cfg.id)
     return c && c.initialized && !c.isClosed ? c : null
+  }
+  /** Send any debounced edits for `model` now, so a request that follows sees the current text (quick suggestions fire well inside the 150 ms window). */
+  flushFor(model: monaco.editor.ITextModel): void {
+    const uri = pathToUri(model.uri.path)
+    const t = this.changeTimers.get(uri); if (!t) return
+    clearTimeout(t); this.changeTimers.delete(uri)
+    const client = this.clientForModel(model)
+    if (client) this.flushChanges(client, model, uri)
   }
   clientForPath(path: string): LspClient | null { const m = monaco.editor.getModel(monaco.Uri.file(path)); return m ? this.clientForModel(m) : null }
   get clientsList(): LspClient[] { return [...this.clients.values()] }

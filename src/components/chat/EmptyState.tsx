@@ -17,18 +17,18 @@ export function EmptyState({ sessionId }: { sessionId: string }) {
   const select = useChat((s) => s.selectSession)
   return (
     <div className="flex flex-col items-center justify-center h-full px-5 text-center select-none">
-      <div className="text-[15px] font-semibold mb-1">What are we building?</div>
+      <div className="text-[15px] font-semibold mb-1 animate-fade-down">What are we building?</div>
       <div className="text-muted text-[12px] mb-4">Type <kbd className="px-1 rounded border border-border bg-input mono">@</kbd> to add files, docs, git or web context · <kbd className="px-1 rounded border border-border bg-input mono">/</kbd> for commands</div>
       <div className="grid grid-cols-2 gap-2 w-full max-w-[420px]">
-        {CARDS.map((c) => (
-          <button key={c.id} type="button" onClick={() => void setMode(sessionId, c.id)} className={`text-left p-2.5 rounded-md border ${mode === c.id ? 'border-accent bg-selected' : 'border-border hover:bg-hover'}`}>
+        {CARDS.map((c, i) => (
+          <button key={c.id} type="button" onClick={() => void setMode(sessionId, c.id)} style={{ animationDelay: `calc(var(--dur-fast) * ${i * 0.3})` }} className={`text-left p-2.5 rounded-md border chat-lift press animate-fade-up ${mode === c.id ? 'border-accent bg-selected' : 'border-border hover:bg-hover'}`}>
             <div className="flex items-center gap-1.5 text-[12.5px] font-medium"><c.icon size={13} className="text-accent" /> {c.title}</div>
             <div className="text-[11px] text-muted mt-0.5 leading-[1.4]">{c.text}</div>
           </button>
         ))}
       </div>
       <div className="text-[10.5px] text-faint mt-4 space-x-2"><span>{MOD}L add selection</span><span>{MOD}I new chat</span><span>{MOD}K inline edit</span><span>{MOD}⏎ accept changes</span></div>
-      {sessions.length > 0 && <div className="mt-5 w-full max-w-[420px] text-left"><div className="text-[10.5px] text-faint mb-1">Recent</div>{sessions.map((s) => <button key={s.id} type="button" onClick={() => void select(s.id)} className="w-full text-left px-2 h-7 rounded hover:bg-hover text-[12px] truncate-1">{s.title}</button>)}</div>}
+      {sessions.length > 0 && <div className="mt-5 w-full max-w-[420px] text-left"><div className="text-[10.5px] text-faint mb-1">Recent</div>{sessions.map((s) => <button key={s.id} type="button" onClick={() => void select(s.id)} className="w-full text-left px-2 h-7 rounded hover:bg-hover text-[12px] truncate-1 press">{s.title}</button>)}</div>}
     </div>
   )
 }

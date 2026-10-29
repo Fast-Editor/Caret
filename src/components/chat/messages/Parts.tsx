@@ -1,5 +1,6 @@
 import { memo, useState } from 'react'
-import { Brain, ChevronRight, CircleX, FileText, Hammer, ListChecks, RotateCcw, Undo2 } from 'lucide-react'
+import { Brain, CircleX, FileText, Hammer, ListChecks, RotateCcw, Undo2 } from 'lucide-react'
+import { Chevron, Collapse } from '../Collapse'
 import type { AgentQuestion, ImageAttachment, MessagePart, RoutingInfo, Usage } from '@/types'
 import { Markdown } from '@/lib/markdown'
 import { resolveModel, useChat } from '@/store/chat'
@@ -13,12 +14,12 @@ export const ThinkingPart = memo(function ThinkingPart({ text, streaming, durati
   const words = text.split(/\s+/).filter(Boolean).length
   return (
     <div className="my-1">
-      <button type="button" onClick={() => setOpen((o) => !o)} className={`flex items-center gap-1.5 text-[11.5px] text-muted hover:text-fg ${streaming ? 'pulse' : ''}`}>
-        <ChevronRight size={11} className={`transition-transform ${open ? 'rotate-90' : ''}`} />
-        <Brain size={12} />
-        <span>{streaming ? 'Thinking…' : durationMs ? `Thought for ${fmtDuration(durationMs)}` : `Thought (${words} words)`}</span>
+      <button type="button" onClick={() => setOpen((o) => !o)} className="flex items-center gap-1.5 text-[11.5px] text-muted hover:text-fg">
+        <Chevron open={open} size={11} />
+        <Brain size={12} className={streaming ? 'animate-breathe' : ''} />
+        <span className={streaming ? 'animate-breathe' : ''}>{streaming ? 'Thinking…' : durationMs ? `Thought for ${fmtDuration(durationMs)}` : `Thought (${words} words)`}</span>
       </button>
-      {open && <div className="mt-1 ml-4 pl-2 border-l border-border text-[11.5px] text-muted max-h-72 overflow-auto"><Markdown text={text || '…'} streaming={streaming} compact /></div>}
+      <Collapse open={open}><div className="mt-1 ml-4 pl-2 border-l border-border text-[11.5px] text-muted max-h-72 overflow-auto"><Markdown text={text || '…'} streaming={streaming} compact /></div></Collapse>
     </div>
   )
 })
@@ -29,17 +30,17 @@ export const QuestionCard = memo(function QuestionCard({ question, answer, sessi
   const pending = useChat((s) => !!s.questions[question.questionId])
   void sessionId
   return (
-    <div className="my-1.5 rounded-md border border-info/40 bg-info/5 p-2 text-[12px]">
+    <div className="my-1.5 rounded-md border border-info/40 bg-info/5 p-2 text-[12px] animate-fade-up">
       <div className="font-medium">{question.question}</div>
       {answer || !pending ? (
-        <div className="mt-1 text-muted">↳ {answer ?? 'answered'}</div>
+        <div className="mt-1 text-muted animate-fade">↳ {answer ?? 'answered'}</div>
       ) : (
         <div className="mt-2 flex flex-col gap-1.5">
-          {question.options?.map((o) => <button key={o} type="button" onClick={() => void reply(question.questionId, o)} className="text-left px-2 h-7 rounded border border-border hover:bg-hover">{o}</button>)}
+          {question.options?.map((o) => <button key={o} type="button" onClick={() => void reply(question.questionId, o)} className="text-left px-2 h-7 rounded border border-border hover:bg-hover press">{o}</button>)}
           {question.allowFreeText !== false && (
             <form className="flex gap-1.5" onSubmit={(e) => { e.preventDefault(); if (text.trim()) void reply(question.questionId, text.trim()) }}>
               <input value={text} onChange={(e) => setText(e.target.value)} placeholder="Type an answer…" className="flex-1 h-7 px-2 rounded border border-border bg-input outline-none focus:border-accent" />
-              <button type="submit" className="px-2 h-7 rounded bg-accent text-accent-fg">Answer</button>
+              <button type="submit" className="px-2 h-7 rounded bg-accent text-accent-fg press">Answer</button>
             </form>
           )}
         </div>
@@ -53,11 +54,11 @@ export const PlanCard = memo(function PlanCard({ path, title, sessionId }: { pat
   const open = () => { if (hasCommand('editor.openPlan')) void runCommand('editor.openPlan', { path }); else if (hasCommand('editor.openFile')) void runCommand('editor.openFile', { path }) }
   const build = async () => { setBuilding(true); try { const sid = await api.plans.build(path, { sessionId }); void useChat.getState().selectSession(sid) } finally { setBuilding(false) } }
   return (
-    <div className="my-1.5 rounded-md border border-border bg-panel p-2 text-[12px] flex items-center gap-2">
+    <div className="my-1.5 rounded-md border border-border bg-panel p-2 text-[12px] flex items-center gap-2 animate-fade-up">
       <ListChecks size={14} className="text-accent" />
       <button type="button" onClick={open} className="flex-1 text-left hover:underline truncate-1" title={path}><span className="font-medium">{title || 'Plan'}</span><span className="text-faint ml-1.5 mono text-[11px]">{path.split('/').pop()}</span></button>
-      <button type="button" onClick={open} className="px-2 h-6 rounded border border-border hover:bg-hover">Open</button>
-      <button type="button" onClick={() => void build()} disabled={building} className="flex items-center gap-1 px-2 h-6 rounded bg-accent text-accent-fg hover:bg-accent-hover disabled:opacity-50"><Hammer size={12} /> Build</button>
+      <button type="button" onClick={open} className="px-2 h-6 rounded border border-border hover:bg-hover press">Open</button>
+      <button type="button" onClick={() => void build()} disabled={building} className="flex items-center gap-1 px-2 h-6 rounded bg-accent text-accent-fg hover:bg-accent-hover disabled:opacity-50 press"><Hammer size={12} /> Build</button>
     </div>
   )
 })
@@ -66,18 +67,18 @@ export const SummaryPart = memo(function SummaryPart({ text }: { text: string })
   const [open, setOpen] = useState(false)
   return (
     <div className="my-1.5 text-[11.5px]">
-      <button type="button" onClick={() => setOpen((o) => !o)} className="flex items-center gap-1.5 text-muted hover:text-fg"><ChevronRight size={11} className={`transition-transform ${open ? 'rotate-90' : ''}`} /><FileText size={12} /> Context summarized</button>
-      {open && <div className="mt-1 ml-4 pl-2 border-l border-border text-muted max-h-60 overflow-auto"><Markdown text={text} compact /></div>}
+      <button type="button" onClick={() => setOpen((o) => !o)} className="flex items-center gap-1.5 text-muted hover:text-fg"><Chevron open={open} size={11} /><FileText size={12} /> Context summarized</button>
+      <Collapse open={open}><div className="mt-1 ml-4 pl-2 border-l border-border text-muted max-h-60 overflow-auto"><Markdown text={text} compact /></div></Collapse>
     </div>
   )
 })
 
 export const ErrorPart = memo(function ErrorPart({ message, onRetry }: { message: string; onRetry?: () => void }) {
   return (
-    <div className="my-1.5 rounded-md border border-danger/40 bg-danger/5 p-2 text-[12px] text-danger flex items-start gap-2">
+    <div className="my-1.5 rounded-md border border-danger/40 bg-danger/5 p-2 text-[12px] text-danger flex items-start gap-2 animate-fade-up">
       <CircleX size={14} className="mt-0.5 shrink-0" />
       <div className="flex-1 whitespace-pre-wrap break-words selectable">{message}</div>
-      {onRetry && <button type="button" onClick={onRetry} className="flex items-center gap-1 px-2 h-6 rounded border border-danger/40 hover:bg-hover shrink-0"><RotateCcw size={12} /> Retry</button>}
+      {onRetry && <button type="button" onClick={onRetry} className="flex items-center gap-1 px-2 h-6 rounded border border-danger/40 hover:bg-hover shrink-0 press"><RotateCcw size={12} /> Retry</button>}
     </div>
   )
 })
@@ -109,7 +110,7 @@ export const UsageFooter = memo(function UsageFooter({ usage, durationMs, modelI
   const servedName = routing ? resolveModel(routing.servedModelId)?.displayName : undefined
   return (
     <div className="mt-1 flex items-center gap-1.5 text-[10.5px] text-faint" title="Usage for this response">
-      {routing && <span title={routingTooltip(routing)} className={`inline-flex items-center h-[15px] px-1.5 rounded-full border border-border ${routing.fallback ? 'text-muted' : 'text-fg'}`} data-testid="routing-pill">{routingLabel(routing, servedName)}</span>}
+      {routing && <span title={routingTooltip(routing)} className={`inline-flex items-center h-[15px] px-1.5 rounded-full border border-border animate-pop ${routing.fallback ? 'text-muted' : 'text-fg'}`} data-testid="routing-pill">{routingLabel(routing, servedName)}</span>}
       {bits.length > 0 && <span>{bits.join(' · ')}</span>}
     </div>
   )
@@ -120,11 +121,11 @@ export const ImageThumb = memo(function ImageThumb({ image, onRemove, size = 72 
   const src = `data:${image.mime};base64,${image.dataBase64}`
   return (
     <>
-      <div className="relative group/img inline-block">
+      <div className="relative group/img inline-block animate-pop">
         <img src={src} alt={image.name} title={image.name} onClick={() => setBig(true)} style={{ width: size, height: size }} className="object-cover rounded border border-border cursor-zoom-in" />
         {onRemove && <button type="button" onClick={onRemove} title="Remove" className="absolute -top-1.5 -right-1.5 w-4 h-4 rounded-full bg-panel border border-border text-[10px] leading-none opacity-0 group-hover/img:opacity-100">×</button>}
       </div>
-      {big && <div className="fixed inset-0 z-50 bg-black/70 flex items-center justify-center cursor-zoom-out" onClick={() => setBig(false)}><img src={src} alt={image.name} className="max-w-[90vw] max-h-[90vh] rounded shadow-lg" /></div>}
+      {big && <div className="fixed inset-0 z-50 bg-black/70 flex items-center justify-center cursor-zoom-out animate-fade" onClick={() => setBig(false)}><img src={src} alt={image.name} className="max-w-[90vw] max-h-[90vh] rounded shadow-lg animate-pop" /></div>}
     </>
   )
 })

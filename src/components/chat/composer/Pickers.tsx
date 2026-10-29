@@ -11,7 +11,7 @@ const MODE_ICON: Record<string, typeof Bot> = { bot: Bot, 'message-circle': Mess
 export function modeIcon(m: ModeDescriptor | undefined) { return (m?.icon && MODE_ICON[m.icon]) || (m?.id === 'ask' ? MessageCircle : m?.id === 'plan' ? ListChecks : m?.id === 'debug' ? Bug : Bot) }
 
 const itemCls = 'flex items-center gap-2 px-2 min-h-7 py-1 rounded text-[12px] outline-none data-[highlighted]:bg-selected cursor-pointer select-none'
-const contentCls = 'z-40 min-w-[220px] rounded-md border border-border bg-tooltip p-1 shadow-[var(--shadow)] text-fg'
+const contentCls = 'z-40 min-w-[220px] rounded-md surface-float p-1 text-fg'
 
 export function ModeSelector({ sessionId }: { sessionId: string }) {
   const modes = useChat((s) => s.modes)
@@ -25,7 +25,7 @@ export function ModeSelector({ sessionId }: { sessionId: string }) {
         <button type="button" title={`Mode: ${cur?.name ?? mode} (⌘. to cycle)`} className="flex items-center gap-1 h-6 px-1.5 rounded hover:bg-hover text-[11.5px] cursor-pointer"><Icon size={13} className="text-accent" /><span>{cur?.name ?? mode}</span><ChevronDown size={11} className="text-faint" /></button>
       </DropdownMenu.Trigger>
       <DropdownMenu.Portal>
-        <DropdownMenu.Content side="top" align="start" sideOffset={6} className={contentCls}>
+        <DropdownMenu.Content data-caret-pop side="top" align="start" sideOffset={6} className={contentCls}>
           {modes.map((m) => { const I = modeIcon(m); return (
             <DropdownMenu.Item key={m.id} className={itemCls} onSelect={() => void setMode(sessionId, m.id as ModeId)}>
               <I size={13} className={m.id === mode ? 'text-accent' : 'text-muted'} />
@@ -66,7 +66,7 @@ export function ModelPicker({ sessionId }: { sessionId: string }) {
         </button>
       </Popover.Trigger>
       <Popover.Portal>
-        <Popover.Content side="top" align="start" sideOffset={6} className={`${contentCls} w-[300px] p-0`}>
+        <Popover.Content data-caret-pop side="top" align="start" sideOffset={6} className={`${contentCls} w-[300px] p-0`}>
           <div className="flex items-center gap-1.5 px-2 h-8 border-b border-border"><Search size={12} className="text-faint" /><input autoFocus value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search models…" className="flex-1 bg-transparent outline-none text-[12px]" /></div>
           <div className="max-h-80 overflow-y-auto p-1">
             <button type="button" onClick={() => pick(AUTO_MODEL)} className={`${itemCls} w-full hover:bg-selected`}><WandSparkles size={13} className="text-accent" /><div className="flex-1 text-left"><div>Auto{auto.routed && <span className="ml-1 text-[10px] text-success">● routed</span>}</div><div className="text-[10.5px] text-faint">{auto.text}</div></div>{modelId === AUTO_MODEL && <Check size={12} className="text-accent" />}</button>
@@ -108,7 +108,7 @@ export function ThinkingControls({ sessionId, supportsThinking, supportsEffort }
       {supportsEffort && (
         <DropdownMenu.Root>
           <DropdownMenu.Trigger asChild><button type="button" title={`Effort: ${effort}`} className="flex items-center gap-1 h-6 px-1.5 rounded hover:bg-hover text-[11px] cursor-pointer"><Gauge size={12} className="text-muted" /><span>{effort}</span></button></DropdownMenu.Trigger>
-          <DropdownMenu.Portal><DropdownMenu.Content side="top" align="start" sideOffset={6} className={contentCls}>
+          <DropdownMenu.Portal><DropdownMenu.Content data-caret-pop side="top" align="start" sideOffset={6} className={contentCls}>
             {EFFORTS.map((e) => <DropdownMenu.Item key={e} className={itemCls} onSelect={() => update(sessionId, { effort: e })}><span className="flex-1 capitalize">{e}</span>{e === effort && <Check size={12} className="text-accent" />}</DropdownMenu.Item>)}
           </DropdownMenu.Content></DropdownMenu.Portal>
         </DropdownMenu.Root>

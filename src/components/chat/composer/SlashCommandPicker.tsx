@@ -8,7 +8,7 @@ export function SlashCommandPicker({ query, commands, onPick, onClose }: { query
   useEffect(() => { const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') { e.stopPropagation(); onClose() } }; window.addEventListener('keydown', onKey, true); return () => window.removeEventListener('keydown', onKey, true) }, [onClose])
   if (list.length === 0) return null
   return (
-    <div className="absolute bottom-full left-0 right-0 mb-1 z-30 rounded-md border border-border bg-tooltip shadow-[var(--shadow)] overflow-hidden text-[12px]">
+    <div className="absolute bottom-full left-0 right-0 mb-1 z-30 rounded-md surface-float overflow-hidden text-[12px] animate-pop">
       <Command shouldFilter={false} loop label="Commands">
         <Command.Input value={query} readOnly className="sr-only" aria-hidden />
         <Command.List className="max-h-64 overflow-y-auto p-1">

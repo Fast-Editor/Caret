@@ -10,14 +10,17 @@ export const THEMES: { id: ThemeId; label: string; kind: 'dark' | 'light' }[] = 
 ]
 export function themeKind(id: string | undefined): 'dark' | 'light' { return THEMES.find((t) => t.id === id)?.kind ?? 'dark' }
 
-export function applyTheme(theme: string | undefined, reduceMotion = false): void {
+export function applyTheme(theme: string | undefined, reduceMotion?: boolean, motion?: string): void {
   const html = document.documentElement
   const id = THEMES.some((t) => t.id === theme) ? (theme as string) : 'caret-dark'
   for (const c of Array.from(html.classList)) if (c.startsWith('theme-')) html.classList.remove(c)
   html.classList.add(`theme-${id}`)
   html.classList.toggle('dark', themeKind(id) === 'dark')
   html.classList.toggle('light', themeKind(id) === 'light')
-  html.classList.toggle('reduce-motion', reduceMotion)
+  if (reduceMotion !== undefined || motion !== undefined) {
+    html.classList.toggle('reduce-motion', !!reduceMotion)
+    html.dataset.motion = reduceMotion ? 'off' : motion === 'off' || motion === 'expressive' ? motion : 'subtle'
+  }
   html.style.colorScheme = themeKind(id)
   document.dispatchEvent(new CustomEvent('caret:theme', { detail: { theme: id } }))
 }
@@ -34,7 +37,7 @@ export function initTheme(): void {
   inited = true
   const sync = () => {
     const s = useSettings.getState().settings
-    applyTheme(s?.ui.theme, s?.ui.reduceMotion)
+    applyTheme(s?.ui.theme, s?.ui.reduceMotion, s?.ui.motion)
     const z = useUi.getState().zoom || s?.ui.zoomLevel || 0
     applyZoom(z)
     if (s?.ui.fontFamily) document.documentElement.style.setProperty('--font-mono', s.ui.fontFamily)

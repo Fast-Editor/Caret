@@ -166,6 +166,8 @@ pub struct UiSettings {
     pub show_status_bar_memory: bool,
     pub layout: String,
     pub reduce_motion: bool,
+    /// "off" | "subtle" | "expressive" — drives the UI motion tokens (reduce_motion forces off).
+    #[serde(default = "default_motion")] pub motion: String,
     pub sticky_scroll: bool,
     pub line_numbers: String,
     pub smooth_scrolling: bool,
@@ -178,10 +180,11 @@ pub struct UiSettings {
     pub compact_folders: bool,
 }
 fn default_terminal_cursor_style() -> String { "block".into() }
+fn default_motion() -> String { "subtle".into() }
 fn default_true() -> bool { true }
 
 impl Default for UiSettings {
-    fn default() -> Self { Self { theme: "caret-dark".into(), font_family: "JetBrains Mono, Menlo, Monaco, 'Courier New', monospace".into(), font_size: 13, line_height: 1.6, tab_size: 2, insert_spaces: true, word_wrap: "off".into(), minimap: true, render_whitespace: "selection".into(), cursor_blinking: "smooth".into(), cursor_style: "line".into(), bracket_pair_colorization: true, format_on_save: false, auto_save: "afterDelay".into(), auto_save_delay_ms: 1000, chat_font_size: 13, sidebar_position: "left".into(), chat_position: "right".into(), terminal_font_family: "JetBrains Mono, Menlo, monospace".into(), terminal_font_size: 12, terminal_scrollback: 5000, terminal_cursor_style: "block".into(), terminal_cursor_blink: true, show_status_bar_memory: true, layout: "editor".into(), reduce_motion: false, sticky_scroll: true, line_numbers: "on".into(), smooth_scrolling: true, font_ligatures: true, editor_tabs_mode: "multiple".into(), preview_tabs: true, breadcrumbs: true, zoom_level: 0.0, confirm_delete: true, compact_folders: true } }
+    fn default() -> Self { Self { theme: "caret-dark".into(), font_family: "JetBrains Mono, Menlo, Monaco, 'Courier New', monospace".into(), font_size: 13, line_height: 1.6, tab_size: 2, insert_spaces: true, word_wrap: "off".into(), minimap: true, render_whitespace: "selection".into(), cursor_blinking: "smooth".into(), cursor_style: "line".into(), bracket_pair_colorization: true, format_on_save: false, auto_save: "afterDelay".into(), auto_save_delay_ms: 1000, chat_font_size: 13, sidebar_position: "left".into(), chat_position: "right".into(), terminal_font_family: "JetBrains Mono, Menlo, monospace".into(), terminal_font_size: 12, terminal_scrollback: 5000, terminal_cursor_style: "block".into(), terminal_cursor_blink: true, show_status_bar_memory: true, layout: "editor".into(), reduce_motion: false, motion: "subtle".into(), sticky_scroll: true, line_numbers: "on".into(), smooth_scrolling: true, font_ligatures: true, editor_tabs_mode: "multiple".into(), preview_tabs: true, breadcrumbs: true, zoom_level: 0.0, confirm_delete: true, compact_folders: true } }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -432,7 +435,7 @@ pub fn default_lsp_servers() -> Vec<LspServerConfig> {
         lsp("yaml", "YAML", "yaml-language-server", &["--stdio"], &["yaml"], &["yml", "yaml"], "npm i -g yaml-language-server"),
         lsp("bash", "Bash", "bash-language-server", &["start"], &["shellscript"], &["sh", "bash", "zsh"], "npm i -g bash-language-server"),
         lsp("lua", "Lua", "lua-language-server", &[], &["lua"], &["lua"], "brew install lua-language-server"),
-        lsp("java", "Java (jdtls)", "jdtls", &[], &["java"], &["java"], "brew install jdtls"),
+        lsp("java", "Java (jdtls)", "jdtls", &[], &["java"], &["java"], "brew install jdtls (needs JDK 21+), or unpack Eclipse JDT LS and put a `jdtls` launcher on your PATH"),
         lsp("ruby", "Ruby (solargraph)", "solargraph", &["stdio"], &["ruby"], &["rb"], "gem install solargraph"),
         lsp("zig", "zls", "zls", &[], &["zig"], &["zig"], "brew install zls"),
         lsp("toml", "Taplo", "taplo", &["lsp", "stdio"], &["toml"], &["toml"], "cargo install taplo-cli"),

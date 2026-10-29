@@ -20,7 +20,7 @@ export function EditorArea() {
               {i > 0 && null}
               <EditorGroupView group={g} />
             </Panel>
-          )).flatMap((p, i) => (i === 0 ? [p] : [<Separator key={`sep-${i}`} className="w-px bg-border hover:bg-accent data-[separator=active]:bg-accent transition-colors cursor-col-resize" />, p]))}
+          )).flatMap((p, i) => (i === 0 ? [p] : [<Separator key={`sep-${i}`} className="w-px bg-transparent hover:bg-border-strong data-[separator=active]:bg-border-strong transition-colors cursor-col-resize" />, p]))}
         </Group>
       )}
       <ConfirmCloseDialog />

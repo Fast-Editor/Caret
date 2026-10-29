@@ -1,3 +1,4 @@
+import '@/components/common/motion.css'
 import { Dialog } from 'radix-ui'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { Command } from 'cmdk'
@@ -25,9 +26,9 @@ function DialogFrame({ req }: { req: DialogRequest }) {
   return (
     <Dialog.Root open onOpenChange={(o) => { if (!o) cancel() }}>
       <Dialog.Portal>
-        <Dialog.Overlay className="fixed inset-0 z-[950] bg-black/40" />
-        <Dialog.Content aria-describedby={undefined} data-owns-keys
-          className={cn('fixed left-1/2 top-[18%] z-[951] -translate-x-1/2 rounded-lg border border-border bg-panel shadow-[var(--shadow)] outline-none text-fg', req.kind === 'custom' && req.wide ? 'w-[760px] max-w-[92vw]' : req.kind === 'pick' ? 'w-[560px] max-w-[92vw]' : 'w-[440px] max-w-[92vw]')}>
+        <Dialog.Overlay data-caret-overlay className="fixed inset-0 z-[950] bg-black/40 backdrop-blur-sm" />
+        <Dialog.Content aria-describedby={undefined} data-owns-keys data-caret-pop
+          className={cn('fixed left-1/2 top-[18%] z-[951] -translate-x-1/2 rounded-lg surface-float outline-none text-fg', req.kind === 'custom' && req.wide ? 'w-[760px] max-w-[92vw]' : req.kind === 'pick' ? 'w-[560px] max-w-[92vw]' : 'w-[440px] max-w-[92vw]')}>
           <div className="flex items-center justify-between px-4 pt-3 pb-1">
             <Dialog.Title className="text-sm font-semibold">{title}</Dialog.Title>
             <Dialog.Close asChild><button aria-label="Close" className="rounded p-1 text-muted hover:text-fg hover:bg-hover"><X className="size-4" /></button></Dialog.Close>

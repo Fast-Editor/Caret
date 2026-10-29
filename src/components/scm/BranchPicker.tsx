@@ -82,4 +82,4 @@ export function BranchPicker({ open, onOpenChange }: { open: boolean; onOpenChan
   )
 }
 const itemCls = cn('flex items-center gap-2 px-2 h-7 rounded text-xs cursor-pointer select-none data-[selected=true]:bg-hover data-[disabled=true]:opacity-50')
-function Heading({ children }: { children: React.ReactNode }) { return <div className="px-2 py-1 text-[10px] uppercase tracking-wide text-faint">{children}</div> }
+function Heading({ children }: { children: React.ReactNode }) { return <div className="px-2 py-1 text-[10px] font-semibold text-faint">{children}</div> }

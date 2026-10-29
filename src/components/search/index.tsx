@@ -46,7 +46,7 @@ export function SearchView() {
 
   return (
     <div className="flex flex-col h-full" data-keyctx="search">
-      <div className="flex items-center h-[26px] px-3 text-[11px] font-semibold uppercase tracking-wide text-muted shrink-0">Search
+      <div className="flex items-center h-[26px] px-3 text-[11px] font-semibold text-muted shrink-0">Search
         <div className="ml-auto flex items-center">
           <IconButton size="xs" icon={<RefreshCw />} label="Refresh" onClick={() => void s.run()} />
           <IconButton size="xs" icon={<X />} label="Clear Search Results" onClick={() => s.clear()} />
@@ -95,9 +95,9 @@ export function SearchView() {
       </div>
       <div data-results tabIndex={0} onKeyDown={onKeyNav} className="flex-1 min-h-0 overflow-auto outline-none pb-6">
         {s.order.map((p) => (
-          <div key={p}>
-            <div className={cn('group flex items-center gap-1 h-[22px] px-1 text-xs hover:bg-hover cursor-pointer', s.selectedKey === `f:${p}` && 'bg-selected')} onClick={() => { s.set({ selectedKey: `f:${p}` }); s.toggleCollapsed(p) }}>
-              <span className="text-muted">{s.collapsed[p] ? <ChevronRight className="size-3.5" /> : <ChevronDown className="size-3.5" />}</span>
+          <div key={p} className="animate-fade-up">
+            <div className={cn('group flex items-center gap-1 h-[22px] px-1 text-xs hover:bg-hover cursor-pointer transition-base', s.selectedKey === `f:${p}` && 'bg-selected')} onClick={() => { s.set({ selectedKey: `f:${p}` }); s.toggleCollapsed(p) }}>
+              <span className="text-muted"><ChevronRight className="size-3.5 caret-chevron" data-open={!s.collapsed[p]} /></span>
               <span className="flex [&_svg]:size-4">{fileIconFor(baseName(p), false)}</span>
               <span className="truncate">{baseName(p)}</span>
               <span className="truncate text-faint text-[11px]">{relPath(p).split('/').slice(0, -1).join('/')}</span>
@@ -111,7 +111,7 @@ export function SearchView() {
               const parts = previewParts(m)
               const key = `m:${p}:${i}`
               return (
-                <div key={key} className={cn('group flex items-center h-[22px] pl-9 pr-1 text-xs hover:bg-hover cursor-pointer', s.selectedKey === key && 'bg-selected')} title={`${relPath(p)}:${m.line}:${m.column}`}
+                <div key={key} className={cn('group flex items-center h-[22px] pl-9 pr-1 text-xs hover:bg-hover cursor-pointer transition-base', s.selectedKey === key && 'bg-selected')} title={`${relPath(p)}:${m.line}:${m.column}`}
                   onClick={() => { s.set({ selectedKey: key }); void runCommand('editor.openFile', { path: m.path, line: m.line, column: m.column, preview: true }) }}
                   onDoubleClick={() => void runCommand('editor.openFile', { path: m.path, line: m.line, column: m.column, focus: true })}>
                   <span className="mono truncate flex-1 whitespace-pre text-muted">{parts.truncatedStart ? '…' : ''}{parts.before}<span className={cn('rounded-[2px] bg-warning/25 text-fg', s.showReplace && s.replacement !== undefined && 'line-through decoration-danger')}>{parts.match}</span>{s.showReplace && <span className="rounded-[2px] bg-success/25 text-fg">{s.replacement}</span>}{parts.after}</span>

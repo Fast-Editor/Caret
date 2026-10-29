@@ -13,11 +13,21 @@ import { ReviewTab } from './tabs/ReviewTab'
 import { BrowserTab } from './tabs/BrowserTab'
 import { useSettings } from '@/store/settings'
 import { clsx } from 'clsx'
+import { useEffect, useRef } from 'react'
 
 export function EditorGroupView({ group }: { group: Group }) {
   const active = useEditor((s) => s.activeGroupId === group.id)
   const tab = group.tabs.find((t) => t.id === group.activeTabId)
   const breadcrumbs = useSettings((s) => s.settings?.ui.breadcrumbs ?? true)
+  // Crossfade the content wrapper when the active tab changes (restart the one-shot animation; the editor instance is untouched).
+  const swapRef = useRef<HTMLDivElement>(null)
+  const lastTab = useRef<string | undefined>(tab?.id)
+  useEffect(() => {
+    const el = swapRef.current
+    if (!el || lastTab.current === tab?.id) return
+    lastTab.current = tab?.id
+    el.classList.remove('tab-swap'); void el.offsetWidth; el.classList.add('tab-swap')
+  }, [tab?.id])
   return (
     <div className={clsx('h-full w-full flex flex-col min-w-0 min-h-0 bg-editor', !active && 'opacity-[0.98]')} onMouseDownCapture={() => useEditor.getState().setActiveGroup(group.id)}
       onDragOver={(e) => { if (e.dataTransfer.types.includes('text/caret-tab') || e.dataTransfer.types.includes('text/caret-path')) e.preventDefault() }}
@@ -26,7 +36,7 @@ export function EditorGroupView({ group }: { group: Group }) {
       {!tab ? <EmptyState /> : (
         <>
           {breadcrumbs && (tab.kind === 'file') && <Breadcrumbs tab={tab} groupId={group.id} />}
-          <div className="flex-1 min-h-0 relative">
+          <div ref={swapRef} className="flex-1 min-h-0 relative">
             {tab.kind === 'file' || tab.kind === 'untitled' ? <MonacoEditor groupId={group.id} tab={tab} active={active} />
               : tab.kind === 'diff' && tab.diffMeta ? <DiffEditor meta={tab.diffMeta} onDecision={() => void useEditor.getState().closeTab(group.id, tab.id, { force: true })} />
               : tab.kind === 'welcome' ? <WelcomeTab />

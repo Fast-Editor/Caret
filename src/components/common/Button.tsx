@@ -1,5 +1,6 @@
 import { forwardRef, type ButtonHTMLAttributes, type ReactNode } from 'react'
 import { cn } from './cn'
+import './motion.css'
 
 export type ButtonVariant = 'primary' | 'secondary' | 'ghost' | 'danger' | 'link'
 export type ButtonSize = 'xs' | 'sm' | 'md'
@@ -12,7 +13,7 @@ export interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
 }
 
 const variants: Record<ButtonVariant, string> = {
-  primary: 'bg-accent text-accent-fg hover:bg-accent-hover border-transparent',
+  primary: 'bg-accent text-accent-fg hover:bg-accent-hover border-transparent press',
   secondary: 'bg-input text-fg hover:bg-active border-border',
   ghost: 'bg-transparent text-fg hover:bg-hover border-transparent',
   danger: 'bg-danger/90 text-white hover:bg-danger border-transparent',

@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react'
 import { useShallow } from 'zustand/shallow'
-import { AlertCircle, AlertTriangle, Info, ChevronDown, ChevronRight, Sparkles, Filter } from 'lucide-react'
+import { AlertCircle, AlertTriangle, Info, ChevronRight, Sparkles, Filter } from 'lucide-react'
 import { useProblems } from '@/store/problems'
 import { relPath } from '@/store/workspace'
 import { runCommand } from '@/lib/commands'
@@ -44,14 +44,14 @@ export function ProblemsPanel() {
           const isCollapsed = collapsed[g.path]
           return (
             <div key={g.path}>
-              <button className="w-full flex items-center gap-1 px-2 h-6 hover:bg-hover text-left" onClick={() => setCollapsed((c) => ({ ...c, [g.path]: !c[g.path] }))}>
-                {isCollapsed ? <ChevronRight size={12} /> : <ChevronDown size={12} />}
+              <button className="w-full flex items-center gap-1 px-2 h-6 hover:bg-hover text-left transition-base" onClick={() => setCollapsed((c) => ({ ...c, [g.path]: !c[g.path] }))}>
+                <ChevronRight size={12} className="caret-chevron" data-open={!isCollapsed} />
                 <span className="font-medium">{g.path.split('/').pop()}</span>
                 <span className="text-faint truncate">{relPath(g.path)}</span>
                 <span className="ml-1 px-1 rounded bg-active text-muted">{g.items.length}</span>
               </button>
               {!isCollapsed && g.items.map((d, i) => (
-                <div key={i} className="group flex items-start gap-2 pl-7 pr-2 py-0.5 hover:bg-hover cursor-pointer" onClick={() => void runCommand('editor.openFile', { path: g.path, line: d.range.start.line + 1, column: d.range.start.character + 1, preview: true })}>
+                <div key={`${d.range.start.line}:${d.range.start.character}:${d.message}`} className="group flex items-start gap-2 pl-7 pr-2 py-0.5 hover:bg-hover cursor-pointer transition-base" onClick={() => void runCommand('editor.openFile', { path: g.path, line: d.range.start.line + 1, column: d.range.start.character + 1, preview: true })}>
                   <Sev s={d.severity} />
                   <span className="flex-1 min-w-0"><span className="selectable">{d.message}</span> <span className="text-faint">{d.source ? `${d.source}${d.code !== undefined ? `(${String(d.code)})` : ''}` : ''} [Ln {d.range.start.line + 1}, Col {d.range.start.character + 1}]</span></span>
                   <button className="opacity-0 group-hover:opacity-100 px-1.5 rounded bg-active hover:bg-hover flex items-center gap-1 shrink-0" title="Fix with AI" onClick={(e) => { e.stopPropagation(); void runCommand('ai.fixInChat', { path: g.path, line: d.range.start.line + 1, message: d.message }) }}><Sparkles size={11} />Fix</button>

@@ -15,7 +15,7 @@ import type { IndexStatus, LspServerStatus, ProcessStats } from '@/types'
 
 function Item({ children, onClick, title, className }: { children: React.ReactNode; onClick?: () => void; title?: string; className?: string }) {
   const Comp = onClick ? 'button' : 'div'
-  return <Comp onClick={onClick} title={title} className={cn('h-full flex items-center gap-1 px-1.5 text-[11px] text-muted whitespace-nowrap', onClick && 'hover:bg-hover hover:text-fg', className)}>{children}</Comp>
+  return <Comp onClick={onClick} title={title} className={cn('h-full flex items-center gap-1.5 px-2 text-[11px] text-muted whitespace-nowrap', onClick && 'hover:bg-hover hover:text-fg', className)}>{children}</Comp>
 }
 
 export function StatusBar() {
@@ -26,7 +26,7 @@ export function StatusBar() {
   const [chord, setChord] = useState<string | null>(null)
   const [cursor, setCursor] = useState<{ line: number; column: number; selection?: number } | null>(null)
   const [edStatus, setEdStatus] = useState<{ language?: string; eol?: string; encoding?: string; indent?: string } | null>(null)
-  const [tab, setTab] = useState<{ enabled: boolean; busy?: boolean } | null>(null)
+  const [tab, setTab] = useState<{ enabled: boolean; busy?: boolean; error?: boolean } | null>(null)
   const [diag, setDiag] = useState<{ errors: number; warnings: number }>({ errors: 0, warnings: 0 })
   const [agents, setAgents] = useState(0)
   const [index, setIndex] = useState<IndexStatus | null>(null)
@@ -39,7 +39,7 @@ export function StatusBar() {
       subscribe<{ message: string } | null>('keybindings.chord', (p) => setChord(p?.message ?? null)),
       subscribe<{ line: number; column: number; selection?: number }>('editor.cursor', setCursor),
       subscribe<{ language?: string; eol?: string; encoding?: string; indent?: string }>('editor.status', setEdStatus),
-      subscribe<{ enabled: boolean; busy?: boolean }>('tab.status', setTab),
+      subscribe<{ enabled: boolean; busy?: boolean; error?: boolean }>('tab.status', setTab),
       subscribe<{ running: number }>('agents.status', (p) => setAgents(p?.running ?? 0)),
       subscribe<{ errors: number; warnings: number }>('diagnostics.summary', setDiag),
       on(Events.gitChanged, () => void useGit.getState().refresh()),
@@ -65,8 +65,8 @@ export function StatusBar() {
   const dirty = !!dirtyCounts && dirtyCounts.staged + dirtyCounts.unstaged + dirtyCounts.untracked + dirtyCounts.conflicted > 0
   const dirtyTitle = dirtyCounts && dirty ? ` · uncommitted: ${[dirtyCounts.staged && `${dirtyCounts.staged} staged`, dirtyCounts.unstaged && `${dirtyCounts.unstaged} modified`, dirtyCounts.untracked && `${dirtyCounts.untracked} untracked`, dirtyCounts.conflicted && `${dirtyCounts.conflicted} conflicted`].filter(Boolean).join(', ')}` : ''
   return (
-    <div className="h-[22px] shrink-0 flex items-stretch bg-titlebar border-t border-border select-none">
-      <div className="flex items-stretch">
+    <div className="h-[22px] shrink-0 flex items-stretch bg-titlebar select-none px-1">
+      <div className="flex items-stretch gap-1">
         {branchLabel && (
           <>
             <Item onClick={() => void runCommand('git.checkout')} title={(st?.upstream ? `${branchLabel} → ${st.upstream}` : branchLabel) + dirtyTitle}><GitBranch className="size-3.5" />{branchLabel}{dirty ? '*' : ''}{st?.state && st.state !== 'normal' && st.state !== 'clean' ? ` (${st.state})` : ''}</Item>
@@ -85,13 +85,13 @@ export function StatusBar() {
         {chord && <Item className="text-fg">{chord}</Item>}
       </div>
       <div className="flex-1" />
-      <div className="flex items-stretch">
+      <div className="flex items-stretch gap-1">
         {cursor && <Item onClick={() => void runCommand('editor.goToLine')} title="Go to Line">Ln {cursor.line}, Col {cursor.column}{cursor.selection ? ` (${cursor.selection} selected)` : ''}</Item>}
         {edStatus?.indent && <Item title="Indentation">{edStatus.indent}</Item>}
         {edStatus?.encoding && <Item title="Encoding">{edStatus.encoding}</Item>}
         {edStatus?.eol && <Item title="End of line">{edStatus.eol}</Item>}
         {edStatus?.language && <Item title="Language mode">{edStatus.language}</Item>}
-        {tab && <Item onClick={() => void runCommand('ai.tab.toggle')} title="Tab completions"><Zap className={cn('size-3', tab.enabled ? 'text-accent' : 'text-faint')} />{tab.busy ? 'Tab…' : tab.enabled ? 'Tab' : 'Tab off'}</Item>}
+        {tab && <Item onClick={() => void runCommand('ai.tab.toggle')} title={tab.error ? 'Tab completions: the last request failed — check the Tab model in Settings' : 'Tab completions'}><Zap className={cn('size-3', tab.error ? 'text-danger' : tab.enabled ? 'text-accent' : 'text-faint')} />{tab.busy ? 'Tab…' : tab.error ? 'Tab !' : tab.enabled ? 'Tab' : 'Tab off'}</Item>}
         {settings?.privacy.privacyMode && <Item title="Privacy mode: no data leaves beyond your configured model provider"><ShieldCheck className="size-3 text-success" />Privacy</Item>}
         {zoom !== 0 && <Item onClick={() => void runCommand('view.zoomReset')} title="Reset zoom">{Math.round(Math.pow(1.1, zoom) * 100)}%</Item>}
         {showMem && stats && <Item onClick={() => void runCommand('help.about')} title={`Core process RSS · CPU ${stats.cpuPercent.toFixed(0)}%`}><Cpu className="size-3" />{(stats.rssBytes / 1048576).toFixed(0)} MB</Item>}

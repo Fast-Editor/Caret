@@ -112,7 +112,7 @@ export function MentionPicker({ query, onPick, onClose, sessionId }: Props) {
   const addDoc = async () => { const url = window.prompt('Documentation URL to index'); if (!url) return; try { const d = await api.docs.add(url); onPick({ id: uid('d'), kind: 'docs', label: d.name, docId: d.id, url: d.url }) } catch (e) { void runCommand('app.notify', { level: 'error', title: 'Add docs failed', message: String(e) }) } }
 
   return (
-    <div className="absolute bottom-full left-0 right-0 mb-1 z-30 rounded-md border border-border bg-tooltip shadow-[var(--shadow)] overflow-hidden text-[12px]">
+    <div className="absolute bottom-full left-0 right-0 mb-1 z-30 rounded-md surface-float overflow-hidden text-[12px] animate-pop">
       <Command shouldFilter={false} loop label="Add context">
         <div className="flex items-center gap-1.5 px-2 h-7 border-b border-border text-[11px] text-muted">
           {cat ? <button type="button" onClick={() => setCat(null)} className="flex items-center gap-0.5 hover:text-fg"><ChevronLeft size={12} /> {cat.label}</button> : <span>Add context</span>}

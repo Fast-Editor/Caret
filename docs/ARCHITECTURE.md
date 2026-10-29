@@ -68,3 +68,36 @@ frontend rendered by the OS WebView. No bundled Chromium, no Node runtime at run
 | Auto-run with allow/deny lists, file-delete protection, sandboxed shell | `ai/agent/policy.rs` |
 | Privacy mode, usage/cost tracking, model picker, thinking/effort | settings + runner usage accounting |
 | Integrated terminal, git, search, LSP intelligence, themes, keybindings, settings UI | `core/*` + shell UI |
+
+## UI motion rules
+
+Motion is a shared system, not per-component improvisation (`src/styles.css`, `src/lib/motion.ts`):
+
+- Three durations (`--dur-fast` 120 ms, `--dur-base` 180 ms, `--dur-slow` 240 ms) and one ease-out curve (`--ease`).
+  Settings → Appearance → *Motion* sets `<html data-motion="off|subtle|expressive">`, which scales or zeroes them;
+  `Reduce motion` and the OS preference force `off`. Anything driven by the tokens therefore degrades to instant.
+- Animate `transform`, `opacity` and colours only. Pane toggles may transition width/height, never while dragging.
+  Nothing runs longer than `--dur-slow`; nothing blocks input.
+- Entry: `animate-fade-up` / `animate-pop` / `animate-slide-in-*` once on mount (key by id — never re-animate on
+  store updates). Exit: keep the node mounted with `usePresence(open)` and toggle `.is-leaving`.
+- Depth comes from tone, not lines: sidebar/panels low, editor high, floating surfaces (`surface-float`) lifted with a
+  soft shadow. Hairline borders only where equal tones meet. Radii: 8 px cards/inputs/popovers, 10 px dialogs, pills round.
+
+## Editor completion rules
+
+- **Document sync before requests.** `LspManager` debounces `didChange` (150 ms) for diagnostics traffic, but every
+  provider resolves its client through `flushFor(model)` first, so completion/hover/signature requests always run
+  against the current text. Quick suggestions fire ~10 ms after a keystroke; never add a request path that skips the
+  flush.
+- **Ordered writes.** `LspClient.send` chains Tauri invokes; two invokes are not ordered otherwise, and a `didChange`
+  overtaken by the request that follows it yields completions computed at the wrong position.
+- **Tab beside the suggest widget.** Monaco only shows an inline completion while the widget is open if it *augments*
+  the highlighted item (`insertText` starts with the item's text over the same range). `inlineCompletions.ts` builds
+  the request as if the item were accepted and returns `item.text + completion` on the item's range. Monaco's own
+  `suggest.preview` stays off so the ghost-text slot belongs to Tab; `showOnSuggestConflict: 'always'` keeps an
+  already visible ghost text when the widget pops.
+- **In-flight sharing.** Requests are keyed by context; a second identical call adopts the running one, token
+  cancellation releases it with a 60 ms grace, and only non-empty answers are cached. The Rust side mirrors this: a
+  waiter on a cancelled or failed request runs its own instead of inheriting an empty result.
+- **Automation.** `window.__caret` exposes `monaco`, `lsp` (the manager) and `tab` (last round-trips) for
+  `scripts/e2e.mjs eval`; type with `editor.trigger('keyboard', 'type', …)` or quick suggestions will not fire.
