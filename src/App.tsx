@@ -18,6 +18,7 @@ import { initSettingsStore, useSettings } from '@/store/settings'
 import { initWorkspaceStore, useWorkspace } from '@/store/workspace'
 import { useUi } from '@/store/ui'
 import { useChat } from '@/store/chat'
+import { useEditor } from '@/store/editor'
 import { hookConsole } from '@/store/notifications'
 import type { WorkspaceInfo } from '@/types'
 import { monaco } from '@/lib/monaco/setup'
@@ -30,7 +31,7 @@ function boot(): () => void {
   booted = true
   hookConsole()
   // Test/automation hook (used by scripts/e2e.mjs through the dev bridge).
-  ;(window as unknown as { __caret?: unknown }).__caret = { runCommand, hasCommand, api, monaco, lsp: lspManager, tab: tabDebug, stores: { settings: useSettings, workspace: useWorkspace, ui: useUi, chat: useChat } }
+  ;(window as unknown as { __caret?: unknown }).__caret = { runCommand, hasCommand, api, monaco, lsp: lspManager, tab: tabDebug, stores: { settings: useSettings, workspace: useWorkspace, ui: useUi, chat: useChat, editor: useEditor } }
   initSettingsStore()
   initWorkspaceStore()
   initTheme()

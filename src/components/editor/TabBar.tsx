@@ -31,22 +31,30 @@ function TabIcon({ tab }: { tab: EditorTab }) {
 /** Tabs that were just closed stay in the strip for one exit animation, then drop out. */
 function useLeavingTabs(tabs: EditorTab[]): { tabs: EditorTab[]; leaving: Set<string> } {
   const prev = useRef<EditorTab[]>(tabs)
-  const [leaving, setLeaving] = useState<Map<string, EditorTab>>(new Map())
+  // Closed tabs stay mounted for one exit animation. Each ghost owns its removal timer: tying the timer to the effect
+  // cleanup (the previous version) meant any further tab-list change within ~140 ms cancelled it, and closing a tab
+  // always causes such a change, so ghosts accumulated at the end of the strip.
+  const [leaving, setLeaving] = useState<Map<string, { tab: EditorTab; index: number }>>(new Map())
+  const timers = useRef<Map<string, number>>(new Map())
   useEffect(() => {
     const ms = duration('fast')
     const ids = new Set(tabs.map((t) => t.id))
-    const gone = prev.current.filter((t) => !ids.has(t.id))
+    const gone = prev.current.map((t, index) => ({ tab: t, index })).filter((g) => !ids.has(g.tab.id))
     prev.current = tabs
+    // A tab that is back in the list (reopened, moved between groups) must not linger as a ghost.
+    setLeaving((m) => { if (![...m.keys()].some((id) => ids.has(id))) return m; const n = new Map(m); for (const id of ids) { n.delete(id); const t = timers.current.get(id); if (t) { window.clearTimeout(t); timers.current.delete(id) } } return n })
     if (!gone.length || ms === 0) return
-    setLeaving((m) => { const n = new Map(m); for (const t of gone) n.set(t.id, t); return n })
-    const timer = window.setTimeout(() => setLeaving((m) => { const n = new Map(m); for (const t of gone) n.delete(t.id); return n }), ms + 20)
-    return () => window.clearTimeout(timer)
+    setLeaving((m) => { const n = new Map(m); for (const g of gone) n.set(g.tab.id, g); return n })
+    for (const g of gone) {
+      const old = timers.current.get(g.tab.id); if (old) window.clearTimeout(old)
+      timers.current.set(g.tab.id, window.setTimeout(() => { timers.current.delete(g.tab.id); setLeaving((m) => { if (!m.has(g.tab.id)) return m; const n = new Map(m); n.delete(g.tab.id); return n }) }, ms + 20))
+    }
   }, [tabs])
+  useEffect(() => () => { for (const t of timers.current.values()) window.clearTimeout(t); timers.current.clear() }, [])
   if (!leaving.size) return { tabs, leaving: new Set() }
-  // Re-insert leaving tabs at their previous index so neighbours slide rather than jump.
+  // Re-insert leaving tabs at the index they had when they left so neighbours slide rather than jump.
   const merged = [...tabs]
-  const order = new Map<string, number>(); prev.current.forEach((t, i) => order.set(t.id, i))
-  for (const t of leaving.values()) { const at = order.get(t.id) ?? merged.length; merged.splice(Math.min(at, merged.length), 0, t) }
+  for (const g of [...leaving.values()].sort((a, b) => a.index - b.index)) merged.splice(Math.min(g.index, merged.length), 0, g.tab)
   return { tabs: merged, leaving: new Set(leaving.keys()) }
 }
 
