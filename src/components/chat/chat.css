@@ -44,7 +44,7 @@ html[data-motion="off"] .chat-dots > i { animation: none; opacity: .7; }
 
 /* Hover-lift for cards (empty-state mode cards). */
 .chat-lift { transition: transform var(--dur-fast) var(--ease), box-shadow var(--dur-fast) var(--ease), background-color var(--dur-fast) var(--ease), border-color var(--dur-fast) var(--ease); }
-.chat-lift:hover { transform: translateY(-1px); box-shadow: var(--shadow-float); }
+.chat-lift:hover { transform: translateY(-1px); box-shadow: var(--elev-float); }
 html[data-motion="off"] .chat-lift:hover { transform: none; box-shadow: none; }
 
 /* Task progress bar */

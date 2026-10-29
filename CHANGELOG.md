@@ -4,6 +4,8 @@ All notable changes to Caret. The version here must match `package.json`, `src-t
 
 ## Unreleased
 
+- Menus, popovers, dialogs and toasts had no background or shadow (the floating-surface tokens were never defined per
+  theme), so context menus floated transparently over code. Each theme now defines them.
 - Tab bar: closed editors no longer linger as unclickable ghost tabs (the exit-animation timer was cancelled by the
   very state change that closing a tab causes, so ghosts piled up at the end of the strip and new tabs opened out of
   view).

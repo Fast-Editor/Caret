@@ -33,7 +33,10 @@
   --diff-del-fg: #ff9a95;
   --scrollbar: rgba(255,255,255,0.14);
   --shadow: 0 8px 28px rgba(0,0,0,0.5);
-  --radius: 6px;
+  /* Floating surfaces (menus, popovers, dialogs, toasts): one step lighter than panels, with real elevation. */
+  --bg-float: #202020;
+  --elev-float: 0 12px 32px rgba(0,0,0,0.55), 0 2px 8px rgba(0,0,0,0.35);
+  --radius: 8px;
   --font-ui: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", Inter, Roboto, sans-serif;
   --font-mono: "JetBrains Mono", Menlo, Monaco, "SF Mono", "Courier New", monospace;
   color-scheme: dark;
@@ -42,6 +45,7 @@
   --bg-app: #0d1117; --bg-sidebar: #0f141b; --bg-panel: #0f141b; --bg-editor: #0d1117; --bg-titlebar: #0f141b; --bg-input: #161c25;
   --bg-chat-user: #161c25; --bg-tooltip: #1b2230; --border: #1f2733; --border-strong: #2c3747; --fg: #d7dee8; --fg-muted: #8a94a3; --fg-faint: #5a6473;
   --accent: #79b8ff; --accent-hover: #93c6ff;
+  --bg-float: #161c25; --elev-float: 0 12px 32px rgba(0,0,0,0.6), 0 2px 8px rgba(0,0,0,0.4);
 }
 .theme-caret-light {
   --bg-app: #f6f6f8; --bg-sidebar: #f0f0f3; --bg-panel: #f0f0f3; --bg-editor: #ffffff; --bg-titlebar: #ececf0; --bg-input: #ffffff;
@@ -50,10 +54,12 @@
   --accent: #2f6fed; --accent-hover: #1f5fe0; --accent-fg: #ffffff; --danger: #d1242f; --warning: #9a6700; --success: #1a7f37; --info: #0969da;
   --diff-add-bg: rgba(26,127,55,0.12); --diff-del-bg: rgba(209,36,47,0.12); --diff-add-fg: #116329; --diff-del-fg: #a40e26;
   --scrollbar: rgba(0,0,0,0.2); --shadow: 0 8px 28px rgba(0,0,0,0.15); color-scheme: light;
+  --bg-float: #ffffff; --elev-float: 0 12px 32px rgba(0,0,0,0.16), 0 2px 8px rgba(0,0,0,0.08);
 }
 .theme-caret-high-contrast {
   --bg-app: #000; --bg-sidebar: #000; --bg-panel: #000; --bg-editor: #000; --bg-titlebar: #000; --bg-input: #0a0a0a; --bg-hover: rgba(255,255,255,0.12); --bg-active: rgba(255,255,255,0.2);
   --border: #6f6f6f; --border-strong: #fff; --fg: #fff; --fg-muted: #d0d0d0; --fg-faint: #a0a0a0; --accent: #4cc2ff; --accent-hover: #7fd4ff;
+  --bg-float: #0a0a0a; --elev-float: 0 0 0 1px #ffffff;
 }
 
 @theme inline {
@@ -69,7 +75,7 @@
   --color-float: var(--bg-float);
   /* Softer geometry everywhere `rounded-*` is used: cards/inputs/popovers 8px, dialogs 10px, large surfaces 14px. */
   --radius-sm: 6px; --radius-md: 8px; --radius-lg: 10px; --radius-xl: 14px;
-  --shadow-float: var(--shadow-float);
+  --shadow-float: var(--elev-float);
   --ease-out: var(--ease);
 }
 
@@ -113,7 +119,7 @@ html[data-motion="off"], html.reduce-motion { --dur-fast: 0ms; --dur-base: 0ms; 
 @utility animate-breathe { animation: caret-breathe 1.6s var(--ease-in-out) infinite; }
 .is-leaving { opacity: 0 !important; transform: translateY(4px) scale(0.99); pointer-events: none; transition: opacity var(--dur-slow) var(--ease), transform var(--dur-slow) var(--ease); }
 /* Floating surface: tone + shadow instead of a hard border. */
-@utility surface-float { background: var(--bg-float); box-shadow: var(--shadow-float); border: 1px solid color-mix(in srgb, var(--border) 60%, transparent); }
+@utility surface-float { background: var(--bg-float); box-shadow: var(--elev-float); border: 1px solid color-mix(in srgb, var(--border) 60%, transparent); }
 /* Press feedback for primary actions. */
 @utility press { &:active:not(:disabled) { transform: scale(0.98); } }
 
