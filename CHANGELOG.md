@@ -4,6 +4,8 @@ All notable changes to Caret. The version here must match `package.json`, `src-t
 
 ## Unreleased
 
+- Terminal list: clicking another terminal opened its actions menu instead of switching to it (the row was a
+  click-triggered dropdown). Left click now selects; the Rename / Split / Add Output / Kill menu is on right click.
 - Responsiveness: sixty read-only backend commands (settings, registries, status probes, file stat, session and
   knowledge lists) ran synchronously on the main thread and froze the whole window for the duration of their disk
   reads and process spawns; they now run on worker threads. The debugpy probe, which spawned a Python interpreter on

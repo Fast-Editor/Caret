@@ -1,6 +1,6 @@
 import { ChevronDown, Plus, SquareSplitHorizontal, Trash2, MessageSquarePlus, TerminalSquare, BellRing } from 'lucide-react'
 import { useEffect } from 'react'
-import { IconButton, Menu, cn, type MenuEntry } from '@/components/common'
+import { IconButton, Menu, cn, type MenuEntry, ContextMenu } from '@/components/common'
 import { prompt } from '@/components/dialogs'
 import { api } from '@/lib/api'
 import { emit } from '@/lib/bus'
@@ -102,8 +102,8 @@ export function TerminalPanel() {
                 const status = statusOf(s)
                 const hint = s?.status?.detail ?? (s?.status?.title ? `${s.status.title} ${STATUS_LABEL[status]}` : STATUS_LABEL[status])
                 return (
-                  <Menu key={id} items={() => tabMenu(id)}>
-                    <div role="button" tabIndex={0} onClick={() => t.setActive(id)} onContextMenu={(e) => e.preventDefault()} data-status={status}
+                  <ContextMenu key={id} items={() => tabMenu(id)}>
+                    <div role="button" tabIndex={0} onClick={() => t.setActive(id)} data-status={status}
                       className={cn('group flex items-center gap-1.5 h-[24px] px-1.5 rounded cursor-pointer hover:bg-hover transition-base animate-fade-up', t.activeTerminalId === id && 'bg-selected text-fg')} title={[s?.cwd, hint].filter(Boolean).join(' — ')}>
                       <span className="relative shrink-0">
                         <TerminalSquare className={cn('size-3.5', s?.exitCode !== undefined ? 'text-danger' : 'text-muted')} />
@@ -114,7 +114,7 @@ export function TerminalPanel() {
                       {aiOn && <button aria-label="Add to chat" onClick={(e) => { e.stopPropagation(); void runCommand('chat.addTerminalOutput', { terminalId: s?.ptyId, sessionId: id }) }} className="opacity-0 group-hover:opacity-100 text-muted hover:text-fg"><MessageSquarePlus className="size-3.5" /></button>}
                       <button aria-label="Kill" onClick={(e) => { e.stopPropagation(); t.remove(id) }} className="opacity-0 group-hover:opacity-100 text-muted hover:text-danger"><Trash2 className="size-3.5" /></button>
                     </div>
-                  </Menu>
+                  </ContextMenu>
                 )
               })}
             </div>
