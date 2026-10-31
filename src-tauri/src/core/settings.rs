@@ -178,13 +178,20 @@ pub struct UiSettings {
     pub zoom_level: f32,
     pub confirm_delete: bool,
     pub compact_folders: bool,
+    /// Per-theme ANSI palette overrides: theme id → { "red": "#…", "brightBlue": "#…", … } (keys from xterm's ITheme).
+    #[serde(default)] pub terminal_ansi: BTreeMap<String, BTreeMap<String, String>>,
+    /// Terminal background: "panel" (default) | "editor" | "app" | "transparent".
+    #[serde(default = "default_terminal_background")] pub terminal_background: String,
+    /// Fade split panes that are not focused.
+    #[serde(default = "default_true")] pub terminal_dim_inactive: bool,
 }
+fn default_terminal_background() -> String { "panel".into() }
 fn default_terminal_cursor_style() -> String { "block".into() }
 fn default_motion() -> String { "subtle".into() }
 fn default_true() -> bool { true }
 
 impl Default for UiSettings {
-    fn default() -> Self { Self { theme: "caret-dark".into(), font_family: "JetBrains Mono, Menlo, Monaco, 'Courier New', monospace".into(), font_size: 13, line_height: 1.6, tab_size: 2, insert_spaces: true, word_wrap: "off".into(), minimap: true, render_whitespace: "selection".into(), cursor_blinking: "smooth".into(), cursor_style: "line".into(), bracket_pair_colorization: true, format_on_save: false, auto_save: "afterDelay".into(), auto_save_delay_ms: 1000, chat_font_size: 13, sidebar_position: "left".into(), chat_position: "right".into(), terminal_font_family: "JetBrains Mono, Menlo, monospace".into(), terminal_font_size: 12, terminal_scrollback: 5000, terminal_cursor_style: "block".into(), terminal_cursor_blink: true, show_status_bar_memory: true, layout: "editor".into(), reduce_motion: false, motion: "subtle".into(), sticky_scroll: true, line_numbers: "on".into(), smooth_scrolling: true, font_ligatures: true, editor_tabs_mode: "multiple".into(), preview_tabs: true, breadcrumbs: true, zoom_level: 0.0, confirm_delete: true, compact_folders: true } }
+    fn default() -> Self { Self { theme: "caret-dark".into(), font_family: "JetBrains Mono, Menlo, Monaco, 'Courier New', monospace".into(), font_size: 13, line_height: 1.6, tab_size: 2, insert_spaces: true, word_wrap: "off".into(), minimap: true, render_whitespace: "selection".into(), cursor_blinking: "smooth".into(), cursor_style: "line".into(), bracket_pair_colorization: true, format_on_save: false, auto_save: "afterDelay".into(), auto_save_delay_ms: 1000, chat_font_size: 13, sidebar_position: "left".into(), chat_position: "right".into(), terminal_font_family: "JetBrains Mono, Menlo, monospace".into(), terminal_font_size: 12, terminal_scrollback: 5000, terminal_cursor_style: "block".into(), terminal_cursor_blink: true, show_status_bar_memory: true, layout: "editor".into(), reduce_motion: false, motion: "subtle".into(), sticky_scroll: true, line_numbers: "on".into(), smooth_scrolling: true, font_ligatures: true, editor_tabs_mode: "multiple".into(), preview_tabs: true, breadcrumbs: true, zoom_level: 0.0, confirm_delete: true, compact_folders: true, terminal_ansi: BTreeMap::new(), terminal_background: "panel".into(), terminal_dim_inactive: true } }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -318,9 +325,12 @@ pub struct TerminalSettings {
     pub ai_enabled: bool,
     pub program_status: bool,
     pub max_blocks: u32,
+    /// Ghost-text command suggestions while typing: "off" | "history" | "ai" (history first, model when history has nothing).
+    #[serde(default = "default_terminal_suggestions")] pub suggestions: String,
 }
+fn default_terminal_suggestions() -> String { "ai".into() }
 impl Default for TerminalSettings {
-    fn default() -> Self { Self { blocks: true, shell_integration: true, ai_enabled: true, program_status: true, max_blocks: 200 } }
+    fn default() -> Self { Self { blocks: true, shell_integration: true, ai_enabled: true, program_status: true, max_blocks: 200, suggestions: "ai".into() } }
 }
 
 /// Auto routing through the managed Lynkr sidecar (see `ai::router`).

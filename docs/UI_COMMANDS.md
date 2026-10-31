@@ -37,6 +37,9 @@ into `block-start` / `block-command` / `block-end` / `status` PTY events (`PtyBl
 | `terminal.rerunBlock` | block ref | sends the command again |
 | `terminal.blockToContext` | block ref + `{ text?, submit?, mode?, newSession? }` | adds a `note` context item (`$ cmd` + output + `[exit N]`) to chat; AI-gated |
 | `terminal.explainBlock` | block ref | "explain / fix" prompt in Ask mode; AI-gated |
+| `terminal.fixBlock` | Propose a corrected command for the last failed block into the ⌘K bar (AI) |
+| `terminal.searchHistory` | Search the persisted cross-session command history (⌘⌥H); Enter inserts, ⌘Enter runs |
+| `terminal.clearHistory` | Delete the persisted command history |
 | `terminal.blockText` (hidden) | block ref | returns the block as text |
 | `terminal.statusSummary` (hidden) | – | `{ terminals[], waiting, working, failed, text }` |
 | `terminal.focusWaiting` | – | focuses the first terminal whose program is waiting for input |

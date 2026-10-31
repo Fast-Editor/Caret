@@ -10,14 +10,23 @@ import { terminalRegistry } from './registry'
 /** Terminal ⌘K: natural language → shell command (Run / Insert / Cancel). */
 export function CmdKBar({ sessionId }: { sessionId: string }) {
   const session = useTerminals((s) => s.sessions[sessionId])
+  const prefill = useTerminals((s) => s.cmdkPrefill)
   const [text, setText] = useState('')
   const [command, setCommand] = useState<string | null>(null)
   const [explanation, setExplanation] = useState<string | undefined>()
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const inputRef = useRef<HTMLInputElement>(null)
+  const commandRef = useRef<HTMLInputElement>(null)
   useEffect(() => { inputRef.current?.focus() }, [])
-  const close = () => { useTerminals.setState({ cmdkFor: null }); terminalRegistry.get(sessionId)?.focus() }
+  // A proposal (Fix-it) arrives through the store: show it as the editable command, keep the input for refinements.
+  useEffect(() => {
+    if (!prefill) return
+    setBusy(!!prefill.loading); setError(prefill.error ?? null)
+    if (prefill.command !== undefined) { setCommand(prefill.command || null); setExplanation(prefill.explanation); if (prefill.command) setTimeout(() => commandRef.current?.focus(), 0) }
+    else if (!prefill.loading && prefill.error) setCommand(null)
+  }, [prefill])
+  const close = () => { useTerminals.setState({ cmdkFor: null, cmdkPrefill: null }); terminalRegistry.get(sessionId)?.focus() }
   const generate = async () => {
     if (!text.trim() || busy) return
     setBusy(true); setError(null)
@@ -32,17 +41,18 @@ export function CmdKBar({ sessionId }: { sessionId: string }) {
   const run = (newline: boolean) => { if (!command) return; terminalRegistry.get(sessionId)?.sendInput(command + (newline ? '\n' : '')); close() }
   return (
     <div className="mx-2 mt-1 rounded-md border border-accent/60 bg-input shadow-[var(--shadow)] text-xs" data-owns-keys onKeyDown={(e) => { if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); close() } }}>
+      {prefill && <div className="flex items-center gap-2 px-2 h-7 border-b border-border text-muted"><Sparkles className="size-3.5 text-accent shrink-0" /><span className="truncate">{prefill.title}</span>{busy && <span className="text-faint ml-auto">thinking…</span>}</div>}
       <div className="flex items-center gap-2 px-2 h-8">
-        <Sparkles className="size-3.5 text-accent shrink-0" />
-        <input ref={inputRef} value={text} onChange={(e) => setText(e.target.value)} placeholder="Describe the command you want to run…" className="flex-1 bg-transparent outline-none placeholder:text-faint"
+        {!prefill && <Sparkles className="size-3.5 text-accent shrink-0" />}
+        <input ref={inputRef} value={text} onChange={(e) => setText(e.target.value)} placeholder={prefill ? 'Refine the proposal, or press Enter on the command to run it…' : 'Describe the command you want to run…'} className="flex-1 bg-transparent outline-none placeholder:text-faint"
           onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); if (command && !busy && e.metaKey) run(true); else void generate() } }} />
         {busy ? <Loader2 className="size-3.5 spin text-muted" /> : <span className="text-faint flex items-center gap-1"><Kbd keys="enter" /> generate</span>}
         <button aria-label="Close" onClick={close} className="text-muted hover:text-fg"><X className="size-3.5" /></button>
       </div>
       {error && <div className="px-2 pb-2 text-danger">{error}</div>}
-      {command && (
+      {(command !== null || explanation) && (
         <div className="border-t border-border px-2 py-1.5 flex flex-col gap-1">
-          <input value={command} onChange={(e) => setCommand(e.target.value)} className="mono w-full bg-transparent outline-none text-fg" spellCheck={false}
+          <input ref={commandRef} value={command ?? ''} onChange={(e) => setCommand(e.target.value)} placeholder={command === null ? 'No single command to propose — type one, or see the explanation below' : undefined} className="mono w-full bg-transparent outline-none text-fg placeholder:text-faint" spellCheck={false}
             onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); run(true) } if (e.key === 'Tab') { e.preventDefault(); run(false) } }} />
           {explanation && <div className="text-muted">{explanation}</div>}
           <div className="flex items-center gap-3 text-faint">

@@ -19,11 +19,13 @@ import { initWorkspaceStore, useWorkspace } from '@/store/workspace'
 import { useUi } from '@/store/ui'
 import { useChat } from '@/store/chat'
 import { useEditor } from '@/store/editor'
+import { useTerminals } from '@/store/terminal'
 import { hookConsole } from '@/store/notifications'
 import type { WorkspaceInfo } from '@/types'
 import { monaco } from '@/lib/monaco/setup'
 import { lspManager } from '@/lib/lsp/manager'
 import { tabDebug } from '@/lib/monaco/inlineCompletions'
+import { terminalRegistry } from '@/components/terminal/registry'
 
 let booted = false
 function boot(): () => void {
@@ -31,7 +33,7 @@ function boot(): () => void {
   booted = true
   hookConsole()
   // Test/automation hook (used by scripts/e2e.mjs through the dev bridge).
-  ;(window as unknown as { __caret?: unknown }).__caret = { runCommand, hasCommand, api, monaco, lsp: lspManager, tab: tabDebug, stores: { settings: useSettings, workspace: useWorkspace, ui: useUi, chat: useChat, editor: useEditor } }
+  ;(window as unknown as { __caret?: unknown }).__caret = { runCommand, hasCommand, api, monaco, lsp: lspManager, tab: tabDebug, terminals: terminalRegistry, stores: { settings: useSettings, workspace: useWorkspace, ui: useUi, chat: useChat, editor: useEditor, terminals: useTerminals } }
   initSettingsStore()
   initWorkspaceStore()
   initTheme()

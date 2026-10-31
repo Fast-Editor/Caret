@@ -162,6 +162,8 @@ const apiBase = {
     inlineEdit: (req: T.InlineEditRequest, onEvent: (e: T.InlineEditEvent) => void) => invoke<void>('ai_inline_edit', { req, onEvent: channel(onEvent) }),
     cancel: (requestId: string) => invoke<void>('ai_cancel', { requestId }),
     terminalCommand: (req: T.TerminalCommandRequest) => invoke<T.TerminalCommandResult>('ai_terminal_command', { req }),
+    terminalFix: (req: T.TerminalFixRequest) => invoke<T.TerminalCommandResult>('ai_terminal_fix', { req }),
+    terminalSuggest: (req: T.TerminalSuggestRequest) => invoke<T.TerminalSuggestResult>('ai_terminal_suggest', { req }),
     apply: (req: T.ApplyRequest) => invoke<T.ApplyResult>('ai_apply', { req }),
     commitMessage: (req: T.CommitMessageRequest) => invoke<T.CommitMessageResult>('ai_commit_message', { req }),
     review: (req: T.ReviewRequest, onEvent: (e: T.ReviewStreamEvent) => void) => invoke<string>('ai_review', { req, onEvent: channel(onEvent) }),

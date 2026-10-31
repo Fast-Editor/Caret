@@ -164,6 +164,8 @@ export interface UiSettings {
   layout: 'editor' | 'agents'; reduceMotion: boolean; motion: 'off' | 'subtle' | 'expressive'; stickyScroll: boolean; lineNumbers: 'on' | 'off' | 'relative'
   smoothScrolling: boolean; fontLigatures: boolean; editorTabsMode: 'multiple' | 'single'; previewTabs: boolean
   breadcrumbs: boolean; zoomLevel: number; confirmDelete: boolean; compactFolders: boolean
+  /** Per-theme ANSI overrides: theme id → partial xterm palette (black … brightWhite). */
+  terminalAnsi: Record<string, Record<string, string>>; terminalBackground: 'panel' | 'editor' | 'app' | 'transparent'; terminalDimInactive: boolean
 }
 export interface PrivacySettings { privacyMode: boolean; allowWebTools: boolean; allowRemoteEmbeddings: boolean }
 export interface GeneralSettings {
@@ -327,6 +329,9 @@ export type InlineEditEvent =
   | { type: 'error'; message: string }
 export interface TerminalCommandRequest { requestId: string; instruction: string; shell: string; cwd: string; recentOutput?: string; os: string }
 export interface TerminalCommandResult { command: string; explanation?: string }
+export interface TerminalFixRequest { requestId: string; command: string; exitCode?: number | null; output: string; shell: string; cwd: string; os: string }
+export interface TerminalSuggestRequest { requestId: string; prefix: string; shell: string; cwd: string; os: string; recentCommands?: string[]; recentOutput?: string }
+export interface TerminalSuggestResult { completion: string }
 export interface ApplyRequest { path: string; code: string; language?: string; instructions?: string; sessionId?: string; modelId?: string }
 export interface ApplyResult { path: string; before: string; after: string; diff: string; method: 'search-replace' | 'rewrite' | 'create' | 'heuristic'; changeId?: string }
 export interface CommitMessageRequest { style?: 'conventional' | 'plain'; includeBody: boolean; modelId?: string }
@@ -441,7 +446,7 @@ export interface CommandClassification {
 export interface SandboxStatus { available: boolean; backend: 'seatbelt' | 'bubblewrap' | 'landlock' | 'none'; reason?: string; networkIsolation: boolean }
 export interface SandboxSettings { mode: 'off' | 'auto' | 'strict'; allowNetwork: boolean; extraWritablePaths: string[]; allowReadHome: boolean; pinMcpToolDescriptions: boolean }
 export interface AcpSettings { enabled: boolean; defaultAgentId: string; agents: AcpAgentConfig[]; passMcpServers: boolean; sessionDefaults?: Record<string, Record<string, unknown>> }
-export interface TerminalSettings { blocks: boolean; shellIntegration: boolean; aiEnabled: boolean; programStatus: boolean; maxBlocks: number }
+export interface TerminalSettings { blocks: boolean; shellIntegration: boolean; aiEnabled: boolean; programStatus: boolean; maxBlocks: number; suggestions: 'off' | 'history' | 'ai' }
 export interface McpToolChange { serverId: string; tool: string; previousHash: string; currentHash: string; previousDescription?: string; currentDescription: string; detectedAt: number }
 
 // ───────────────────────────── terminal blocks (OSC 133) & program status (OSC 7501) ─────────────────────────────

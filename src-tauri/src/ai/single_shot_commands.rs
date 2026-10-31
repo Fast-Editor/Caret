@@ -24,6 +24,12 @@ pub fn ai_cancel(request_id: String) -> Result<()> { cancel::cancel(&request_id)
 pub async fn ai_terminal_command(app: AppHandle, req: inline_edit::TerminalCommandRequest) -> Result<inline_edit::TerminalCommandResult> { inline_edit::terminal_command(&app, req).await }
 
 #[tauri::command]
+pub async fn ai_terminal_fix(app: AppHandle, req: inline_edit::TerminalFixRequest) -> Result<inline_edit::TerminalCommandResult> { inline_edit::terminal_fix(&app, req).await }
+
+#[tauri::command]
+pub async fn ai_terminal_suggest(app: AppHandle, req: inline_edit::TerminalSuggestRequest) -> Result<inline_edit::TerminalSuggestResult> { inline_edit::terminal_suggest(&app, req).await }
+
+#[tauri::command]
 pub async fn ai_apply(app: AppHandle, req: apply::ApplyRequest) -> Result<apply::ApplyResult> { apply::apply(&app, req).await }
 
 #[tauri::command]

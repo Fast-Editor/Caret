@@ -11,10 +11,33 @@ import { useSettings } from '@/store/settings'
 import { useTerminals } from '@/store/terminal'
 import { useWorkspace } from '@/store/workspace'
 import { notify } from '@/store/notifications'
-import { xtermTheme } from './xtermTheme'
+import { xtermTheme, type TerminalBackgroundMode } from './xtermTheme'
 import { terminalRegistry, type BlockMarkers } from './registry'
 import { BlockGutter } from './BlockGutter'
+import { findPathCandidates, resolveCandidatePaths } from './pathLinks'
+import { createSuggestionEngine, type SuggestionMode } from './suggestions'
 import { ContextMenu, cn, type MenuEntry } from '@/components/common'
+import { Sparkles } from 'lucide-react'
+import { platform } from '@tauri-apps/plugin-os'
+import type { Settings } from '@/types'
+
+/** Theme options for one terminal, from settings + the session's own colour. */
+function themeOptions(st: Settings | null | undefined, color?: string) {
+  return { ansi: st?.ui.terminalAnsi?.[st.ui.theme], background: (st?.ui.terminalBackground ?? 'panel') as TerminalBackgroundMode, tint: color }
+}
+/** Commands typed in any open terminal, most recent first, distinct. */
+function localHistory(prefix: string): string[] {
+  const seen = new Set<string>(); const out: string[] = []
+  const all = Object.values(useTerminals.getState().sessions).flatMap((s) => s.blocks.map((b) => ({ c: b.command?.trim() ?? '', at: b.startedAt }))).filter((x) => x.c).sort((a, b) => b.at - a.at)
+  for (const { c } of all) { if (!c.startsWith(prefix) || seen.has(c)) continue; seen.add(c); out.push(c); if (out.length >= 50) break }
+  return out
+}
+/** Persisted cross-session history when the backend provides it (optional module). */
+async function persistedHistory(prefix: string, cwd?: string): Promise<string[]> {
+  const th = (api as unknown as { terminalHistory?: { recent?: (prefix?: string, cwd?: string, limit?: number) => Promise<{ command: string }[]> } }).terminalHistory
+  if (!th?.recent) return []
+  try { return (await th.recent(prefix, cwd, 30)).map((e) => e.command) } catch { return [] }
+}
 
 export function TerminalInstance({ sessionId, active }: { sessionId: string; active: boolean }) {
   const hostRef = useRef<HTMLDivElement>(null)
@@ -33,7 +56,7 @@ export function TerminalInstance({ sessionId, active }: { sessionId: string; act
     const maxBlocks = st?.terminal?.maxBlocks ?? 200
     const term = new Terminal({
       allowProposedApi: true, cursorBlink: st?.ui.terminalCursorBlink !== false, cursorStyle: st?.ui.terminalCursorStyle ?? 'block', fontFamily: st?.ui.terminalFontFamily ?? 'Menlo, monospace', fontSize: st?.ui.terminalFontSize ?? 12, lineHeight: 1.2,
-      scrollback: st?.ui.terminalScrollback ?? 5000, macOptionIsMeta: true, theme: xtermTheme(st?.ui.theme), minimumContrastRatio: 1, smoothScrollDuration: st?.ui.smoothScrolling === false ? 0 : 80, scrollOnUserInput: true,
+      scrollback: st?.ui.terminalScrollback ?? 5000, macOptionIsMeta: true, theme: xtermTheme(st?.ui.theme, themeOptions(st, session.color)), allowTransparency: st?.ui.terminalBackground === 'transparent', minimumContrastRatio: 1, smoothScrollDuration: st?.ui.smoothScrolling === false ? 0 : 80, scrollOnUserInput: true,
     })
     const fit = new FitAddon(); const search = new SearchAddon()
     term.loadAddon(fit); term.loadAddon(search)
@@ -47,8 +70,14 @@ export function TerminalInstance({ sessionId, active }: { sessionId: string; act
     let disposed = false
     const queue: string[] = []
     let raf = 0
-    const flush = () => { raf = 0; if (!queue.length) return; const data = queue.join(''); queue.length = 0; term.write(data) }
-    const enqueue = (d: string) => { queue.push(d); if (!raf) raf = requestAnimationFrame(flush) }
+    let flushTimer: ReturnType<typeof setTimeout> | null = null
+    const flush = () => { raf = 0; flushTimer = null; if (!queue.length) return; const data = queue.join(''); queue.length = 0; term.write(data) }
+    // Coalesce writes per frame. requestAnimationFrame never fires while the window is hidden, so fall back to a timer
+    // there: otherwise output accumulates in memory and the buffer (blocks, markers, suggestions) goes stale until
+    // the window is visible again.
+    const enqueue = (d: string) => { queue.push(d); if (raf || flushTimer) return; if (document.hidden) flushTimer = setTimeout(flush, 16); else raf = requestAnimationFrame(flush) }
+    const onVisibility = () => { if (!document.hidden && queue.length) { if (flushTimer) { clearTimeout(flushTimer); flushTimer = null } if (!raf) raf = requestAnimationFrame(flush) } }
+    document.addEventListener('visibilitychange', onVisibility)
     const upd = useTerminals.getState().update
 
     // ── semantic blocks: xterm parses OSC 133 itself, so markers land on the exact rows ──
@@ -64,8 +93,9 @@ export function TerminalInstance({ sessionId, active }: { sessionId: string; act
     if (trackBlocks) {
       oscSub = term.parser.registerOscHandler(133, (data) => {
         const kind = data[0]
-        if (kind === 'A') { closeOpen(); pendingPrompt?.dispose(); pendingPrompt = term.registerMarker(0) ?? undefined }
-        else if (kind === 'B' || kind === 'C') {
+        if (kind === 'A') { closeOpen(); pendingPrompt?.dispose(); pendingPrompt = term.registerMarker(0) ?? undefined; suggest.onPromptStart() }
+        else if (kind === 'B' || kind === 'C') suggest.onCommandStart()
+        if (kind === 'B' || kind === 'C') {
           if (uiOpen == null) {
             const start = pendingPrompt ?? term.registerMarker(0)
             pendingPrompt = undefined
@@ -75,7 +105,7 @@ export function TerminalInstance({ sessionId, active }: { sessionId: string; act
               if (blockMarkers.size > maxBlocks) { const oldest = Math.min(...blockMarkers.keys()); const m = blockMarkers.get(oldest); m?.start.dispose(); m?.output?.dispose(); m?.end?.dispose(); blockMarkers.delete(oldest) }
             }
           }
-        } else if (kind === 'D') closeOpen()
+        } else if (kind === 'D') { closeOpen(); suggest.onCommandStart() }
         notifyGutter()
         return true
       })
@@ -110,6 +140,59 @@ export function TerminalInstance({ sessionId, active }: { sessionId: string; act
     const ws = useWorkspace.getState().workspace?.root
     const cwd = session.cwd ?? ws
     const shell = session.shell ?? st?.general.defaultShell ?? undefined
+
+    // ── ghost-text command suggestions (history, then the model) ──
+    let suggestSeq = 0
+    const suggest = createSuggestionEngine({
+      term,
+      mode: () => { const s = useSettings.getState().settings; if (!s || s.terminal?.aiEnabled === false && s.terminal?.suggestions === 'ai') return (s?.terminal?.suggestions ?? 'ai') === 'off' ? 'off' : 'history'; return (s.terminal?.suggestions ?? 'ai') as SuggestionMode },
+      cwd: () => useTerminals.getState().sessions[sessionId]?.cwd,
+      sendInput: (text) => { if (ptyId) void api.pty.write(ptyId, text) },
+      sources: {
+        history: async (prefix, c) => { const local = localHistory(prefix); if (local.length) return local; return persistedHistory(prefix, c) },
+        ai: async (prefix) => {
+          const sess = useTerminals.getState().sessions[sessionId]
+          let os = 'macos'; try { os = platform() } catch { /* not in tauri */ }
+          const requestId = `tsug-${sessionId}-${++suggestSeq}`
+          const res = await api.ai.terminalSuggest({ requestId, prefix, shell: sess?.shell ?? 'zsh', cwd: sess?.cwd ?? ws ?? '~', os, recentCommands: localHistory('').slice(0, 12).reverse() })
+          return res.completion || null
+        },
+      },
+    })
+
+    // ── clickable file paths: validated against the file system, opened in the editor ──
+    const existsCache = new Map<string, { ok: boolean; at: number }>()
+    const exists = async (p: string) => { const hit = existsCache.get(p); if (hit && Date.now() - hit.at < 15_000) return hit.ok; const ok = await api.fs.exists(p).catch(() => false); existsCache.set(p, { ok, at: Date.now() }); return ok }
+    const linkProvider = term.registerLinkProvider({
+      provideLinks(y, callback) {
+        const line = term.buffer.active.getLine(y - 1)
+        if (!line) { callback(undefined); return }
+        const text = line.translateToString(true)
+        const cands = findPathCandidates(text)
+        if (!cands.length) { callback(undefined); return }
+        const sess = useTerminals.getState().sessions[sessionId]
+        const root = useWorkspace.getState().workspace?.root
+        void (async () => {
+          const links: import('@xterm/xterm').ILink[] = []
+          for (const c of cands) {
+            const tries = resolveCandidatePaths(c.path, sess?.cwd ?? cwd, root)
+            let target: string | null = null
+            for (const t of tries) { if (await exists(t)) { target = t; break } }
+            if (!target) continue
+            const abs = target
+            links.push({
+              range: { start: { x: c.start + 1, y }, end: { x: c.end, y } },
+              text: c.text,
+              decorations: { underline: true, pointerCursor: true },
+              activate: () => { void runCommand('editor.openFile', { path: abs, line: c.line, column: c.column, preview: true, focus: true }) },
+              hover: () => {}, leave: () => {},
+            })
+          }
+          callback(links.length ? links : undefined)
+        })()
+      },
+    })
+
     api.pty.spawn({ cwd, shell, cols: term.cols, rows: term.rows, name: 'xterm-256color' }, (ev) => {
       if (disposed) return
       if (ev.type === 'data') enqueue(ev.data)
@@ -127,6 +210,7 @@ export function TerminalInstance({ sessionId, active }: { sessionId: string; act
     const dataSub = term.onData((d) => {
       const sess = useTerminals.getState().sessions[sessionId]
       if (sess?.exitCode !== undefined) { useTerminals.getState().remove(sessionId); return }
+      suggest.noteUserInput(d)
       if (ptyId) void api.pty.write(ptyId, d)
     })
     const resizeSub = term.onResize(({ cols, rows }) => { if (ptyId) void api.pty.resize(ptyId, cols, rows) })
@@ -135,6 +219,7 @@ export function TerminalInstance({ sessionId, active }: { sessionId: string; act
 
     term.attachCustomKeyEventHandler((e) => {
       if (e.type !== 'keydown') return true
+      if (suggest.handleKey(e)) { e.preventDefault(); return false }
       const mod = e.metaKey || e.ctrlKey
       if (mod && e.key.toLowerCase() === 'k' && !e.shiftKey) { if (useSettings.getState().settings?.terminal?.aiEnabled === false) return true; useTerminals.setState({ cmdkFor: sessionId }); return false }
       if (mod && e.key.toLowerCase() === 'f' && !e.shiftKey) { useTerminals.setState({ findFor: sessionId }); return false }
@@ -151,14 +236,17 @@ export function TerminalInstance({ sessionId, active }: { sessionId: string; act
     terminalRegistry.set(sessionId, {
       term, fit, search, sessionId, ptyId: () => ptyId, focus: () => term.focus(), write: (d) => term.write(d), clear: () => term.clear(),
       sendInput: (d) => { if (ptyId) void api.pty.write(ptyId, d) },
+      suggest,
       blocks: { markers: blockMarkers, rangeOf, selectBlock, blockAtRow, navigate, rowAt, subscribe: (fn) => { gutterListeners.add(fn); return () => { gutterListeners.delete(fn) } } },
     })
     if (active) setTimeout(() => term.focus(), 0)
 
     return () => {
       disposed = true
-      ro.disconnect(); dataSub.dispose(); resizeSub.dispose(); oscSub?.dispose()
+      ro.disconnect(); dataSub.dispose(); resizeSub.dispose(); oscSub?.dispose(); linkProvider.dispose(); suggest.dispose()
+      document.removeEventListener('visibilitychange', onVisibility)
       if (raf) cancelAnimationFrame(raf)
+      if (flushTimer) clearTimeout(flushTimer)
       terminalRegistry.delete(sessionId)
       const id = ptyId
       if (id) void api.pty.kill(id).catch(() => {})
@@ -175,11 +263,13 @@ export function TerminalInstance({ sessionId, active }: { sessionId: string; act
     h.term.options.fontFamily = settings.ui.terminalFontFamily
     h.term.options.fontSize = settings.ui.terminalFontSize
     h.term.options.scrollback = settings.ui.terminalScrollback
-    h.term.options.theme = xtermTheme(settings.ui.theme)
+    h.term.options.allowTransparency = settings.ui.terminalBackground === 'transparent'
+    h.term.options.theme = xtermTheme(settings.ui.theme, themeOptions(settings, session?.color))
     h.term.options.cursorStyle = settings.ui.terminalCursorStyle ?? 'block'
     h.term.options.cursorBlink = settings.ui.terminalCursorBlink !== false
     try { h.fit.fit() } catch { /* ignore */ }
-  }, [sessionId, settings])
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sessionId, settings, session?.color])
   useEffect(() => { if (active) { const h = terminalRegistry.get(sessionId); if (h) { try { h.fit.fit() } catch { /* ignore */ } h.focus() } } }, [active, sessionId])
 
   const menu = (): MenuEntry[] => {
@@ -196,6 +286,7 @@ export function TerminalInstance({ sessionId, active }: { sessionId: string; act
       ...(aiOn ? [
         { label: 'Add Command Output to Chat', onSelect: () => void runCommand('terminal.blockToContext', { sessionId, blockId: block.id }) },
         { label: typeof block.exitCode === 'number' && block.exitCode !== 0 ? 'Explain Error (AI)' : 'Explain Output (AI)', onSelect: () => void runCommand('terminal.explainBlock', { sessionId, blockId: block.id }) },
+        { label: 'Fix Command (AI)', hidden: !(typeof block.exitCode === 'number' && block.exitCode !== 0 && !!block.command), onSelect: () => void runCommand('terminal.fixBlock', { sessionId, blockId: block.id }) },
       ] satisfies MenuEntry[] : []),
       { type: 'separator' as const },
     ] : []
@@ -217,12 +308,21 @@ export function TerminalInstance({ sessionId, active }: { sessionId: string; act
     ]
   }
   const status = session?.status
+  const lastBlock = session?.blocks[session.blocks.length - 1]
+  const fixable = aiOn && blocksOn && !!lastBlock && !lastBlock.running && typeof lastBlock.exitCode === 'number' && lastBlock.exitCode !== 0 && !!lastBlock.command && session?.exitCode === undefined
   return (
     <ContextMenu items={menu}>
       <div className="relative h-full w-full" onContextMenuCapture={(e) => { menuRow.current = terminalRegistry.get(sessionId)?.blocks.rowAt(e.clientY) ?? null }}>
         <div ref={hostRef} className={cn('h-full w-full pt-1 pr-2 [&_.xterm]:h-full', blocksOn ? 'pl-3' : 'pl-2')} data-keyctx="terminal" onDragOver={(e) => { if (e.dataTransfer.types.includes('application/x-caret-path')) e.preventDefault() }}
           onDrop={(e) => { const p = e.dataTransfer.getData('application/x-caret-path'); if (p) { e.preventDefault(); terminalRegistry.get(sessionId)?.sendInput(/\s/.test(p) ? `'${p}'` : p) } }} />
         {blocksOn && <BlockGutter sessionId={sessionId} onContextRow={(row) => { menuRow.current = row }} />}
+        {fixable && lastBlock && (
+          <button type="button" data-testid="terminal-fixit" onClick={() => void runCommand('terminal.fixBlock', { sessionId, blockId: lastBlock.id })}
+            className="absolute bottom-2 right-4 z-10 flex items-center gap-1.5 rounded-full px-2.5 h-6 text-[11px] border border-danger/40 bg-danger/10 text-danger hover:bg-danger/20 surface-float animate-fade-up"
+            title={`Propose a fix for: ${lastBlock.command} (exit ${lastBlock.exitCode})`}>
+            <Sparkles className="size-3" />Fix last command
+          </button>
+        )}
         {status && status.status !== 'idle' && (
           <div className={cn('absolute top-1.5 right-3 z-10 pointer-events-none flex items-center gap-1.5 rounded-full px-2 py-0.5 text-[11px] border backdrop-blur-sm',
             status.status === 'waiting' ? 'border-warning/40 bg-warning/15 text-warning' : status.status === 'failed' ? 'border-danger/40 bg-danger/15 text-danger' : status.status === 'done' ? 'border-success/40 bg-success/15 text-success' : 'border-accent/40 bg-accent/15 text-fg')}

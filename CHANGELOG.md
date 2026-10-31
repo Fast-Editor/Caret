@@ -4,6 +4,13 @@ All notable changes to Caret. The version here must match `package.json`, `src-t
 
 ## Unreleased
 
+- Terminal: file paths in output are clickable (validated against cwd and the workspace root, `:line:col` and
+  `(line,col)` understood) and open in the editor; ghost-text command suggestions from history with the Tab model as
+  fallback (→ / End accepts; `terminal.suggestions`); a **Fix last command** chip and *Fix Command (AI)* menu entry that
+  propose a corrected command for a failed block into the ⌘K bar; persisted cross-session command history with
+  lexical and natural-language search (⌘⌥H); per-theme ANSI palette editor with Windows Terminal / VS Code / iTerm2
+  import and export; terminal background modes (panel, editor, app, transparent); dimmed inactive split panes;
+  per-terminal colour from the list's right-click menu.
 - Terminal list: clicking another terminal opened its actions menu instead of switching to it (the row was a
   click-triggered dropdown). Left click now selects; the Rename / Split / Add Output / Kill menu is on right click.
 - Responsiveness: sixty read-only backend commands (settings, registries, status probes, file stat, session and

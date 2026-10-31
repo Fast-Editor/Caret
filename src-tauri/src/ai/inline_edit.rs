@@ -175,6 +175,101 @@ pub fn is_destructive(cmd: &str) -> bool {
     pats.iter().any(|p| c.contains(p))
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TerminalFixRequest { pub request_id: String, pub command: String, #[serde(default)] pub exit_code: Option<i32>, #[serde(default)] pub output: String, pub shell: String, pub cwd: String, pub os: String }
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TerminalSuggestRequest { pub request_id: String, pub prefix: String, pub shell: String, pub cwd: String, pub os: String, #[serde(default)] pub recent_commands: Vec<String>, #[serde(default)] pub recent_output: Option<String> }
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TerminalSuggestResult { pub completion: String }
+
+const TERMINAL_FIX_SYSTEM: &str = "A shell command just failed in the user's terminal. From the command, its exit code and its output, propose the single corrected command the user most likely wants to run next. Respond with JSON only: {\"command\": string, \"explanation\": string}. Rules: fix the actual cause (typo, missing flag, wrong path, missing dependency, uncommitted changes, wrong branch…) and keep the user's intent; prefer one command and join two steps with ' && ' only when both are genuinely required; never propose destructive commands (rm -rf, force pushes, resets or checkouts that discard work) — if the only fix is destructive, return an empty command and explain what the user would have to decide; explanation ≤ 2 sentences.";
+const TERMINAL_SUGGEST_SYSTEM: &str = "You autocomplete the shell command the user is typing. You get the OS, shell, cwd, their recent commands, recent terminal output and the text typed so far. Respond with JSON only: {\"completion\": string} where completion is ONLY the text to append after what was typed (never repeat the typed text) so that typed + completion is one plausible complete command; single line, no explanation. Return an empty completion when nothing useful is likely.";
+
+/// Interpret a model reply that should have been `{"command", "explanation"}` JSON but may be a fenced block, a
+/// `$ cmd` line or plain prose. Prose never becomes a command: it is returned as the explanation with an empty command.
+pub fn parse_command_reply(raw: &str) -> (String, Option<String>) {
+    if let Some(v) = extract_json(raw) {
+        let cmd = v["command"].as_str().unwrap_or("").trim().to_string();
+        let expl = v["explanation"].as_str().map(|e| e.trim().to_string()).filter(|e| !e.is_empty());
+        if !cmd.is_empty() || expl.is_some() { return (cmd, expl); }
+    }
+    let text = raw.trim();
+    let prose = || Some(text.chars().take(400).collect::<String>()).filter(|t| !t.is_empty());
+    // a fenced block inside prose → first non-empty line of the block
+    if let Some(start) = text.find("```") {
+        let rest = &text[start + 3..];
+        if let Some(end) = rest.find("```") {
+            let block = &rest[..end];
+            let mut lines = block.lines().map(str::trim).filter(|l| !l.is_empty());
+            let first = lines.next().unwrap_or("");
+            let cmd = if first.chars().all(|c| c.is_ascii_alphanumeric()) && !first.contains(' ') { lines.next().unwrap_or("") } else { first };
+            if !cmd.is_empty() { return (cmd.trim_start_matches("$ ").to_string(), prose()); }
+        }
+    }
+    if let Some(line) = text.lines().map(str::trim).find(|l| l.starts_with("$ ")) { return (line[2..].to_string(), prose()); }
+    let first = text.lines().map(str::trim).find(|l| !l.is_empty()).unwrap_or("");
+    let words = first.split_whitespace().count();
+    let looks_like_prose = words > 12 || first.ends_with(':') || first.ends_with('.') || first.contains(" because ") || first.contains("doesn't") || first.contains("does not")
+        || ["The ", "This ", "It ", "You ", "Your ", "I ", "Sorry", "There "].iter().any(|p| first.starts_with(p));
+    if looks_like_prose || first.is_empty() { return (String::new(), prose()); }
+    (first.to_string(), None)
+}
+
+fn tail_chars(s: &str, n: usize) -> String { s.chars().rev().take(n).collect::<Vec<_>>().into_iter().rev().collect() }
+
+/// Propose the corrected command for a failed terminal block.
+pub async fn terminal_fix(app: &AppHandle, req: TerminalFixRequest) -> Result<TerminalCommandResult> {
+    let settings_state = app.state::<SettingsState>();
+    let settings = settings_state.effective();
+    let resolved = pick_model(&settings, &settings_state, None, false)?;
+    let user = format!("OS: {}\nShell: {}\ncwd: {}\n\nFailed command:\n{}\nExit code: {}\n\nOutput (tail):\n{}\n", req.os, req.shell, req.cwd, req.command, req.exit_code.map(|c| c.to_string()).unwrap_or_else(|| "unknown".into()), tail_chars(&req.output, 4000));
+    let mut llm_req = LlmRequest::new(resolved.model.clone()).no_thinking().max_tokens(400).purpose("terminal-fix");
+    llm_req.system = vec![SystemBlock { text: TERMINAL_FIX_SYSTEM.into(), cache: true }];
+    llm_req.messages = vec![Message::user_text(user)];
+    llm_req.temperature = Some(0.0);
+    let guard = cancel::Guard::new(&req.request_id);
+    let (raw, _) = llm::complete_text(&resolved, llm_req, guard.token()).await?;
+    let raw = crate::ai::tab::strip_banner_lines(&raw); // routers (Lynkr) may prepend a visible routing banner
+    let (command, explanation) = parse_command_reply(&raw);
+    if is_destructive(&command) {
+        return Ok(TerminalCommandResult { command: String::new(), explanation: Some(format!("The proposed fix is destructive ({command}); run it yourself if that is really what you want. {}", explanation.unwrap_or_default())) });
+    }
+    Ok(TerminalCommandResult { command, explanation })
+}
+
+/// Continue the command the user is typing (ghost text). Only the remainder is returned.
+pub async fn terminal_suggest(app: &AppHandle, req: TerminalSuggestRequest) -> Result<TerminalSuggestResult> {
+    let settings_state = app.state::<SettingsState>();
+    let settings = settings_state.effective();
+    let resolved = pick_model(&settings, &settings_state, None, true)?;
+    let mut user = format!("OS: {}\nShell: {}\ncwd: {}\n", req.os, req.shell, req.cwd);
+    if !req.recent_commands.is_empty() {
+        user.push_str("\nRecent commands (most recent last):\n");
+        let n = req.recent_commands.len();
+        for c in &req.recent_commands[n.saturating_sub(12)..] { user.push_str(c); user.push('\n'); }
+    }
+    if let Some(o) = &req.recent_output { if !o.trim().is_empty() { user.push_str(&format!("\nRecent terminal output:\n{}\n", tail_chars(o, 1500))); } }
+    user.push_str(&format!("\nTyped so far: {}", req.prefix));
+    let mut llm_req = LlmRequest::new(resolved.model.clone()).no_thinking().max_tokens(80).purpose("terminal-suggest");
+    llm_req.system = vec![SystemBlock { text: TERMINAL_SUGGEST_SYSTEM.into(), cache: true }];
+    llm_req.messages = vec![Message::user_text(user)];
+    llm_req.temperature = Some(0.0);
+    let guard = cancel::Guard::new(&req.request_id);
+    let (raw, _) = llm::complete_text(&resolved, llm_req, guard.token()).await?;
+    let raw = crate::ai::tab::strip_banner_lines(&raw); // routers (Lynkr) may prepend a visible routing banner
+    let v = extract_json(&raw).unwrap_or_else(|| serde_json::json!({"completion": strip_fences(&raw).lines().next().unwrap_or("").trim()}));
+    let mut completion = v["completion"].as_str().unwrap_or("").to_string();
+    if !req.prefix.is_empty() && completion.starts_with(&req.prefix) { completion = completion[req.prefix.len()..].to_string(); }
+    if let Some(first) = completion.lines().next() { completion = first.to_string(); }
+    // A sentence is not a completion.
+    if completion.split_whitespace().count() > 10 || completion.contains(". ") || completion.ends_with('.') && !completion.contains('/') { completion.clear(); }
+    if is_destructive(&format!("{}{}", req.prefix, completion)) { completion.clear(); }
+    Ok(TerminalSuggestResult { completion: completion.trim_end().to_string() })
+}
+
 pub async fn terminal_command(app: &AppHandle, req: TerminalCommandRequest) -> Result<TerminalCommandResult> {
     let settings_state = app.state::<SettingsState>();
     let settings = settings_state.effective();
@@ -188,9 +283,8 @@ pub async fn terminal_command(app: &AppHandle, req: TerminalCommandRequest) -> R
     llm_req.temperature = Some(0.0);
     let guard = cancel::Guard::new(&req.request_id);
     let (raw, _) = llm::complete_text(&resolved, llm_req, guard.token()).await?;
-    let v = extract_json(&raw).unwrap_or_else(|| serde_json::json!({"command": strip_fences(&raw).lines().next().unwrap_or("").trim(), "explanation": null}));
-    let command = v["command"].as_str().unwrap_or("").trim().to_string();
-    let explanation = v["explanation"].as_str().map(String::from);
+    let raw = crate::ai::tab::strip_banner_lines(&raw); // routers (Lynkr) may prepend a visible routing banner
+    let (command, explanation) = parse_command_reply(&raw);
     if is_destructive(&command) {
         return Ok(TerminalCommandResult { command: String::new(), explanation: Some(format!("Refusing to auto-generate a destructive command ({command}). {}", explanation.unwrap_or_default())) });
     }
@@ -200,6 +294,14 @@ pub async fn terminal_command(app: &AppHandle, req: TerminalCommandRequest) -> R
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn command_reply_parser_handles_json_fences_dollar_lines_and_prose() {
+        assert_eq!(parse_command_reply(r#"{"command": "git stash", "explanation": "Saves your changes."}"#), ("git stash".into(), Some("Saves your changes.".into())));
+        let (c, e) = parse_command_reply("Run this:\n```bash\nnpm ci\n```\nthen retry."); assert_eq!(c, "npm ci"); assert!(e.is_some());
+        let (c, _) = parse_command_reply("$ cargo build --release"); assert_eq!(c, "cargo build --release");
+        let (c, e) = parse_command_reply("The command failed because `/x` doesn't exist on your filesystem — the error is straightforward:"); assert!(c.is_empty()); assert!(e.unwrap().starts_with("The command failed"));
+        let (c, e) = parse_command_reply("ls -la"); assert_eq!(c, "ls -la"); assert!(e.is_none());
+    }
     #[test]
     fn tag_stripper_streams_only_inner_code() {
         let mut s = TagStripper::default();

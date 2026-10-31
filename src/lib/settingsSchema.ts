@@ -73,6 +73,7 @@ export const DEFAULTS: Settings = {
     autoSave: 'afterDelay', autoSaveDelayMs: 1000, chatFontSize: 13, sidebarPosition: 'left', chatPosition: 'right', terminalFontFamily: 'JetBrains Mono, Menlo, monospace',
     terminalFontSize: 12, terminalScrollback: 5000, terminalCursorStyle: 'block', terminalCursorBlink: true, showStatusBarMemory: true, layout: 'editor', reduceMotion: false, motion: 'subtle', stickyScroll: true, lineNumbers: 'on', smoothScrolling: true,
     fontLigatures: true, editorTabsMode: 'multiple', previewTabs: true, breadcrumbs: true, zoomLevel: 0, confirmDelete: true, compactFolders: true,
+    terminalAnsi: {}, terminalBackground: 'panel', terminalDimInactive: true,
   },
   privacy: { privacyMode: false, allowWebTools: true, allowRemoteEmbeddings: true },
   general: { defaultShell: undefined, openLastWorkspace: true, confirmQuitWithRunningAgents: true, gitAutoFetch: false, gitAutoFetchIntervalSecs: 180, globalIgnore: ['.DS_Store', 'Thumbs.db'], trustedWorkspaces: [], showWelcome: true, useCursorCompatDirs: true },
@@ -85,7 +86,7 @@ export const DEFAULTS: Settings = {
   verify: { autoRunAfterTurn: true, runTests: true, mutationTesting: true, mutationMaxMutants: 12, dependencyGrounding: true, securityRules: true, projectCheckCommand: undefined, testCommand: undefined, preTestCommand: undefined, timeoutSecs: 300, blockMergeOnFail: false, useSemgrepIfAvailable: true },
   sandbox: { mode: 'auto', allowNetwork: true, extraWritablePaths: [], allowReadHome: true, pinMcpToolDescriptions: true },
   acp: { enabled: true, defaultAgentId: 'caret', agents: [], passMcpServers: true, sessionDefaults: {} },
-  terminal: { blocks: true, shellIntegration: true, aiEnabled: true, programStatus: true, maxBlocks: 200 },
+  terminal: { blocks: true, shellIntegration: true, aiEnabled: true, programStatus: true, maxBlocks: 200, suggestions: 'ai' },
   router: { enabled: false, source: 'npm', overrides: {}, excludedModels: [], stickySessions: true, routeSingleShot: true, tpmLimit: undefined, embeddingsProviderId: undefined },
 }
 
@@ -204,6 +205,9 @@ export const SETTINGS_FIELDS: SettingField[] = [
   { id: 'ui.terminalCursorStyle', page: 'appearance', type: 'select', title: 'Terminal cursor style', options: ['block', 'bar', 'underline'].map((v) => ({ value: v, label: v })), group: 'Terminal' },
   { id: 'ui.terminalCursorBlink', page: 'appearance', type: 'boolean', title: 'Terminal cursor blinking', group: 'Terminal' },
   { id: 'ui.terminalScrollback', page: 'appearance', type: 'number', title: 'Terminal scrollback', unit: 'lines', min: 500, max: 100000, step: 500, group: 'Terminal' },
+  { id: 'ui.terminalBackground', page: 'appearance', type: 'select', title: 'Terminal background', description: 'Which surface the terminal sits on. Transparent lets the panel behind show through.', options: [{ value: 'panel', label: 'Panel' }, { value: 'editor', label: 'Match editor' }, { value: 'app', label: 'App background' }, { value: 'transparent', label: 'Transparent' }], group: 'Terminal' },
+  { id: 'ui.terminalDimInactive', page: 'appearance', type: 'boolean', title: 'Dim inactive split panes', description: 'Fade terminals in a split that do not have focus.', group: 'Terminal' },
+  { id: 'terminal.suggestions', page: 'appearance', type: 'select', title: 'Command suggestions', description: 'Ghost text after the cursor while you type. History completes from past commands; AI asks the Tab model when history has nothing. Accept with →.', options: [{ value: 'off', label: 'Off' }, { value: 'history', label: 'History only' }, { value: 'ai', label: 'History + AI' }], group: 'Terminal' },
   { id: 'terminal.shellIntegration', page: 'appearance', type: 'boolean', title: 'Shell integration', description: 'Inject Caret\'s zsh/bash/fish hooks so the terminal knows where each command starts and ends (OSC 133) and the current directory. Applies to new terminals.', group: 'Terminal', keywords: ['osc 133', 'prompt', 'zdotdir'] },
   { id: 'terminal.blocks', page: 'appearance', type: 'boolean', title: 'Command blocks', description: 'Group each command and its output into a block: gutter bars, click to select, ⌘↑/⌘↓ to jump, re-run, copy and send a single command\'s output to chat.', dependsOn: 'terminal.shellIntegration', group: 'Terminal', keywords: ['semantic terminal', 'warp'] },
   { id: 'terminal.maxBlocks', page: 'appearance', type: 'number', title: 'Blocks kept per terminal', description: 'Older blocks (and their captured output, max 64 KiB each) are dropped beyond this.', unit: 'blocks', min: 20, max: 2000, step: 20, dependsOn: 'terminal.blocks', group: 'Terminal' },

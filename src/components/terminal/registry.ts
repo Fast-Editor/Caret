@@ -1,6 +1,7 @@
 import type { IMarker, Terminal } from '@xterm/xterm'
 import type { FitAddon } from '@xterm/addon-fit'
 import type { SearchAddon } from '@xterm/addon-search'
+import type { SuggestionEngine } from './suggestions'
 
 /** xterm markers for one semantic block, keyed by the backend block `index`. */
 export interface BlockMarkers { start: IMarker; output?: IMarker; end?: IMarker }
@@ -19,6 +20,8 @@ export interface BlockHandle {
 export interface TerminalHandle {
   term: Terminal; fit: FitAddon; search: SearchAddon; sessionId: string; ptyId: () => string | null
   focus: () => void; write: (data: string) => void; clear: () => void; sendInput: (data: string) => void
+  /** Ghost-text suggestions (absent in tests that stub the handle). */
+  suggest?: SuggestionEngine
   blocks: BlockHandle
 }
 /** Non-reactive registry of live xterm instances keyed by session id. */

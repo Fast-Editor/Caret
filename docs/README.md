@@ -24,7 +24,7 @@ top-level [README](../README.md) has the overview, install instructions and the 
 | [ACP.md](ACP.md) | External agents over the Agent Client Protocol (Claude Code, Codex, Gemini CLI, OpenCode…), per-agent model/effort/mode |
 | [VERIFIED_DIFF.md](VERIFIED_DIFF.md) | The verification engine that runs after agent turns: checks, risk tiers, proof panel, build-before-test |
 | [SANDBOX.md](SANDBOX.md) | Shell command classification, macOS Seatbelt / Linux bubblewrap sandboxing, MCP tool pins |
-| [TERMINAL.md](TERMINAL.md) | Semantic terminal blocks (OSC 133 / 7501), shell integration, program status |
+| [TERMINAL.md](TERMINAL.md) | Semantic terminal blocks (OSC 133 / 7501), shell integration, program status, customisation (colours, suggestions, fix-it, clickable paths, history search) |
 | [DEBUGGING.md](DEBUGGING.md) | Run and Debug: the Debug Adapter Protocol client, js-debug and debugpy adapters, launch.json compatibility, limitations |
 | [CLI.md](CLI.md) | The `caret` command-line launcher (`caret .`, `caret file:line:col`), how it is installed and how it talks to the app |
 | [RELEASING.md](RELEASING.md) | Cutting releases: version bump, GitHub Actions matrix, secrets, code signing, updater, Homebrew cask |

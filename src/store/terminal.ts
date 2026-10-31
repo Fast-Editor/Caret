@@ -28,7 +28,11 @@ export interface TerminalSession {
   /** Explicit program status (OSC 7501) — undefined when idle. */
   status?: TerminalStatusInfo
   selectedBlockId?: string | null
+  /** User-chosen accent (hex) — tints the background and the list icon. */
+  color?: string
 }
+/** A proposal shown in the ⌘K bar without the user typing a request (Fix-it, re-run with changes). */
+export interface CmdKPrefill { title: string; command?: string; explanation?: string; loading?: boolean; error?: string }
 export interface TerminalGroup { id: string; terminalIds: string[] }
 
 interface TerminalStore {
@@ -37,6 +41,7 @@ interface TerminalStore {
   activeGroupId: string | null
   activeTerminalId: string | null
   cmdkFor: string | null
+  cmdkPrefill: CmdKPrefill | null
   findFor: string | null
   create: (opts?: { cwd?: string; shell?: string; command?: string; split?: boolean }) => TerminalSession
   remove: (id: string) => void
@@ -53,7 +58,7 @@ let n = 0
 const uid = (p: string) => `${p}${++n}-${Date.now().toString(36)}`
 
 export const useTerminals = create<TerminalStore>((set, get) => ({
-  sessions: {}, groups: [], activeGroupId: null, activeTerminalId: null, cmdkFor: null, findFor: null,
+  sessions: {}, groups: [], activeGroupId: null, activeTerminalId: null, cmdkFor: null, cmdkPrefill: null, findFor: null,
   create: (opts = {}) => {
     const s = get()
     const id = uid('t')

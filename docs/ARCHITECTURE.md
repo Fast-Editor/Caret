@@ -111,3 +111,20 @@ Motion is a shared system, not per-component improvisation (`src/styles.css`, `s
 late additions with the same `IgnoreSet` so behaviour does not depend on whether a file was touched after start-up.
 Semantic indexing (`index/`) and text search keep their own ignore handling; text search exposes a "Use .gitignore"
 toggle instead.
+
+## Terminal extension points
+
+- `components/terminal/pathLinks.ts` is the pure path detector; `TerminalInstance` registers it as an xterm link
+  provider and validates candidates with `fs_exists` (cwd first, then workspace root) before underlining them.
+- `components/terminal/suggestions.ts` owns ghost text: it needs the OSC 133 B/C/D hooks from the instance (prompt
+  input start / command start), reads the typed prefix from the buffer, and draws a decoration at the cursor. Sources
+  are injected (`history`, `ai`) so the engine stays testable; keep the model call behind the 700 ms pause and the
+  three-character minimum.
+- Colours: `lib/terminalColors.ts` (palettes, overrides, importers) → `components/terminal/xtermTheme.ts`
+  (`xtermTheme(theme, { ansi, background, tint })`). Per-theme overrides live in `ui.terminalAnsi[themeId]`; a
+  session's `color` is a tint, never a palette change.
+- Fix-it and ⌘K share the `CmdKBar`; proposals arrive through `useTerminals.cmdkPrefill` so any feature can hand the
+  user an editable command (Run / Insert / Cancel) without a second UI.
+- Persisted history is `core/terminal_history.rs` (JSONL under `~/.caret/terminal/`), appended from the store on
+  `block-end`; Quick-Open-style search lives in `components/palette/TerminalHistory.tsx`.
+

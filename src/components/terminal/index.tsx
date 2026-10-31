@@ -1,4 +1,5 @@
 import { ChevronDown, Plus, SquareSplitHorizontal, Trash2, MessageSquarePlus, TerminalSquare, BellRing } from 'lucide-react'
+import { platform } from '@tauri-apps/plugin-os'
 import { useEffect } from 'react'
 import { IconButton, Menu, cn, type MenuEntry, ContextMenu } from '@/components/common'
 import { prompt } from '@/components/dialogs'
@@ -17,6 +18,11 @@ import { terminalRegistry } from './registry'
 export { terminalRegistry } from './registry'
 
 const SHELLS = ['/bin/zsh', '/bin/bash', '/usr/local/bin/fish', '/opt/homebrew/bin/fish', '/bin/sh']
+/** Accent swatches offered in the terminal's Colour submenu. */
+const TERMINAL_COLORS: { label: string; value: string }[] = [
+  { label: 'Red', value: '#e5484d' }, { label: 'Orange', value: '#f5a524' }, { label: 'Green', value: '#30a46c' }, { label: 'Blue', value: '#3b8eea' },
+  { label: 'Purple', value: '#8e4ec6' }, { label: 'Pink', value: '#d670d6' }, { label: 'Cyan', value: '#29b8db' },
+]
 
 const STATUS_DOT: Record<ProgramStatus, string> = {
   idle: 'text-muted', working: 'text-accent', waiting: 'text-warning', done: 'text-success', failed: 'text-danger',
@@ -42,6 +48,7 @@ export function TerminalPanel() {
   const defaultShell = useSettings((s) => s.settings?.general.defaultShell)
   const aiOn = useSettings((s) => s.settings?.terminal?.aiEnabled !== false)
   const blocksOn = useSettings((s) => s.settings?.terminal?.blocks !== false)
+  const dimInactive = useSettings((s) => s.settings?.ui.terminalDimInactive !== false)
   useEffect(() => { if (t.groups.length === 0) t.create({ cwd: ws }) // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
   const group = t.groups.find((g) => g.id === t.activeGroupId) ?? t.groups[0]
@@ -56,6 +63,12 @@ export function TerminalPanel() {
     return [
       { label: 'Rename…', onSelect: async () => { const name = await prompt({ title: 'Terminal name', defaultValue: t.sessions[id]?.customTitle ?? t.sessions[id]?.title }); if (name) t.update(id, { customTitle: name, title: name }) } },
       { label: 'Split', onSelect: () => { t.setActive(id); t.create({ cwd: t.sessions[id]?.cwd ?? ws, split: true }) } },
+      { type: 'submenu' as const, label: 'Colour', items: [
+        ...TERMINAL_COLORS.map((c) => ({ label: c.label, checked: t.sessions[id]?.color === c.value, icon: <span className="size-2.5 rounded-full" style={{ background: c.value }} />, onSelect: () => t.update(id, { color: c.value }) })),
+        { type: 'separator' as const },
+        { label: 'Custom…', onSelect: async () => { const v = await prompt({ title: 'Terminal colour', placeholder: '#3b8eea', defaultValue: t.sessions[id]?.color ?? '', validate: (x) => (!x || /^#?[0-9a-fA-F]{6}$/.test(x.trim()) ? null : 'Use a hex colour like #3b8eea') }); if (v !== null) t.update(id, { color: v.trim() ? (v.trim().startsWith('#') ? v.trim() : `#${v.trim()}`) : undefined }) } },
+        { label: 'None', disabled: !t.sessions[id]?.color, onSelect: () => t.update(id, { color: undefined }) },
+      ] },
       ...(aiOn ? [
         { label: 'Add Output to Chat', onSelect: () => void runCommand('chat.addTerminalOutput', { terminalId: t.sessions[id]?.ptyId, sessionId: id }) },
         ...(blocksOn && last ? [
@@ -74,7 +87,7 @@ export function TerminalPanel() {
         {t.findFor && group?.terminalIds.includes(t.findFor) && <TerminalFind sessionId={t.findFor} />}
         <div className="flex-1 min-h-0 flex">
           {group?.terminalIds.map((id, i) => (
-            <div key={id} className={cn('flex-1 min-w-0 h-full relative', i > 0 && 'border-l border-border', t.activeTerminalId === id && group.terminalIds.length > 1 && 'ring-inset ring-1 ring-accent/30')} onMouseDown={() => t.setActive(id)}>
+            <div key={id} className={cn('flex-1 min-w-0 h-full relative transition-opacity duration-200', i > 0 && 'border-l border-border', t.activeTerminalId === id && group.terminalIds.length > 1 && 'ring-inset ring-1 ring-accent/30', dimInactive && group.terminalIds.length > 1 && t.activeTerminalId !== id && 'opacity-60 hover:opacity-90')} onMouseDown={() => t.setActive(id)}>
               <TerminalInstance sessionId={id} active={t.activeTerminalId === id} />
             </div>
           ))}
@@ -106,7 +119,7 @@ export function TerminalPanel() {
                     <div role="button" tabIndex={0} onClick={() => t.setActive(id)} data-status={status}
                       className={cn('group flex items-center gap-1.5 h-[24px] px-1.5 rounded cursor-pointer hover:bg-hover transition-base animate-fade-up', t.activeTerminalId === id && 'bg-selected text-fg')} title={[s?.cwd, hint].filter(Boolean).join(' — ')}>
                       <span className="relative shrink-0">
-                        <TerminalSquare className={cn('size-3.5', s?.exitCode !== undefined ? 'text-danger' : 'text-muted')} />
+                        <TerminalSquare className={cn('size-3.5', s?.exitCode !== undefined ? 'text-danger' : !s?.color && 'text-muted')} style={s?.color && s.exitCode === undefined ? { color: s.color } : undefined} />
                         {status !== 'idle' && <span className={cn('absolute -right-0.5 -bottom-0.5 size-1.5 rounded-full ring-1 ring-panel', STATUS_DOT[status].replace('text-', 'bg-'), (status === 'working' || status === 'waiting') && 'animate-pulse')} />}
                       </span>
                       <span className="truncate flex-1">{s?.customTitle ?? s?.title ?? 'terminal'}</span>
@@ -204,6 +217,25 @@ export function registerTerminalCommands(): () => void {
       const failed = typeof r.block.exitCode === 'number' && r.block.exitCode !== 0
       const text = failed ? `This command failed (exit ${r.block.exitCode}). Explain the error and tell me exactly how to fix it.` : 'Explain this terminal output briefly and point out anything that needs attention.'
       return runCommand('terminal.blockToContext', { sessionId: r.sess.id, blockId: r.block.id, text, submit: true, mode: 'ask' })
+    } },
+    { id: 'terminal.fixBlock', title: 'Terminal: Fix Last Failed Command (AI)', category: 'AI', run: async (args) => {
+      if (!aiEnabled()) return aiOff()
+      const r = resolveBlock((args ?? {}) as BlockRef)
+      const failed = r?.block.command && typeof r.block.exitCode === 'number' && r.block.exitCode !== 0 ? r : undefined
+      const target = failed ?? (() => { const s = useTerminals.getState(); const id = s.activeTerminalId; const sess = id ? s.sessions[id] : undefined; const b = sess ? [...sess.blocks].reverse().find((x) => x.command && typeof x.exitCode === 'number' && x.exitCode !== 0) : undefined; return sess && b ? { sess, block: b } : undefined })()
+      if (!target) { void runCommand('app.notify', { level: 'info', title: 'No failed command to fix', timeoutMs: 2000 }); return }
+      show()
+      const title = `Fix for: ${target.block.command}`
+      useTerminals.setState({ cmdkFor: target.sess.id, cmdkPrefill: { title, loading: true } })
+      try {
+        const out = await blockOutput(target.sess, target.block, 6000)
+        let os = 'macos'; try { os = platform() } catch { /* not in tauri */ }
+        const res = await api.ai.terminalFix({ requestId: `tfix-${Date.now()}`, command: target.block.command!, exitCode: target.block.exitCode, output: out, shell: target.sess.shell ?? 'zsh', cwd: target.sess.cwd ?? useWorkspace.getState().workspace?.root ?? '~', os })
+        if (useTerminals.getState().cmdkFor !== target.sess.id) return
+        useTerminals.setState({ cmdkPrefill: { title, command: res.command, explanation: res.explanation, loading: false } })
+      } catch (e) {
+        if (useTerminals.getState().cmdkFor === target.sess.id) useTerminals.setState({ cmdkPrefill: { title, loading: false, error: String((e as Error).message ?? e) } })
+      }
     } },
     { id: 'terminal.blockText', title: 'Terminal: Command Block as Text', category: 'Terminal', hidden: true, run: async (args) => { const r = resolveBlock((args ?? {}) as BlockRef); if (!r) return undefined; return formatBlockText(r.block, await blockOutput(r.sess, r.block)) } },
     // ── program status (OSC 7501) ──

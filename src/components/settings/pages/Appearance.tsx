@@ -1,2 +1,3 @@
 import { SchemaPage } from '../SchemaPage'
-export function AppearancePage() { return <SchemaPage page="appearance" /> }
+import { TerminalColorsSection } from './TerminalColorsSection'
+export function AppearancePage() { return <SchemaPage page="appearance" after={<TerminalColorsSection />} /> }
