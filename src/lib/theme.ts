@@ -1,5 +1,6 @@
 import { useSettings } from '@/store/settings'
 import { useUi } from '@/store/ui'
+import { isTauri } from '@/lib/tauri'
 import type { ThemeId } from '@/types'
 
 export const THEMES: { id: ThemeId; label: string; kind: 'dark' | 'light' }[] = [
@@ -25,10 +26,21 @@ export function applyTheme(theme: string | undefined, reduceMotion?: boolean, mo
   document.dispatchEvent(new CustomEvent('caret:theme', { detail: { theme: id } }))
 }
 
+let nativeZoomUnavailable = false
+/**
+ * UI zoom. Prefer the webview's page zoom: it scales layout and pointer coordinates together. CSS `zoom` on the root
+ * (the fallback outside Tauri) makes WebKit report mouse positions in a different space than element rects, so
+ * canvas-based widgets such as the terminal pick the wrong row for hover, selection and links.
+ */
 export function applyZoom(level: number): void {
   const factor = Math.pow(1.1, level)
   const root = document.getElementById('root')
-  if (root) (root.style as unknown as Record<string, string>).zoom = factor === 1 ? '' : String(factor)
+  const cssZoom = (v: string) => { if (root) (root.style as unknown as Record<string, string>).zoom = v }
+  if (!isTauri() || nativeZoomUnavailable) { cssZoom(factor === 1 ? '' : String(factor)); return }
+  cssZoom('')
+  void import('@tauri-apps/api/webview')
+    .then(({ getCurrentWebview }) => getCurrentWebview().setZoom(factor))
+    .catch((e) => { console.warn('[zoom] native page zoom unavailable, falling back to CSS zoom', e); nativeZoomUnavailable = true; cssZoom(factor === 1 ? '' : String(factor)) })
 }
 
 let inited = false

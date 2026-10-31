@@ -4,6 +4,9 @@ All notable changes to Caret. The version here must match `package.json`, `src-t
 
 ## Unreleased
 
+- UI zoom now uses the webview's native page zoom instead of CSS `zoom` on the root. Under CSS zoom WebKit reports
+  mouse positions in a different space than element rectangles, so terminal hover, selection and link clicks landed a
+  few rows away from the pointer at zoom levels other than 0.
 - Terminal: file paths in output are clickable (validated against cwd and the workspace root, `:line:col` and
   `(line,col)` understood) and open in the editor; ghost-text command suggestions from history with the Tab model as
   fallback (→ / End accepts; `terminal.suggestions`); a **Fix last command** chip and *Fix Command (AI)* menu entry that

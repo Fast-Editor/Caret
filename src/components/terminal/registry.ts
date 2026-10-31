@@ -22,6 +22,8 @@ export interface TerminalHandle {
   focus: () => void; write: (data: string) => void; clear: () => void; sendInput: (data: string) => void
   /** Ghost-text suggestions (absent in tests that stub the handle). */
   suggest?: SuggestionEngine
+  /** Last link-provider request (automation bridge diagnostics). */
+  linkDebug?: { last: { y: number; text: string; at: number } | null }
   blocks: BlockHandle
 }
 /** Non-reactive registry of live xterm instances keyed by session id. */

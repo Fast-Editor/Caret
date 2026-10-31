@@ -161,6 +161,7 @@ export function TerminalInstance({ sessionId, active }: { sessionId: string; act
     })
 
     // ── clickable file paths: validated against the file system, opened in the editor ──
+    const linkDebug: { last: { y: number; text: string; at: number } | null } = { last: null }
     const existsCache = new Map<string, { ok: boolean; at: number }>()
     const exists = async (p: string) => { const hit = existsCache.get(p); if (hit && Date.now() - hit.at < 15_000) return hit.ok; const ok = await api.fs.exists(p).catch(() => false); existsCache.set(p, { ok, at: Date.now() }); return ok }
     const linkProvider = term.registerLinkProvider({
@@ -168,6 +169,7 @@ export function TerminalInstance({ sessionId, active }: { sessionId: string; act
         const line = term.buffer.active.getLine(y - 1)
         if (!line) { callback(undefined); return }
         const text = line.translateToString(true)
+        linkDebug.last = { y, text: text.slice(0, 80), at: Date.now() }
         const cands = findPathCandidates(text)
         if (!cands.length) { callback(undefined); return }
         const sess = useTerminals.getState().sessions[sessionId]
@@ -236,7 +238,7 @@ export function TerminalInstance({ sessionId, active }: { sessionId: string; act
     terminalRegistry.set(sessionId, {
       term, fit, search, sessionId, ptyId: () => ptyId, focus: () => term.focus(), write: (d) => term.write(d), clear: () => term.clear(),
       sendInput: (d) => { if (ptyId) void api.pty.write(ptyId, d) },
-      suggest,
+      suggest, linkDebug,
       blocks: { markers: blockMarkers, rangeOf, selectBlock, blockAtRow, navigate, rowAt, subscribe: (fn) => { gutterListeners.add(fn); return () => { gutterListeners.delete(fn) } } },
     })
     if (active) setTimeout(() => term.focus(), 0)
