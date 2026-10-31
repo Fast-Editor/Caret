@@ -13,11 +13,13 @@ import { pick, showDialog, confirm } from '@/components/dialogs'
 import { registerExplorerCommands } from '@/components/explorer'
 import { registerSearchCommands } from '@/components/search'
 import { registerTerminalCommands } from '@/components/terminal'
+import { registerTerminalHistoryCommands } from '@/components/terminal/historyCommands'
 import type { AutoRunMode } from '@/types'
 
 export function registerShellCommands(): () => void {
   const ui = () => useUi.getState()
   const offs = [registerExplorerCommands(), registerSearchCommands(), registerTerminalCommands()]
+  offs.push(registerTerminalHistoryCommands())
   offs.push(registerCommands([
     // ── workspace / files ──
     { id: 'workspace.openFolder', title: 'Open Folder…', category: 'File', keybinding: 'mod+o', run: async (args) => {

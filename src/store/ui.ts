@@ -3,7 +3,7 @@ import { create } from 'zustand'
 export type SidebarView = 'explorer' | 'search' | 'scm' | 'agents' | 'rules' | 'outline' | 'debug'
 export type PanelView = 'terminal' | 'problems' | 'output' | 'review' | 'ports' | 'debugConsole'
 export type LayoutMode = 'editor' | 'agents'
-export type PaletteMode = null | 'commands' | 'files' | 'symbols' | 'recent' | 'search'
+export type PaletteMode = null | 'commands' | 'files' | 'symbols' | 'recent' | 'search' | 'terminalHistory'
 
 const LS_KEY = 'caret.ui.v1'
 type Persisted = Pick<UiStore, 'sidebarVisible' | 'sidebarView' | 'sidebarWidth' | 'panelVisible' | 'panelView' | 'panelHeight' | 'chatVisible' | 'chatWidth' | 'layout' | 'zoom'>

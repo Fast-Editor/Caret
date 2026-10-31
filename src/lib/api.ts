@@ -338,6 +338,14 @@ export const apiWave1 = {
     sendComments: (sessionId: string, text?: string) => invoke<void>('chat_send_review_comments', { sessionId, text }),
     groups: (sessionId: string) => invoke<T.ReviewGroup[]>('chat_review_groups', { sessionId }),
   },
+  /** Persisted, cross-session terminal command history (`~/.caret/terminal/history.jsonl`). */
+  terminalHistory: {
+    append: (entry: T.HistoryEntry) => invoke<void>('terminal_history_append', { entry }),
+    recent: (opts: { prefix?: string; cwd?: string; limit?: number } = {}) => invoke<T.HistoryEntry[]>('terminal_history_recent', { prefix: opts.prefix, cwd: opts.cwd, limit: opts.limit }),
+    search: (query: string, limit = 50) => invoke<T.HistorySearchHit[]>('terminal_history_search', { query, limit }),
+    nlSearch: (query: string, limit = 50) => invoke<T.HistoryNlResult>('terminal_history_nl_search', { query, limit }),
+    clear: () => invoke<void>('terminal_history_clear'),
+  },
 }
 export type ApiWave1 = typeof apiWave1
 /** Full command surface: base domains plus wave-1 additions. */

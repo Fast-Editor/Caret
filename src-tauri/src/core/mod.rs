@@ -12,4 +12,5 @@ pub mod lsp;
 pub mod watcher;
 pub mod cli;
 pub mod netports;
+pub mod terminal_history;
 // REGISTER:core-modules (fs, search, git, pty, lsp, watcher, sessions, sysmon, ...)

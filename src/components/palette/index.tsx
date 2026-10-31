@@ -1,6 +1,7 @@
 import { useUi } from '@/store/ui'
 import { CommandPalette } from './CommandPalette'
 import { QuickOpen } from './QuickOpen'
+import { TerminalHistoryPalette } from './TerminalHistory'
 import { runCommand, hasCommand } from '@/lib/commands'
 import { useEffect } from 'react'
 export { parseQuickOpenInput, fuzzyScore } from './parse'
@@ -22,5 +23,6 @@ export function PaletteHost() {
   }, [mode, initial, close])
   if (mode === 'commands') return <CommandPalette key="cmd" initial={initial} />
   if (mode === 'files' || mode === 'recent') return <QuickOpen key="files" initial={initial} />
+  if (mode === 'terminalHistory') return <TerminalHistoryPalette key="termhist" initial={initial} />
   return null
 }

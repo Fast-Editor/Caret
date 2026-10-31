@@ -90,9 +90,26 @@ export const useTerminals = create<TerminalStore>((set, get) => ({
     const sess = s.sessions[id]
     if (!sess) return {}
     const next = reduceBlockState({ blocks: sess.blocks, status: sess.status }, ev, maxBlocks)
+    if (ev.type === 'block-end') recordHistory(sess, ev)
     const selectedBlockId = ev.type === 'block-start' ? null : sess.selectedBlockId
     return { sessions: { ...s.sessions, [id]: { ...sess, blocks: next.blocks, status: next.status, selectedBlockId } } }
   }),
   selectBlock: (id, blockId) => set((s) => (s.sessions[id] && s.sessions[id].selectedBlockId !== blockId ? { sessions: { ...s.sessions, [id]: { ...s.sessions[id], selectedBlockId: blockId } } } : {})),
   set: (patch) => set(patch),
 }))
+
+/** Persist a finished command to the cross-session history (`~/.caret/terminal/history.jsonl`). Fire-and-forget; never throws. */
+function recordHistory(sess: TerminalSession, ev: Extract<PtyBlockEvent, { type: 'block-end' }>): void {
+  try {
+    const block = sess.blocks.find((b) => b.id === ev.blockId)
+    const command = block?.command?.trim()
+    const ptyId = sess.ptyId
+    if (!block || !command || !ptyId) return
+    void (async () => {
+      const [{ api }, { useWorkspace }] = await Promise.all([import('@/lib/api'), import('@/store/workspace')])
+      let outputHead = ''
+      try { outputHead = await api.pty.blockOutput(ptyId, block.id, 2000) } catch { /* output capture is optional */ }
+      await api.terminalHistory.append({ id: block.id, ts: block.startedAt, cwd: block.cwd ?? sess.cwd ?? '', shell: sess.shell ?? '', command, exitCode: ev.exitCode, durationMs: Math.max(0, ev.endedAt - block.startedAt), outputHead, workspace: useWorkspace.getState().workspace?.root ?? null })
+    })().catch(() => { /* history is best-effort */ })
+  } catch { /* never throw from the reducer */ }
+}

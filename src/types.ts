@@ -509,3 +509,11 @@ export type DebugEvent =
   | { type: 'exited'; sessionId: string; exitCode: number }
   | { type: 'error'; sessionId: string; message: string }
   | { type: 'state'; sessionId: string; state: DebugSessionState }
+
+// ───────────────────────────── terminal command history (persisted, cross-session) ─────────────────────────────
+export interface HistoryEntry {
+  id: string; ts: number; cwd: string; shell: string; command: string
+  exitCode?: number | null; durationMs?: number | null; outputHead: string; workspace?: string | null
+}
+export interface HistorySearchHit { entry: HistoryEntry; score: number; why: string }
+export interface HistoryNlResult { hits: HistorySearchHit[]; keywords: string[]; usedModel: boolean }

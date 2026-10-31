@@ -64,6 +64,7 @@ pub fn run() {
         .manage(core::watcher::WatcherState::default())
         .manage(std::sync::Arc::new(ai::agent::manager::AgentManager::new()))
         // REGISTER:state (each domain adds `.manage(...)` lines here)
+        .manage(core::terminal_history::TerminalHistoryState::default())
         .manage(std::sync::Arc::new(debug::DebugState::default()))
         .manage(ai::router::RouterState::default())
         .manage(core::cli::OpenQueue::default())
@@ -121,6 +122,7 @@ pub fn run() {
             // REGISTER:commands:git
             core::pty::pty_spawn, core::pty::pty_write, core::pty::pty_resize, core::pty::pty_kill, core::pty::pty_list, core::pty::pty_read_buffer, core::pty::pty_run_command,
             // REGISTER:commands:pty
+            core::terminal_history::terminal_history_append, core::terminal_history::terminal_history_recent, core::terminal_history::terminal_history_search, core::terminal_history::terminal_history_nl_search, core::terminal_history::terminal_history_clear,
             core::pty::pty_blocks, core::pty::pty_block_output, core::pty::pty_status,
             core::lsp::lsp_configs, core::lsp::lsp_start, core::lsp::lsp_stop, core::lsp::lsp_send, core::lsp::lsp_status, core::lsp::lsp_diagnostics, core::lsp::lsp_diagnostics_for, core::lsp::lsp_report_diagnostics,
             // REGISTER:commands:lsp
