@@ -1,0 +1,11 @@
+# Only the website is built; keep the upload small.
+node_modules
+website/node_modules
+website/.next
+website/out
+src-tauri/target
+src-tauri/target-release
+src-tauri/target-agent
+dist
+*.log
+.claude

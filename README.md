@@ -10,7 +10,7 @@
 [![Release](https://img.shields.io/github/v/release/Fast-Editor/Caret?display_name=tag&sort=semver)](https://github.com/Fast-Editor/Caret/releases/latest)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-[**Download**](https://github.com/Fast-Editor/Caret/releases/latest) · [**Docs**](docs/) · [**Changelog**](CHANGELOG.md)
+[**Website**](https://caret-lynkrteam.vercel.app) · [**Download**](https://caret-lynkrteam.vercel.app/download) · [**Docs**](https://caret-lynkrteam.vercel.app/docs) · [**Changelog**](CHANGELOG.md)
 
 </div>
 

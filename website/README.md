@@ -19,20 +19,26 @@ metadata (defaults to the Vercel address).
 
 ## Deploy to Vercel (free Hobby tier)
 
-1. In Vercel, **Add New → Project**, import `Fast-Editor/Caret`.
-2. Set **Root Directory** to `website`. Framework preset: Next.js (detected). Build command `npm run build`, output `out`.
-3. Deploy. Every push to `main` redeploys; pull requests get preview URLs.
-4. Optional: add a custom domain under **Settings → Domains** and point a CNAME at `cname.vercel-dns.com`, then set
-   `NEXT_PUBLIC_SITE_URL` in **Settings → Environment Variables** to that domain.
+The docs pages read `../docs` and `../CHANGELOG.md`, so the deployment root is the **repository root**, not `website/`.
+The root `vercel.json` installs and builds inside `website/` and serves `website/out`; it also adds `/install.sh`
+(rewrites to the install script on GitHub so `curl -fsSL https://<domain>/install.sh | sh` works), `/latest.json`, and
+short redirects for `/github`, `/releases`, `/issues` and `/download/latest`. `.vercelignore` keeps the Rust build
+directories out of the upload.
 
-`vercel.json` adds `/install.sh` (rewrites to the install script on GitHub so `curl -fsSL https://<domain>/install.sh | sh`
-works), `/latest.json`, and short redirects for `/github`, `/releases`, `/issues` and `/download/latest`.
+From the CLI (already linked as project `caret`):
 
-From the CLI instead: `npx vercel login`, then `npx vercel --cwd website` (first run links the project) and
-`npx vercel --cwd website --prod`.
+```bash
+npx vercel login
+npx vercel deploy --prod --yes        # from the repository root
+```
 
-The output is plain static files, so the same `out/` directory also deploys to Cloudflare Pages or GitHub Pages; only the
-rewrites in `vercel.json` are Vercel-specific.
+For automatic deploys on push, open the project in the Vercel dashboard → **Settings → Git** and connect
+`Fast-Editor/Caret`; leave **Root Directory** empty (the root `vercel.json` handles the build). A custom domain goes
+under **Settings → Domains** (CNAME to `cname.vercel-dns.com`); then set `NEXT_PUBLIC_SITE_URL` under
+**Settings → Environment Variables** so metadata and social cards use it.
+
+The output is plain static files, so the same `website/out` directory also deploys to Cloudflare Pages or GitHub Pages;
+only the rewrites in `vercel.json` are Vercel-specific.
 
 ## Structure
 

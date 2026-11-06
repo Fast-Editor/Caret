@@ -11,3 +11,5 @@ src-tauri/target-release
 /tmp
 brag-output*/
 *.mp4
+.vercel
+.env*
