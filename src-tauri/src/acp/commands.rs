@@ -66,6 +66,25 @@ pub async fn acp_probe(app: AppHandle, st: State<'_, AcpState>, agent_id: String
     }
 }
 
+/// Sign-in state from the vendor CLI (or its credentials file); never fails for CLI errors.
+#[tauri::command]
+pub async fn acp_account_status(app: AppHandle, _st: State<'_, AcpState>, agent_id: String) -> Result<crate::acp::AcpAccountStatus> {
+    let settings = app.state::<SettingsState>().effective();
+    Ok(registry::account_status(&settings, &agent_id).await)
+}
+
+/// Shell line to run in a Caret terminal to sign in (interactive CLIs need a TTY). None when the agent has no CLI login.
+#[tauri::command(async)]
+pub fn acp_login_command(app: AppHandle, _st: State<'_, AcpState>, agent_id: String) -> Result<Option<String>> {
+    Ok(registry::login_shell_command(&app.state::<SettingsState>().effective(), &agent_id))
+}
+
+/// Add another account of a builtin agent (its own config home through the builtin's `account_env`).
+#[tauri::command(async)]
+pub fn acp_add_account(app: AppHandle, _st: State<'_, AcpState>, base_id: String, name: String, env: std::collections::BTreeMap<String, String>) -> Result<Vec<AcpAgentConfig>> {
+    registry::add_account(&app.state::<SettingsState>(), &base_id, &name, env)
+}
+
 #[tauri::command]
 pub async fn acp_authenticate(app: AppHandle, st: State<'_, AcpState>, agent_id: String, method_id: String) -> Result<AcpAgentStatus> {
     let m = mgr(&app);

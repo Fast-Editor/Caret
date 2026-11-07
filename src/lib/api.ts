@@ -283,6 +283,11 @@ export const apiWave1 = {
     toggle: (agentId: string, enabled: boolean) => invoke<T.AcpAgentConfig[]>('acp_toggle_agent', { agentId, enabled }),
     probe: (agentId: string) => invoke<T.AcpAgentStatus>('acp_probe', { agentId }),
     authenticate: (agentId: string, methodId: string) => invoke<T.AcpAgentStatus>('acp_authenticate', { agentId, methodId }),
+    /** Signed-in state from the vendor CLI or its credentials file. */
+    accountStatus: (agentId: string) => invoke<T.AcpAccountStatus>('acp_account_status', { agentId }),
+    /** Shell line that signs the user in; run it in a Caret terminal (interactive). */
+    loginCommand: (agentId: string) => invoke<string | null>('acp_login_command', { agentId }),
+    addAccount: (baseId: string, name: string, env: Record<string, string>) => invoke<T.AcpAgentConfig[]>('acp_add_account', { baseId, name, env }),
     setMode: (sessionId: string, modeId: string) => invoke<T.AcpAgentStatus>('acp_set_mode', { sessionId, modeId }),
     /** Change a session config option (model, effort, …); remembered per agent for future sessions. */
     setConfigOption: (sessionId: string, configId: string, value: unknown) => invoke<T.AcpAgentStatus>('acp_set_config_option', { sessionId, configId, value }),

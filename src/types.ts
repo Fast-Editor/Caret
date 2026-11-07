@@ -445,7 +445,7 @@ export interface CommandClassification {
 }
 export interface SandboxStatus { available: boolean; backend: 'seatbelt' | 'bubblewrap' | 'landlock' | 'none'; reason?: string; networkIsolation: boolean }
 export interface SandboxSettings { mode: 'off' | 'auto' | 'strict'; allowNetwork: boolean; extraWritablePaths: string[]; allowReadHome: boolean; pinMcpToolDescriptions: boolean }
-export interface AcpSettings { enabled: boolean; defaultAgentId: string; agents: AcpAgentConfig[]; passMcpServers: boolean; sessionDefaults?: Record<string, Record<string, unknown>> }
+export interface AcpSettings { enabled: boolean; defaultAgentId: string; agents: AcpAgentConfig[]; passMcpServers: boolean; sessionDefaults?: Record<string, Record<string, unknown>>; terminalSafety: boolean }
 export interface TerminalSettings { blocks: boolean; shellIntegration: boolean; aiEnabled: boolean; programStatus: boolean; maxBlocks: number; suggestions: 'off' | 'history' | 'ai' }
 export interface McpToolChange { serverId: string; tool: string; previousHash: string; currentHash: string; previousDescription?: string; currentDescription: string; detectedAt: number }
 
@@ -467,6 +467,8 @@ export type AgentKind = 'caret' | 'acp'
 export interface AcpAgentConfig {
   id: string; name: string; command: string; args: string[]; env?: Record<string, string>; enabled: boolean
   source: 'builtin' | 'user' | 'registry'; description?: string; icon?: string; installHint?: string; website?: string
+  /** Extra accounts of a builtin keep the builtin id here so login and status commands apply. */
+  basedOn?: string
 }
 export interface AcpAgentStatus {
   id: string; name: string; installed: boolean; state: 'idle' | 'starting' | 'ready' | 'error' | 'unsupported'
@@ -477,7 +479,8 @@ export interface AcpAgentStatus {
   configOptions?: AcpConfigOption[]
 }
 export interface AcpConfigOption { id: string; name: string; description?: string; category?: 'model' | 'mode' | 'thought_level' | string; type: 'select' | string; currentValue: unknown; options: { value: string; name: string; description?: string }[] }
-export interface AcpRegistryEntry { id: string; name: string; description?: string; install?: { npm?: string; command?: string; args?: string[] }; website?: string; installed: boolean }
+export interface AcpRegistryEntry { id: string; name: string; description?: string; install?: { npm?: string; command?: string; args?: string[] }; website?: string; installed: boolean; loginCommand?: string[]; statusCommand?: string[]; accountEnv?: string }
+export interface AcpAccountStatus { agentId: string; loggedIn?: boolean; detail: string; checkedWith: string }
 
 // ───────────────────────────── review comments (review-on-diff as feedback) ─────────────────────────────
 export interface ReviewComment {

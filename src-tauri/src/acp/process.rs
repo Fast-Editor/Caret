@@ -16,7 +16,7 @@ pub fn bin_dir() -> PathBuf { acp_home().join("node_modules").join(".bin") }
 
 fn extra_dirs() -> Vec<PathBuf> {
     let home = crate::paths::home_dir();
-    let mut v = vec![bin_dir(), home.join(".local/bin"), home.join(".cargo/bin"), home.join(".volta/bin"), home.join(".bun/bin"), home.join(".npm-global/bin"), home.join("Library/pnpm"), home.join(".local/share/pnpm"), PathBuf::from("/opt/homebrew/bin"), PathBuf::from("/usr/local/bin"), PathBuf::from("/usr/bin"), PathBuf::from("/bin")];
+    let mut v = vec![bin_dir(), home.join(".local/bin"), home.join(".grok/bin"), home.join(".cargo/bin"), home.join(".volta/bin"), home.join(".bun/bin"), home.join(".npm-global/bin"), home.join("Library/pnpm"), home.join(".local/share/pnpm"), PathBuf::from("/opt/homebrew/bin"), PathBuf::from("/usr/local/bin"), PathBuf::from("/usr/bin"), PathBuf::from("/bin")];
     // nvm / fnm: newest installed node first
     for base in [home.join(".nvm/versions/node"), home.join("Library/Application Support/fnm/node-versions"), home.join(".local/share/fnm/node-versions")] {
         if let Ok(rd) = std::fs::read_dir(&base) {

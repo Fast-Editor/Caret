@@ -4,6 +4,14 @@ All notable changes to Caret. The version here must match `package.json`, `src-t
 
 ## Unreleased
 
+- External agents: **Cursor** (official `cursor-agent acp`, your Cursor plan) and **Grok Build** (the Grok CLI's native
+  `grok agent stdio` ACP server) join Claude Code, Codex, Gemini CLI, OpenCode, Pi and GLM. Settings → Agents now shows each agent's
+  sign-in state from the vendor CLI, a **Sign in** button that runs the vendor login in a Caret terminal (ChatGPT for
+  Codex, Cursor, Claude, Grok, OpenCode), **Check**, and **Add account** for a second Codex / Claude / Grok account with
+  its own config home (`CODEX_HOME`, `CLAUDE_CONFIG_DIR`, `GROK_HOME`).
+- Commands that external agents run through Caret terminals are classified and sandboxed like the built-in agent's:
+  blocked commands never run, destructive ones ask, approved ones run under Seatbelt or bubblewrap
+  (`acp.terminalSafety`).
 - UI zoom now uses the webview's native page zoom instead of CSS `zoom` on the root. Under CSS zoom WebKit reports
   mouse positions in a different space than element rectangles, so terminal hover, selection and link clicks landed a
   few rows away from the pointer at zoom levels other than 0.
