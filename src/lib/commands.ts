@@ -96,4 +96,6 @@ export const ChatCmd = {
   editorGetActiveFile: 'editor.getActiveFile', editorGetSelection: 'editor.getSelection', editorGetOpenFiles: 'editor.getOpenFiles', editorGetDocumentSymbols: 'editor.getDocumentSymbols', editorInsertAtCursor: 'editor.insertAtCursor',
   // expected from the shell (optional)
   viewReview: 'view.review', viewToggleAgentsLayout: 'view.toggleAgentsLayout', gitSetCommitMessage: 'git.setCommitMessage', helpShortcuts: 'help.shortcuts',
+  // thread lifecycle (docs/THREADS.md)
+  regenerateTitle: 'chat.regenerateTitle', searchMessages: 'chat.searchMessages', nextThread: 'chat.nextThread', prevThread: 'chat.prevThread',
 } as const

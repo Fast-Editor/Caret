@@ -108,3 +108,28 @@ describe('routed events', () => {
     expect(st.versions.m1).toBeGreaterThanOrEqual(2)
   })
 })
+
+describe('session-updated (thread lifecycle)', () => {
+  it('patches the summary and mirrors lifecycle fields onto the loaded session', () => {
+    const st0 = withSession()
+    const st = applyAgentEvent(st0, { type: 'session-updated', session: { ...st0.sessions[0], pinned: true, pinnedAt: 5, snoozedUntil: 99, settled: true, title: 'Renamed' } })
+    expect(st.sessions[0]).toMatchObject({ pinned: true, pinnedAt: 5, snoozedUntil: 99, settled: true, title: 'Renamed' })
+    expect(st.loaded.s1).toMatchObject({ pinned: true, pinnedAt: 5, snoozedUntil: 99, settled: true, title: 'Renamed' })
+    // an unknown session leaves state untouched
+    expect(applyAgentEvent(st, { type: 'session-updated', session: { ...st.sessions[0], id: 'other' } })).toBe(st)
+    // lifecycle fields survive later message events (summaries are rebuilt from the loaded session)
+    const after = applyAgentEvents(st, [start, { type: 'message-end', sessionId: 's1', messageId: 'm1', status: 'done', durationMs: 1 }])
+    expect(after.sessions[0]).toMatchObject({ snoozedUntil: 99, settled: true, pinned: true })
+    // un-snooze / un-settle clear the fields
+    const cleared = applyAgentEvent(after, { type: 'session-updated', session: { ...after.sessions[0], snoozedUntil: undefined, settled: false } })
+    expect(cleared.sessions[0].snoozedUntil).toBeUndefined()
+    expect(cleared.sessions[0].settled).toBe(false)
+    expect(cleared.loaded.s1.settled).toBe(false)
+  })
+  it('patches a summary that has no loaded session', () => {
+    const st0: ChatCoreState = { ...emptyCoreState(), sessions: [{ id: 's2', title: 'T', workspaceRoot: '/w', createdAt: 1, updatedAt: 1, mode: 'agent', status: 'idle', messageCount: 0, lastMessagePreview: '', pendingChangeCount: 0 }] }
+    const st = applyAgentEvent(st0, { type: 'session-updated', session: { ...st0.sessions[0], archived: true, archivedAt: 7 } })
+    expect(st.sessions[0]).toMatchObject({ archived: true, archivedAt: 7 })
+    expect(st.loaded).toEqual({})
+  })
+})

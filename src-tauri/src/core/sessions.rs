@@ -1,6 +1,6 @@
 //! Chat session persistence: ~/.caret/sessions/<workspace-hash>/<id>.json + index.json (summaries).
 //! Writes are debounced per session (≤ 1/s) and atomic (temp + rename).
-use crate::ai::agent::session::{Session, SessionSummary, SessionStatus};
+use crate::ai::agent::session::{MessageRole, MessageSearchHit, Session, SessionStatus, SessionSummary};
 use crate::error::{CaretError, Result};
 use crate::paths;
 use parking_lot::Mutex;
@@ -13,6 +13,44 @@ pub fn workspace_key(root: Option<&Path>) -> String { root.map(paths::workspace_
 pub fn sessions_dir(ws_key: &str) -> PathBuf { let p = paths::sub_dir("sessions").join(ws_key); let _ = std::fs::create_dir_all(&p); p }
 fn session_path(ws_key: &str, id: &str) -> PathBuf { sessions_dir(ws_key).join(format!("{id}.json")) }
 fn index_path(ws_key: &str) -> PathBuf { sessions_dir(ws_key).join("index.json") }
+/// Every per-workspace key (sub-directory) under `~/.caret/sessions`, sorted.
+pub fn all_workspace_keys() -> Vec<String> {
+    let root = paths::sub_dir("sessions");
+    let mut keys: Vec<String> = std::fs::read_dir(&root).map(|rd| rd.flatten().filter(|e| e.path().is_dir()).map(|e| e.file_name().to_string_lossy().to_string()).collect()).unwrap_or_default();
+    keys.sort();
+    keys
+}
+
+/// Byte range `[start, end)` of the first case-insensitive occurrence of `needle` in `hay`.
+fn find_ci(hay: &str, needle: &str) -> Option<(usize, usize)> {
+    let needle = needle.to_lowercase();
+    if needle.is_empty() { return None; }
+    // Lower-case copy plus a byte map back to the original string (lower-casing can change byte lengths).
+    let mut lower = String::with_capacity(hay.len());
+    let mut map: Vec<usize> = Vec::with_capacity(hay.len() + 1);
+    for (i, c) in hay.char_indices() { for lc in c.to_lowercase() { let before = lower.len(); lower.push(lc); for _ in before..lower.len() { map.push(i); } } }
+    map.push(hay.len());
+    let pos = lower.find(&needle)?;
+    Some((map[pos], map[(pos + needle.len()).min(map.len() - 1)]))
+}
+
+/// `~width` chars of `text` around the first case-insensitive match of `query`, whitespace flattened, ellipses where cut.
+pub fn snippet_around(text: &str, query: &str, width: usize) -> Option<String> {
+    let (start, end) = find_ci(text, query)?;
+    let flat: String = text.chars().map(|c| if c.is_whitespace() { ' ' } else { c }).collect();
+    let hit_chars = flat[start..end].chars().count();
+    let before = width.saturating_sub(hit_chars) / 3;
+    let after = width.saturating_sub(hit_chars) - before;
+    let mut s_idx = start;
+    for _ in 0..before { match flat[..s_idx].char_indices().next_back() { Some((i, _)) => s_idx = i, None => break } }
+    let mut e_idx = end;
+    for _ in 0..after { match flat[e_idx..].chars().next() { Some(c) => e_idx += c.len_utf8(), None => break } }
+    let mut out = String::new();
+    if s_idx > 0 { out.push('…'); }
+    out.push_str(flat[s_idx..e_idx].trim());
+    if e_idx < flat.len() { out.push('…'); }
+    Some(out)
+}
 
 fn write_atomic(p: &Path, bytes: &[u8]) -> Result<()> {
     if let Some(parent) = p.parent() { std::fs::create_dir_all(parent)?; }
@@ -38,6 +76,34 @@ impl SessionStore {
         Ok(sess)
     }
     pub fn exists(&self, ws_key: &str, id: &str) -> bool { session_path(ws_key, id).exists() }
+    /// Workspace key whose directory holds `<id>.json` (sessions of other projects, e.g. "group by project").
+    pub fn find_workspace_key(&self, id: &str) -> Option<String> { all_workspace_keys().into_iter().find(|k| self.exists(k, id)) }
+
+    /// Case-insensitive substring search over user/assistant message text in every session file under `keys`
+    /// (reads disk, not just loaded sessions). Newest sessions first, capped at `limit`.
+    pub fn search_messages(&self, keys: &[String], query: &str, include_archived: bool, limit: usize) -> Vec<MessageSearchHit> {
+        let q = query.trim();
+        if q.is_empty() || limit == 0 { return vec![]; }
+        let mut hits = vec![];
+        for key in keys {
+            let Ok(rd) = std::fs::read_dir(sessions_dir(key)) else { continue };
+            for e in rd.flatten() {
+                let name = e.file_name().to_string_lossy().to_string();
+                if name == "index.json" || !name.ends_with(".json") { continue; }
+                let Ok(s) = self.load(key, name.trim_end_matches(".json")) else { continue };
+                if s.archived && !include_archived { continue; }
+                for m in &s.messages {
+                    if !matches!(m.role, MessageRole::User | MessageRole::Assistant) { continue; }
+                    if let Some(snippet) = snippet_around(&m.text(), q, 160) {
+                        hits.push(MessageSearchHit { session_id: s.id.clone(), session_title: s.title.clone(), workspace_root: s.workspace_root.clone(), message_id: m.id.clone(), role: m.role, snippet, updated_at: s.updated_at });
+                    }
+                }
+            }
+        }
+        hits.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
+        hits.truncate(limit);
+        hits
+    }
 
     pub fn save_now(&self, ws_key: &str, session: &Session) -> Result<()> {
         let bytes = serde_json::to_vec(session)?;
@@ -126,5 +192,28 @@ impl SessionStore {
             out.push_str("---\n\n");
         }
         out
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn snippet_matches_case_insensitively_and_trims_around_the_hit() {
+        let text = format!("{} The NEEDLE sits here. {}", "a".repeat(300), "b".repeat(300));
+        let snip = snippet_around(&text, "needle", 60).unwrap();
+        assert!(snip.contains("NEEDLE"), "{snip}");
+        assert!(snip.starts_with('…') && snip.ends_with('…'), "{snip}");
+        assert!(snip.chars().count() <= 64, "{}", snip.chars().count());
+        assert!(snippet_around(&text, "absent", 60).is_none());
+        assert!(snippet_around(&text, "", 60).is_none());
+    }
+
+    #[test]
+    fn snippet_handles_short_text_unicode_and_newlines() {
+        assert_eq!(snippet_around("Fix the\nlogin bug", "LOGIN", 160).unwrap(), "Fix the login bug");
+        assert_eq!(snippet_around("héllo wörld ÄPFEL kuchen", "äpfel", 160).unwrap(), "héllo wörld ÄPFEL kuchen");
+        assert_eq!(find_ci("abc", "C"), Some((2, 3)));
     }
 }

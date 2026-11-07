@@ -36,6 +36,7 @@ function summaryOf(s: ChatSession): ChatSessionSummary {
     id: s.id, title: s.title, workspaceRoot: s.workspaceRoot, createdAt: s.createdAt, updatedAt: s.updatedAt, mode: s.mode, status: s.status,
     messageCount: s.messages.length, lastMessagePreview: last ? previewOf(last) : '', worktreePath: s.worktreePath, isSubagent: s.isSubagent,
     pendingChangeCount: s.pendingChanges.filter((c) => c.status === 'pending').length, pinned: s.pinned, archived: s.archived, modelId: s.modelId,
+    snoozedUntil: s.snoozedUntil, settled: s.settled, archivedAt: s.archivedAt, pinnedAt: s.pinnedAt,
   }
 }
 
@@ -188,6 +189,15 @@ export function applyAgentEvent(state: ChatCoreState, ev: AgentEvent): ChatCoreS
       const mid = state.streaming[ev.sessionId]
       if (mid) return mapMessage(state, ev.sessionId, mid, (m) => ({ ...m, parts: [...m.parts, { type: 'error', message: ev.message }], status: 'error' }))
       return mapSession(state, ev.sessionId, (s) => ({ ...s, status: 'error', messages: [...s.messages, { id: `err-${Date.now()}`, role: 'assistant', parts: [{ type: 'error', message: ev.message }], createdAt: Date.now(), status: 'error' }] }), { status: 'error' })
+    }
+    case 'session-updated': {
+      // Lifecycle metadata (pin / archive / snooze / settle / auto-wake): patch the summary and mirror onto the loaded session.
+      const sv = ev.session
+      const sessions = state.sessions.some((s) => s.id === sv.id) ? updateSummary(state.sessions, sv.id, sv) : state.sessions
+      const session = state.loaded[sv.id]
+      const loaded = session ? { ...state.loaded, [sv.id]: { ...session, title: sv.title, pinned: sv.pinned, archived: sv.archived, snoozedUntil: sv.snoozedUntil, settled: sv.settled, archivedAt: sv.archivedAt, pinnedAt: sv.pinnedAt } } : state.loaded
+      if (sessions === state.sessions && loaded === state.loaded) return state
+      return { ...state, sessions, loaded }
     }
     default:
       return state

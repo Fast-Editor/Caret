@@ -154,6 +154,14 @@ const apiBase = {
     contextPreview: (items: T.ContextItem[]) => invoke<{ totalTokens: number; items: { id: string; tokens: number; truncated: boolean }[] }>('chat_context_preview', { items }),
     mentionCandidates: (kind: T.ContextItemKind, query: string, limit = 30) => invoke<T.ContextItem[]>('chat_mention_candidates', { kind, query, limit }),
     toolCatalog: () => invoke<{ name: string; displayName: string; description: string; group: string; readonly: boolean }[]>('chat_tool_catalog'),
+    // thread lifecycle, title regeneration, message search (docs/THREADS.md)
+    /** `until` in unix ms; null un-snoozes. */
+    snoozeSession: (sessionId: string, until: number | null) => invoke<T.ChatSessionSummary>('chat_snooze_session', { sessionId, until }),
+    settleSession: (sessionId: string, settled: boolean) => invoke<T.ChatSessionSummary>('chat_settle_session', { sessionId, settled }),
+    /** Summaries from every workspace's session store (each carries `workspaceRoot`). */
+    listSessionsAll: (includeArchived = false) => invoke<T.ChatSessionSummary[]>('chat_list_sessions_all', { includeArchived }),
+    regenerateTitle: (sessionId: string) => invoke<string>('chat_regenerate_title', { sessionId }),
+    searchMessages: (query: string, opts?: { includeArchived?: boolean; allWorkspaces?: boolean; limit?: number }) => invoke<T.MessageSearchHit[]>('chat_search_messages', { query, includeArchived: opts?.includeArchived ?? false, allWorkspaces: opts?.allWorkspaces ?? false, limit: opts?.limit ?? 50 }),
   },
 
   ai: {

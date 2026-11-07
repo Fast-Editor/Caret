@@ -403,7 +403,7 @@ pub async fn run_turn(mgr: Arc<AgentManager>, h: Arc<SessionHandle>, mut req: Se
     }
     // Title
     let needs_title = { let s = h.session.lock(); !s.title_generated && !s.is_subagent && s.messages.iter().filter(|m| m.role == MessageRole::Assistant).count() >= 1 };
-    if needs_title { let (mgr3, h3, r3) = (mgr.clone(), h.clone(), resolved.clone()); tauri::async_runtime::spawn(async move { generate_title(mgr3, h3, r3).await; }); }
+    if needs_title { let (mgr3, h3, r3) = (mgr.clone(), h.clone(), resolved.clone()); tauri::async_runtime::spawn(async move { let _ = generate_title(mgr3, h3, r3).await; }); }
     Ok(final_text)
 }
 
@@ -422,17 +422,19 @@ pub async fn compact_now(mgr: &AgentManager, h: &SessionHandle, resolved: &Resol
     Ok(())
 }
 
-async fn generate_title(mgr: Arc<AgentManager>, h: Arc<SessionHandle>, resolved: ResolvedModel) {
+/// Ask the model for a short title from the first user/assistant exchange. Returns the current title untouched when
+/// `title_generated` is already set by the time the model answers; `chat_regenerate_title` clears the flag first.
+pub(crate) async fn generate_title(mgr: Arc<AgentManager>, h: Arc<SessionHandle>, resolved: ResolvedModel) -> Result<String> {
     let (sid, user, assistant) = { let s = h.session.lock(); let u = s.messages.iter().find(|m| m.role == MessageRole::User).map(|m| m.preview(1500)).unwrap_or_default(); let a = s.messages.iter().find(|m| m.role == MessageRole::Assistant).map(|m| m.preview(800)).unwrap_or_default(); (s.id.clone(), u, a) };
-    if user.trim().is_empty() { return; }
+    if user.trim().is_empty() { return Err(CaretError::invalid("The chat has no user message to title")); }
     let req = LlmRequest::new(resolved.model.clone()).system("Generate a concise 3-6 word title for this coding chat. Reply with the title only — no quotes, no trailing punctuation.").user(format!("User: {user}\n\nAssistant: {assistant}")).no_thinking().max_tokens(40).purpose("title");
-    if let Ok((t, _)) = llm::complete_text(&resolved, req, CancellationToken::new()).await {
-        let title = sanitize_title(&t).unwrap_or_else(|| user.split_whitespace().take(6).collect::<Vec<_>>().join(" "));
-        if title.is_empty() { return; }
-        { let mut s = h.session.lock(); if s.title_generated { return; } s.title = title.clone(); s.title_generated = true; }
-        mgr.emit(AgentEvent::Title { session_id: sid, title });
-        mgr.persist(&h);
-    }
+    let (t, _) = llm::complete_text(&resolved, req, CancellationToken::new()).await?;
+    let title = sanitize_title(&t).unwrap_or_else(|| user.split_whitespace().take(6).collect::<Vec<_>>().join(" "));
+    if title.is_empty() { return Err(CaretError::internal("the model returned an empty title")); }
+    { let mut s = h.session.lock(); if s.title_generated { return Ok(s.title.clone()); } s.title = title.clone(); s.title_generated = true; }
+    mgr.emit(AgentEvent::Title { session_id: sid, title: title.clone() });
+    mgr.persist(&h);
+    Ok(title)
 }
 
 /// Pick a clean one-line title from model output: skips proxy/router banner lines (e.g. `*[Lynkr] … → …*`),

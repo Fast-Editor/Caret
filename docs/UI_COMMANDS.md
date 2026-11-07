@@ -53,3 +53,14 @@ terminal's status changes. `settings.terminal.aiEnabled=false` hides ⌘K, expla
 - `settings.open` with `{ page: 'agents' }` opens the external agents page.
 - Bus topics: `chat:agent-status` (per-session `AcpAgentStatus` fan-out of the `agent-status` agent event), `chat:agent-changed` (composer picker changed `{ sessionId, agentId }`), `acp:changed` (install/toggle/probe finished; pickers reload).
 - Automation: `window.__caret.stores.chat` exposes the chat store for `scripts/e2e.mjs`.
+
+## Threads (docs/THREADS.md)
+
+| Id | Args | Notes |
+|---|---|---|
+| `chat.nextThread` / `chat.prevThread` | – | `ctrl+alt+]` / `ctrl+alt+[`; walks the visible grouped order of the history list (collapsed sections skipped, current workspace only) |
+| `chat.searchMessages` | `{ query? }` | opens the history popover focused on the search box; 3+ characters also search message text across session files |
+| `chat.regenerateTitle` | `{ sessionId? }` | regenerates the title of the given (default: active) thread; needs one assistant reply |
+
+Row-menu actions (pin, snooze presets, settle, archive with 5 s undo) go through the chat store, not commands. The
+backend announces every lifecycle change with the `session-updated` agent event.

@@ -356,6 +356,15 @@ impl Default for RouterSettings {
     fn default() -> Self { Self { enabled: false, source: "npm".into(), overrides: BTreeMap::new(), excluded_models: vec![], sticky_sessions: true, route_single_shot: true, tpm_limit: None, embeddings_provider_id: None } }
 }
 
+/// Chat thread lifecycle (docs/THREADS.md).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct ChatSettings {
+    /// Mark idle, unpinned, unarchived threads as settled after this many days without activity (0 = off).
+    pub auto_settle_days: u32,
+}
+impl Default for ChatSettings { fn default() -> Self { Self { auto_settle_days: 0 } } }
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
 pub struct Settings {
@@ -378,10 +387,11 @@ pub struct Settings {
     pub acp: AcpSettings,
     pub terminal: TerminalSettings,
     pub router: RouterSettings,
+    pub chat: ChatSettings,
 }
 impl Default for Settings {
     fn default() -> Self {
-        Self { providers: default_providers(), models: default_models(), tab: Default::default(), agent: Default::default(), indexing: Default::default(), ui: Default::default(), privacy: Default::default(), general: Default::default(), user_rules: String::new(), lsp: Default::default(), mcp: Default::default(), custom_modes: vec![], beta: Default::default(), keybindings: BTreeMap::new(), verify: Default::default(), sandbox: Default::default(), acp: Default::default(), terminal: Default::default(), router: Default::default() }
+        Self { providers: default_providers(), models: default_models(), tab: Default::default(), agent: Default::default(), indexing: Default::default(), ui: Default::default(), privacy: Default::default(), general: Default::default(), user_rules: String::new(), lsp: Default::default(), mcp: Default::default(), custom_modes: vec![], beta: Default::default(), keybindings: BTreeMap::new(), verify: Default::default(), sandbox: Default::default(), acp: Default::default(), terminal: Default::default(), router: Default::default(), chat: Default::default() }
     }
 }
 

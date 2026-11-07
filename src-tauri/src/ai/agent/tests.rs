@@ -261,3 +261,138 @@ async fn run_turn_with_unavailable_provider_ends_in_error_state() {
     assert!(ev.iter().any(|e| matches!(e, AgentEvent::MessageEnd { status: MessageStatus::Error, .. })));
     assert!(ev.iter().any(|e| matches!(e, AgentEvent::SessionStatus { status: SessionStatus::Idle, .. })));
 }
+
+// ───────── thread lifecycle (docs/THREADS.md) ─────────
+fn text_msg(role: MessageRole, text: &str) -> ChatMessage { let mut m = ChatMessage::new(role); m.parts.push(MessagePart::Text { text: text.into() }); m }
+fn ws_session(ws: &std::path::Path, title: &str) -> Session { let mut s = Session::default(); s.title = title.into(); s.workspace_root = ws.to_string_lossy().to_string(); s.cwd = s.workspace_root.clone(); s }
+
+#[tokio::test]
+async fn lifecycle_setters_emit_session_updated_and_persist() {
+    let ws = temp_workspace();
+    let (mgr, h) = new_mgr(ws.path()).await;
+    let id = h.id();
+    let key = workspace_key(Some(ws.path()));
+    let until = now_ms() + 3_600_000;
+    let sv = mgr.set_snoozed(&id, Some(until)).unwrap();
+    assert_eq!(sv.snoozed_until, Some(until));
+    assert!(mgr.test_events.lock().iter().any(|e| matches!(e, AgentEvent::SessionUpdated { session } if session.id == id && session.snoozed_until == Some(until))));
+    assert_eq!(mgr.store.load(&key, &id).unwrap().snoozed_until, Some(until));
+    // wire format: kebab-case tag, camelCase fields
+    let v = serde_json::to_value(AgentEvent::SessionUpdated { session: sv }).unwrap();
+    assert_eq!(v["type"], "session-updated"); assert_eq!(v["session"]["snoozedUntil"], json!(until)); assert_eq!(v["session"]["settled"], json!(false));
+    assert_eq!(mgr.set_snoozed(&id, None).unwrap().snoozed_until, None, "None un-snoozes");
+    assert_eq!(mgr.set_snoozed(&id, Some(now_ms() - 1)).unwrap().snoozed_until, None, "a past time un-snoozes");
+    assert!(mgr.set_settled(&id, true).unwrap().settled);
+    let a = mgr.set_archived(&id, true).unwrap(); assert_eq!(a.archived, Some(true)); assert!(a.archived_at.is_some());
+    let p = mgr.set_pinned(&id, true).unwrap(); assert_eq!(p.pinned, Some(true)); assert!(p.pinned_at.is_some());
+    let on_disk = mgr.store.load(&key, &id).unwrap();
+    assert!(on_disk.settled && on_disk.archived && on_disk.pinned && on_disk.archived_at.is_some() && on_disk.pinned_at.is_some());
+    let idx = mgr.store.read_index(&key); let e = idx.iter().find(|x| x.id == id).unwrap();
+    assert!(e.settled); assert_eq!(e.archived, Some(true)); assert_eq!(e.pinned_at, p.pinned_at);
+    assert_eq!(mgr.set_pinned(&id, false).unwrap().pinned_at, None);
+    assert!(!mgr.set_settled(&id, false).unwrap().settled);
+    assert_eq!(mgr.set_archived(&id, false).unwrap().archived_at, None);
+    assert!(mgr.set_settled("missing-session", true).is_err());
+}
+
+#[tokio::test]
+async fn auto_wake_clears_expired_snooze_on_list() {
+    let ws = temp_workspace();
+    let (mgr, h) = new_mgr(ws.path()).await;
+    let id = h.id();
+    let key = workspace_key(Some(ws.path()));
+    { h.session.lock().snoozed_until = Some(now_ms() - 10); } mgr.persist_now(&h);
+    // an on-disk-only session (not loaded) in the same workspace
+    let mut other = ws_session(ws.path(), "Other"); other.snoozed_until = Some(now_ms() - 10);
+    mgr.store.save_now(&key, &other).unwrap();
+    let list = mgr.list_sessions(true);
+    for sid in [&id, &other.id] {
+        assert_eq!(list.iter().find(|x| &x.id == sid).unwrap().snoozed_until, None, "woken in the listing");
+        assert_eq!(mgr.store.load(&key, sid).unwrap().snoozed_until, None, "wake persisted");
+        assert!(mgr.test_events.lock().iter().any(|e| matches!(e, AgentEvent::SessionUpdated { session } if &session.id == sid && session.snoozed_until.is_none())));
+    }
+    assert!(h.session.lock().snoozed_until.is_none());
+    let fut = now_ms() + 60_000; mgr.set_snoozed(&id, Some(fut)).unwrap();
+    assert_eq!(mgr.list_sessions(true).iter().find(|x| x.id == id).unwrap().snoozed_until, Some(fut), "future snooze kept");
+}
+
+#[tokio::test]
+async fn auto_settle_marks_idle_unpinned_threads() {
+    let ws = temp_workspace();
+    let (mgr, _h) = new_mgr(ws.path()).await;
+    let key = workspace_key(Some(ws.path()));
+    let old = now_ms() - 10 * 86_400_000;
+    let mk = |title: &str, pinned: bool, archived: bool| { let mut s = ws_session(ws.path(), title); s.updated_at = old; s.pinned = pinned; s.archived = archived; s };
+    let idle = mk("idle", false, false); let pinned = mk("pinned", true, false); let archived = mk("archived", false, true);
+    let mut fresh = mk("fresh", false, false); fresh.updated_at = now_ms();
+    let mut snoozed = mk("snoozed", false, false); snoozed.snoozed_until = Some(now_ms() + 60_000);
+    for s in [&idle, &pinned, &archived, &fresh, &snoozed] { mgr.store.save_now(&key, s).unwrap(); }
+    let mut list = mgr.store.read_index(&key);
+    mgr.apply_lifecycle(&mut list, 0);
+    assert!(list.iter().all(|x| !x.settled), "0 days = off");
+    mgr.apply_lifecycle(&mut list, 7);
+    let settled = |id: &str| list.iter().find(|x| x.id == id).unwrap().settled;
+    assert!(settled(&idle.id));
+    assert!(!settled(&pinned.id)); assert!(!settled(&archived.id)); assert!(!settled(&fresh.id)); assert!(!settled(&snoozed.id));
+    assert!(mgr.store.load(&key, &idle.id).unwrap().settled, "persisted");
+    assert_eq!(mgr.store.load(&key, &idle.id).unwrap().updated_at, old, "settling does not touch updated_at");
+    assert!(mgr.test_events.lock().iter().any(|e| matches!(e, AgentEvent::SessionUpdated { session } if session.id == idle.id && session.settled)));
+}
+
+#[tokio::test]
+async fn new_message_wakes_snoozed_and_settled_thread() {
+    let ws = temp_workspace();
+    let (mgr, h) = new_mgr(ws.path()).await;
+    let id = h.id();
+    mgr.set_snoozed(&id, Some(now_ms() + 60_000)).unwrap(); mgr.set_settled(&id, true).unwrap();
+    // Mark running so submit() queues instead of starting a turn (no model configured in tests).
+    h.running.store(true, std::sync::atomic::Ordering::SeqCst);
+    mgr.submit(SendMessageRequest { session_id: id.clone(), text: "more".into(), mode: "agent".into(), ..Default::default() }).await.unwrap();
+    let s = h.session.lock();
+    assert!(s.snoozed_until.is_none() && !s.settled);
+    assert_eq!(s.queued.len(), 1);
+}
+
+#[tokio::test]
+async fn search_messages_scans_session_files() {
+    let ws = temp_workspace();
+    let store = SessionStore::default();
+    let key = workspace_key(Some(ws.path()));
+    let mut a = ws_session(ws.path(), "Alpha"); a.updated_at = 1_000;
+    a.messages.push(text_msg(MessageRole::User, "please fix the Zebra parser")); a.messages.push(text_msg(MessageRole::Assistant, "done, the zebra parser now handles stripes"));
+    let mut b = ws_session(ws.path(), "Beta"); b.updated_at = 2_000; b.archived = true; b.messages.push(text_msg(MessageRole::User, "ZEBRA again"));
+    let mut c = ws_session(ws.path(), "Gamma"); c.messages.push(text_msg(MessageRole::System, "zebra in a system note"));
+    for s in [&a, &b, &c] { store.save_now(&key, s).unwrap(); }
+    let hits = store.search_messages(&[key.clone()], "zebra", false, 50);
+    assert_eq!(hits.len(), 2, "{hits:?}");
+    assert!(hits.iter().all(|h| h.session_id == a.id && h.session_title == "Alpha" && h.workspace_root == a.workspace_root && h.updated_at == 1_000));
+    assert_eq!(hits[0].message_id, a.messages[0].id); assert_eq!(hits[0].role, MessageRole::User); assert!(hits[0].snippet.contains("Zebra parser"), "{}", hits[0].snippet);
+    assert_eq!(hits[1].role, MessageRole::Assistant);
+    let with_archived = store.search_messages(&[key.clone()], "zebra", true, 50);
+    assert_eq!(with_archived.len(), 3); assert_eq!(with_archived[0].session_id, b.id, "newest session first");
+    assert_eq!(store.search_messages(&[key.clone()], "zebra", true, 1).len(), 1, "capped");
+    assert!(store.search_messages(&[key.clone()], "nothing-here", true, 50).is_empty());
+    assert!(store.search_messages(&[key], "   ", true, 50).is_empty());
+}
+
+#[tokio::test]
+async fn list_all_spans_workspace_keys() {
+    let ws1 = temp_workspace(); let ws2 = temp_workspace();
+    let (mgr, h1) = new_mgr(ws1.path()).await;
+    let k2 = workspace_key(Some(ws2.path()));
+    let s2 = ws_session(ws2.path(), "Elsewhere");
+    mgr.store.save_now(&k2, &s2).unwrap();
+    let keys = crate::core::sessions::all_workspace_keys();
+    assert!(keys.contains(&workspace_key(Some(ws1.path()))) && keys.contains(&k2));
+    let all = mgr.list_sessions_all(false);
+    assert_eq!(all.iter().find(|x| x.id == h1.id()).unwrap().workspace_root, ws1.path().to_string_lossy().to_string());
+    assert_eq!(all.iter().find(|x| x.id == s2.id).unwrap().workspace_root, s2.workspace_root);
+    assert!(mgr.list_sessions(true).iter().all(|x| x.id != s2.id), "current-workspace listing stays scoped");
+    // lifecycle ops reach sessions stored under another workspace key
+    assert!(mgr.set_settled(&s2.id, true).unwrap().settled);
+    assert!(mgr.store.load(&k2, &s2.id).unwrap().settled);
+    // cross-workspace search
+    let mut s3 = ws_session(ws2.path(), "Searchable"); s3.messages.push(text_msg(MessageRole::User, "find the quokka")); mgr.store.save_now(&k2, &s3).unwrap();
+    let hits = mgr.store.search_messages(&crate::core::sessions::all_workspace_keys(), "QUOKKA", false, 10);
+    assert_eq!(hits.len(), 1); assert_eq!(hits[0].workspace_root, s3.workspace_root);
+}
