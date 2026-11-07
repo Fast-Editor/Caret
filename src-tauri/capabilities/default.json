@@ -33,6 +33,7 @@
     "os:default",
     "process:default",
     "window-state:default",
-    "updater:default"
+    "updater:default",
+    "notification:default"
   ]
 }

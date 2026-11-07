@@ -62,3 +62,11 @@ pub fn app_log(level: String, message: String) -> Result<()> {
     match level.as_str() { "error" => tracing::error!(target: "ui", "{message}"), "warn" => tracing::warn!(target: "ui", "{message}"), "debug" => tracing::debug!(target: "ui", "{message}"), _ => tracing::info!(target: "ui", "{message}") }
     Ok(())
 }
+
+/// Show an OS desktop notification (tauri-plugin-notification). The UI decides when to call this
+/// (`src/lib/desktopNotifications.ts`: turn finished / failed / needs approval / asked a question).
+#[tauri::command(async)]
+pub fn app_notify_desktop(app: AppHandle, title: String, body: String) -> Result<()> {
+    use tauri_plugin_notification::NotificationExt;
+    app.notification().builder().title(title).body(body).show().map_err(|e| crate::error::CaretError::io(e.to_string()))
+}

@@ -356,6 +356,26 @@ impl Default for RouterSettings {
     fn default() -> Self { Self { enabled: false, source: "npm".into(), overrides: BTreeMap::new(), excluded_models: vec![], sticky_sessions: true, route_single_shot: true, tpm_limit: None, embeddings_provider_id: None } }
 }
 
+/// Desktop (OS) notifications for agent sessions; the UI decides when a transition qualifies
+/// (`src/lib/desktopNotifications.ts`) and calls `app_notify_desktop`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct NotificationsSettings {
+    /// Master switch for OS notifications.
+    pub desktop: bool,
+    /// Only notify while the Caret window is not focused.
+    pub only_when_unfocused: bool,
+    pub on_finish: bool,
+    pub on_error: bool,
+    pub on_approval: bool,
+    pub on_question: bool,
+    /// Short beep when a turn finishes (in addition to `agent.chime_on_finish`).
+    pub sound: bool,
+}
+impl Default for NotificationsSettings {
+    fn default() -> Self { Self { desktop: true, only_when_unfocused: true, on_finish: true, on_error: true, on_approval: true, on_question: true, sound: false } }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
 pub struct Settings {
@@ -378,10 +398,11 @@ pub struct Settings {
     pub acp: AcpSettings,
     pub terminal: TerminalSettings,
     pub router: RouterSettings,
+    pub notifications: NotificationsSettings,
 }
 impl Default for Settings {
     fn default() -> Self {
-        Self { providers: default_providers(), models: default_models(), tab: Default::default(), agent: Default::default(), indexing: Default::default(), ui: Default::default(), privacy: Default::default(), general: Default::default(), user_rules: String::new(), lsp: Default::default(), mcp: Default::default(), custom_modes: vec![], beta: Default::default(), keybindings: BTreeMap::new(), verify: Default::default(), sandbox: Default::default(), acp: Default::default(), terminal: Default::default(), router: Default::default() }
+        Self { providers: default_providers(), models: default_models(), tab: Default::default(), agent: Default::default(), indexing: Default::default(), ui: Default::default(), privacy: Default::default(), general: Default::default(), user_rules: String::new(), lsp: Default::default(), mcp: Default::default(), custom_modes: vec![], beta: Default::default(), keybindings: BTreeMap::new(), verify: Default::default(), sandbox: Default::default(), acp: Default::default(), terminal: Default::default(), router: Default::default(), notifications: Default::default() }
     }
 }
 

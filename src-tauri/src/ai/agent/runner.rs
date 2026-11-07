@@ -45,6 +45,45 @@ fn end_message(mgr: &AgentManager, h: &SessionHandle, message_id: &str, status: 
     mgr.persist(h);
 }
 
+/// Inject one steered message into a running turn: a user `ChatMessage` (same turn id, so edit/regenerate/restore
+/// treat it as part of this turn) plus the matching transcript content. When the transcript currently ends with a user
+/// message (tool results, or a steer injected moments earlier) the blocks are appended to it so the conversation keeps
+/// alternating roles and tool results stay ahead of the new text, which every provider accepts.
+/// Pure (no events, no IO): the runner builds the attached-context text beforehand.
+pub(crate) fn inject_steer(s: &mut Session, item: &QueuedMessage, turn_id: &str, mode_id: &str, context_text: &str, context_images: &[(String, String)]) -> ChatMessage {
+    let mut um = ChatMessage::new(MessageRole::User);
+    um.turn_id = Some(turn_id.to_string()); um.mode = Some(mode_id.to_string());
+    if !item.context.is_empty() { um.parts.push(MessagePart::Context { items: item.context.clone() }); }
+    for img in &item.images { um.parts.push(MessagePart::Image { image: img.clone() }); }
+    um.parts.push(MessagePart::Text { text: item.text.clone() });
+    let mut content = vec![];
+    if !context_text.trim().is_empty() { content.push(ContentBlock::Text { text: format!("<attached_context>\n{context_text}</attached_context>") }); }
+    for (m, d) in context_images { content.push(ContentBlock::Image { media_type: m.clone(), data: d.clone() }); }
+    for img in &item.images { content.push(ContentBlock::Image { media_type: img.mime.clone(), data: img.data_base64.clone() }); }
+    content.push(ContentBlock::Text { text: if item.text.trim().is_empty() { "(see attachments)".into() } else { item.text.clone() } });
+    match s.transcript.last_mut() {
+        Some(last) if last.role == Role::User => last.content.extend(content),
+        _ => s.transcript.push(LlmMessage { role: Role::User, content }),
+    }
+    s.messages.push(um.clone());
+    s.context_tokens = s.estimate_context_tokens();
+    s.touch();
+    um
+}
+
+/// Drain the handle's steer buffer into the session (oldest first) and mirror each new user message to the UI.
+async fn drain_steer(mgr: &AgentManager, h: &SessionHandle, env: &ContextEnv<'_>, session_id: &str, turn_id: &str, mode_id: &str) -> usize {
+    let items = mgr.take_steer(h);
+    let n = items.len();
+    for item in items {
+        let built = context::build(env, &item.context).await;
+        let um = { let mut s = h.session.lock(); inject_steer(&mut s, &item, turn_id, mode_id, &built.text, &built.images) };
+        mgr.emit(AgentEvent::MessageStart { session_id: session_id.to_string(), message: um });
+    }
+    if n > 0 { mgr.persist(h); }
+    n
+}
+
 fn volatile_block(settings: &Settings, s: &Session, model: &str, req: &SendMessageRequest) -> SystemBlock {
     let mut t = String::from("<environment>\n");
     t.push_str(&format!("Date: {}\n", chrono::Local::now().format("%Y-%m-%d (%A)")));
@@ -228,6 +267,9 @@ pub async fn run_turn(mgr: Arc<AgentManager>, h: Arc<SessionHandle>, mut req: Se
         if iterations >= max_iter { let m = ChatMessage::new(MessageRole::Assistant); let mid = m.id.clone(); { h.session.lock().messages.push(m.clone()); } mgr.emit(AgentEvent::MessageStart { session_id: session_id.clone(), message: m }); end_message(&mgr, &h, &mid, MessageStatus::Error, Some(format!("Stopped after {max_iter} tool iterations. Send a message to continue.")), std::time::Instant::now()); break; }
         iterations += 1;
 
+        // Steered messages: inject whatever the user said mid-turn before the model sees this round.
+        drain_steer(&mgr, &h, &env, &session_id, &turn_id, &mode.id).await;
+
         // Compaction
         let ctx_tokens = { let s = h.session.lock(); s.estimate_context_tokens() };
         if ctx_tokens as f32 > settings.agent.summarize_threshold_ratio * resolved.model.context_window as f32 && ctx_tokens > 20_000 {
@@ -339,6 +381,8 @@ pub async fn run_turn(mgr: Arc<AgentManager>, h: Arc<SessionHandle>, mut req: Se
 
             // after-response hooks / lint fix / stop hook
             let _ = hooks::run(root.as_deref(), HookEvent::AfterAgentResponse, json!({ "text": final_text, "session_id": session_id })).await;
+            // The user steered while the model was answering: the turn is not over, run another round with the new message.
+            if mgr.steer_pending(&h) && !cancel.is_cancelled() { continue 'outer; }
             if settings.agent.auto_fix_lints && !edited_files.is_empty() && lint_rounds < 3 && !cancel.is_cancelled() {
                 tokio::time::sleep(std::time::Duration::from_millis(1500)).await;
                 let paths: Vec<String> = edited_files.iter().cloned().collect();

@@ -11,10 +11,12 @@ import { SlashCommandPicker } from './composer/SlashCommandPicker'
 import { ContextRing, ModeSelector, ModelPicker, ThinkingControls } from './composer/Pickers'
 import { AgentPicker, CARET_AGENT } from './composer/AgentPicker'
 import { AgentOptions } from './composer/AgentOptions'
+import { SendModeControl, type SendMode } from './composer/SendMode'
 import { ImageThumb } from './messages/Parts'
 import { detectTrigger, parseSlashCommand, replaceTrigger, type Trigger } from './mentions'
 import { baseName, fmtTokens, uid, MOD } from './util'
-import { getActiveFile } from '@/lib/chatBridge'
+import { getActiveFile, startInNewThread } from '@/lib/chatBridge'
+import { useUi } from '@/store/ui'
 import { usePresenceList } from './presence'
 import './chat.css'
 
@@ -31,6 +33,8 @@ export function Composer({ sessionId, autoFocusNonce }: { sessionId: string; aut
   const draft = useChat((s) => s.drafts[sessionId]) ?? useChat.getState().draft(sessionId)
   const update = useChat((s) => s.updateDraft)
   const send = useChat((s) => s.send)
+  const steer = useChat((s) => s.steer)
+  const steerByDefault = useUi((s) => s.steerByDefault)
   const stop = useChat((s) => s.stop)
   const addContext = useChat((s) => s.addContext)
   const removeContext = useChat((s) => s.removeContext)
@@ -102,13 +106,23 @@ export function Composer({ sessionId, autoFocusNonce }: { sessionId: string; aut
     applyReplacement(`/${c.name} `)
   }
 
-  const doSend = async () => {
+  const composeContext = () => {
+    const ctx = [...draft.context]
+    if (draft.includeActiveFile && activeFile && !ctx.some((c) => c.path === activeFile.path && (c.kind === 'file' || c.kind === 'active-file'))) ctx.push({ id: uid('af'), kind: 'active-file', label: 'Current file', path: activeFile.path })
+    return ctx
+  }
+  /** `how` matters only while a turn runs: 'queue' waits for it, 'steer' injects into it (ACP agents fall back to send now). */
+  const doSend = async (how: SendMode = 'queue') => {
     const text = draft.text.trim()
     const sc = parseSlashCommand(text)
     if (sc && MODE_SLASH.has(sc.name)) { void setMode(sessionId, sc.name); update(sessionId, { text: sc.args }); if (!sc.args) return }
-    const ctx = [...draft.context]
-    if (draft.includeActiveFile && activeFile && !ctx.some((c) => c.path === activeFile.path && (c.kind === 'file' || c.kind === 'active-file'))) ctx.push({ id: uid('af'), kind: 'active-file', label: 'Current file', path: activeFile.path })
-    try { await send(sessionId, { context: ctx, activeFile: activeFile?.path }) } catch (e) { void runCommand('app.notify', { level: 'error', title: 'Send failed', message: e instanceof Error ? e.message : String(e) }) }
+    const ctx = composeContext()
+    try { if (how === 'steer' && busy) await steer(sessionId, { context: ctx, activeFile: activeFile?.path }); else await send(sessionId, { context: ctx, activeFile: activeFile?.path }) } catch (e) { void runCommand('app.notify', { level: 'error', title: how === 'steer' ? 'Steer failed' : 'Send failed', message: e instanceof Error ? e.message : String(e) }) }
+  }
+  /** Cmd/Ctrl+Shift+Enter: start a background thread with this draft (same agent/model/mode) and stay here. */
+  const doSendInNewThread = async () => {
+    if (!draft.text.trim() && !draft.images.length) return
+    try { await startInNewThread(sessionId, { context: composeContext() }) } catch (e) { void runCommand('app.notify', { level: 'error', title: 'New thread failed', message: e instanceof Error ? e.message : String(e) }) }
   }
 
   const onKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
@@ -117,10 +131,12 @@ export function Composer({ sessionId, autoFocusNonce }: { sessionId: string; aut
       const list = document.querySelector('[cmdk-root] [cmdk-input]') as HTMLInputElement | null
       if (list) { list.dispatchEvent(new KeyboardEvent('keydown', { key: e.key, bubbles: true })); e.preventDefault(); return }
     }
+    if (e.key === 'Enter' && e.shiftKey && (e.metaKey || e.ctrlKey) && !e.nativeEvent.isComposing) { e.preventDefault(); void doSendInNewThread(); return }
     if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
       e.preventDefault()
       if (e.metaKey || e.ctrlKey) { const pending = session?.pendingChanges.some((c) => c.status === 'pending'); if (pending && !draft.text.trim()) { void runCommand('chat.acceptAll'); return } }
-      void doSend(); return
+      // While running: Enter does the default (Queue unless steerByDefault), Alt+Enter does the other one.
+      void doSend(busy && e.altKey !== steerByDefault ? 'steer' : 'queue'); return
     }
     if (e.key === 'Backspace' && (e.metaKey || e.ctrlKey) && !draft.text.trim() && session?.pendingChanges.some((c) => c.status === 'pending')) { e.preventDefault(); void runCommand('chat.rejectAll'); return }
     if (e.key === 'Escape') { if (trigger) { setTrigger(null); return } if (busy) void stop(sessionId) }
@@ -186,6 +202,7 @@ export function Composer({ sessionId, autoFocusNonce }: { sessionId: string; aut
         {tokens !== null && <span className="text-[10.5px] text-faint px-1" title="Estimated prompt tokens">~{fmtTokens(tokens)}</span>}
         <ContextRing used={used} total={ctxWindow} onClick={() => void api.chat.summarize(sessionId)} />
         <button type="button" onClick={() => void attachImage()} title="Attach image" className="flex items-center justify-center w-6 h-6 rounded hover:bg-hover text-muted press">{draft.images.length ? <ImageIcon size={13} /> : <Paperclip size={13} />}</button>
+        {busy && <SendModeControl disabled={!draft.text.trim() && !draft.images.length} onSend={(m) => void doSend(m)} onSendInNewThread={() => void doSendInNewThread()} />}
         <span className="chat-send-slot" data-busy={busy}>
           <button type="button" onClick={() => void stop(sessionId)} data-active={busy} tabIndex={busy ? 0 : -1} aria-hidden={!busy} title="Stop (Esc)" className="flex items-center justify-center w-6 h-6 rounded bg-danger/20 text-danger hover:bg-danger/30 press"><Square size={11} fill="currentColor" /></button>
           <button type="button" onClick={() => void doSend()} data-active={!busy} tabIndex={busy ? -1 : 0} aria-hidden={busy} disabled={!busy && !draft.text.trim() && !draft.images.length} title={`Send (⏎)${draft.modelId === AUTO_MODEL ? ' · Auto model' : ''} · ${MOD}⏎ accepts changes`} className="flex items-center justify-center w-6 h-6 rounded bg-accent text-accent-fg hover:bg-accent-hover disabled:opacity-40 disabled:hover:bg-accent press"><ArrowUp size={14} /></button>

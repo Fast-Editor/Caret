@@ -24,6 +24,7 @@ tauri-plugin-window-state = "2.5"
 tauri-plugin-process = "2.4"
 tauri-plugin-os = "2.4"
 tauri-plugin-updater = "2"
+tauri-plugin-notification = "2"
 # --- runtime / utils ---
 tokio = { version = "1", features = ["full"] }
 tokio-util = { version = "0.7", features = ["io", "codec", "rt"] }

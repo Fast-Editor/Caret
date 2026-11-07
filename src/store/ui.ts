@@ -6,7 +6,7 @@ export type LayoutMode = 'editor' | 'agents'
 export type PaletteMode = null | 'commands' | 'files' | 'symbols' | 'recent' | 'search' | 'terminalHistory'
 
 const LS_KEY = 'caret.ui.v1'
-type Persisted = Pick<UiStore, 'sidebarVisible' | 'sidebarView' | 'sidebarWidth' | 'panelVisible' | 'panelView' | 'panelHeight' | 'chatVisible' | 'chatWidth' | 'layout' | 'zoom'>
+type Persisted = Pick<UiStore, 'sidebarVisible' | 'sidebarView' | 'sidebarWidth' | 'panelVisible' | 'panelView' | 'panelHeight' | 'chatVisible' | 'chatWidth' | 'layout' | 'zoom' | 'steerByDefault'>
 function loadPersisted(): Partial<Persisted> {
   try { const raw = localStorage.getItem(LS_KEY); return raw ? (JSON.parse(raw) as Partial<Persisted>) : {} } catch { return {} }
 }
@@ -14,7 +14,7 @@ let saveTimer: number | undefined
 function persist(s: UiStore): void {
   if (saveTimer) window.clearTimeout(saveTimer)
   saveTimer = window.setTimeout(() => {
-    const p: Persisted = { sidebarVisible: s.sidebarVisible, sidebarView: s.sidebarView, sidebarWidth: s.sidebarWidth, panelVisible: s.panelVisible, panelView: s.panelView, panelHeight: s.panelHeight, chatVisible: s.chatVisible, chatWidth: s.chatWidth, layout: s.layout, zoom: s.zoom }
+    const p: Persisted = { sidebarVisible: s.sidebarVisible, sidebarView: s.sidebarView, sidebarWidth: s.sidebarWidth, panelVisible: s.panelVisible, panelView: s.panelView, panelHeight: s.panelHeight, chatVisible: s.chatVisible, chatWidth: s.chatWidth, layout: s.layout, zoom: s.zoom, steerByDefault: s.steerByDefault }
     try { localStorage.setItem(LS_KEY, JSON.stringify(p)) } catch { /* ignore */ }
   }, 150)
 }
@@ -41,6 +41,8 @@ export interface UiStore {
   /** Platform hint set at boot (plugin-os). */
   platform: 'macos' | 'windows' | 'linux' | 'other'
   windowFocused: boolean
+  /** Composer while a turn runs: Enter steers (true) or queues (false); Alt+Enter does the other one. Persisted. */
+  steerByDefault: boolean
   set: (patch: Partial<UiStore>) => void
   toggleSidebar: (view?: SidebarView) => void
   togglePanel: (view?: PanelView) => void
@@ -59,7 +61,7 @@ export const useUi = create<UiStore>((set, get) => ({
   panelVisible: false, panelView: 'terminal', panelHeight: 260, panelMaximized: false,
   chatVisible: true, chatWidth: 420,
   layout: 'editor', zenMode: false, paletteOpen: null, paletteInitial: '', settingsOpen: false, settingsPage: undefined, settingsQuery: undefined, zoom: 0, focusRegion: 'editor',
-  platform: 'other', windowFocused: true,
+  platform: 'other', windowFocused: true, steerByDefault: false,
   ...loadPersisted(),
   set: (patch) => set(patch),
   toggleSidebar: (view) => {

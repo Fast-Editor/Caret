@@ -50,6 +50,7 @@ pub fn run() {
         .plugin(tauri_plugin_process::init())
         .plugin(tauri_plugin_os::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
+        .plugin(tauri_plugin_notification::init())
         .manage(core::settings::SettingsState::load())
         .manage(core::workspace::WorkspaceState::default())
         .manage(commands::app::AppStats::default())
@@ -95,6 +96,7 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             commands::app::app_info, commands::app::app_process_stats, commands::app::app_open_external, commands::app::app_show_in_folder, commands::app::app_open_devtools, commands::app::app_log,
+            commands::app::app_notify_desktop,
             core::workspace::workspace_open, core::workspace::workspace_current, core::workspace::workspace_close, core::workspace::workspace_recent, core::workspace::workspace_remove_recent, core::workspace::workspace_ensure_project_dir,
             core::settings::settings_get, core::settings::settings_update, core::settings::settings_reset, core::settings::settings_set_secret, core::settings::settings_delete_secret, core::settings::settings_list_secrets, core::settings::settings_import_env_keys, core::settings::settings_path,
             dev::automation::automation_result,
@@ -129,6 +131,7 @@ pub fn run() {
             // REGISTER:commands:lsp
             ai::agent::chat_commands::chat_subscribe, ai::agent::chat_commands::chat_list_sessions, ai::agent::chat_commands::chat_create_session, ai::agent::chat_commands::chat_get_session, ai::agent::chat_commands::chat_delete_session, ai::agent::chat_commands::chat_rename_session, ai::agent::chat_commands::chat_duplicate_session, ai::agent::chat_commands::chat_pin_session, ai::agent::chat_commands::chat_archive_session, ai::agent::chat_commands::chat_export_session, ai::agent::chat_commands::chat_send, ai::agent::chat_commands::chat_stop, ai::agent::chat_commands::chat_approve, ai::agent::chat_commands::chat_answer_question, ai::agent::chat_commands::chat_queue_remove, ai::agent::chat_commands::chat_queue_send_now, ai::agent::chat_commands::chat_accept_changes, ai::agent::chat_commands::chat_reject_changes, ai::agent::chat_commands::chat_pending_changes, ai::agent::chat_commands::chat_change_diff, ai::agent::chat_commands::chat_checkpoints, ai::agent::chat_commands::chat_restore_checkpoint, ai::agent::chat_commands::chat_set_todos, ai::agent::chat_commands::chat_summarize, ai::agent::chat_commands::chat_set_mode, ai::agent::chat_commands::chat_set_model, ai::agent::chat_commands::chat_regenerate, ai::agent::chat_commands::chat_edit_message, ai::agent::chat_commands::chat_list_modes, ai::agent::chat_commands::chat_context_preview, ai::agent::chat_commands::chat_mention_candidates, ai::agent::chat_commands::chat_tool_catalog,
             // REGISTER:commands:chat
+            ai::agent::chat_commands::chat_steer, ai::agent::chat_commands::chat_queue_update, ai::agent::chat_commands::chat_queue_move,
             // REGISTER:commands:ai
             ai::single_shot_commands::ai_complete, ai::single_shot_commands::ai_next_edit, ai::single_shot_commands::ai_inline_edit, ai::single_shot_commands::ai_cancel, ai::single_shot_commands::ai_terminal_command, ai::single_shot_commands::ai_terminal_fix, ai::single_shot_commands::ai_terminal_suggest, ai::single_shot_commands::ai_apply, ai::single_shot_commands::ai_commit_message, ai::single_shot_commands::ai_review, ai::single_shot_commands::ai_review_list, ai::single_shot_commands::ai_review_dismiss, ai::single_shot_commands::ai_review_dismiss_finding, ai::single_shot_commands::models_list_remote, ai::single_shot_commands::models_test,
             // REGISTER:commands:rules

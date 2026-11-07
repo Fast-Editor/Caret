@@ -302,7 +302,21 @@ pub struct TodoItem { pub id: String, pub content: String, pub status: String }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase", default)]
-pub struct QueuedMessage { pub id: String, pub text: String, pub context: Vec<ContextItem>, pub images: Vec<ImageAttachment>, #[serde(skip_serializing_if = "Option::is_none")] pub mode: Option<String>, #[serde(skip)] pub request: Option<SendMessageRequest> }
+pub struct QueuedMessage { pub id: String, pub text: String, pub context: Vec<ContextItem>, pub images: Vec<ImageAttachment>, #[serde(skip_serializing_if = "Option::is_none")] pub mode: Option<String>,
+    /// The full request as submitted (model, thinking, agent, ...). Persisted so a queued item survives a restart;
+    /// older session files have no `request` and are rebuilt from the item fields via `into_request`.
+    #[serde(default, skip_serializing_if = "Option::is_none")] pub request: Option<SendMessageRequest> }
+impl QueuedMessage {
+    pub fn from_request(req: SendMessageRequest) -> Self { Self { id: new_id(), text: req.text.clone(), context: req.context.clone(), images: req.images.clone(), mode: Some(req.mode.clone()), request: Some(req) } }
+    /// The request to run for this item: the stored one, or one rebuilt from the item fields plus the session's current
+    /// model, mode and agent (items persisted before `request` existed, or edited without one).
+    pub fn into_request(self, s: &Session) -> SendMessageRequest {
+        match self.request {
+            Some(r) => r,
+            None => SendMessageRequest { session_id: s.id.clone(), text: self.text, context: self.context, images: self.images, mode: self.mode.unwrap_or_else(|| s.mode.clone()), model_id: s.model_id.clone(), agent_id: s.agent_id.clone(), ..Default::default() },
+        }
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
@@ -341,6 +355,8 @@ pub enum AgentEvent {
     Routed { session_id: String, message_id: String, routing: llm::RoutingInfo },
     AgentStatus { session_id: String, agent_id: String, status: crate::acp::AcpAgentStatus },
     ReviewComments { session_id: String, comments: Vec<ReviewComment> },
+    /// Messages steered into the running turn and not yet injected (empty once the runner drained them).
+    Steer { session_id: String, pending: Vec<QueuedMessage> },
 }
 
 // ───────────────────────── session ─────────────────────────
