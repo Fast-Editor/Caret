@@ -9,6 +9,7 @@ import { fieldsForPage } from '@/lib/settingsSchema'
 import { FieldControl } from '../FieldControl'
 import { skeletonFromSchema, parseArgs } from '../mcpSchema'
 import { Section, Button, IconButton, Toggle, Badge, Dialog, Field, TextInput, TextArea, Select, KeyValueEditor, StringList, Empty, confirmDialog, notify, errorMessage, Tooltip, cn } from '../primitives'
+import { OrchestratorSection } from './OrchestratorSection'
 
 const STATE_TONE: Record<McpServerStatus['state'], 'default' | 'success' | 'danger' | 'info' | 'warning'> = { connected: 'success', connecting: 'info', error: 'danger', disabled: 'default', disconnected: 'warning' }
 const SOURCE_LABEL: Record<McpServerConfig['source'], string> = { project: '.caret/mcp.json', user: '~/.caret/mcp.json', 'cursor-project': '.cursor/mcp.json', 'cursor-user': '~/.cursor/mcp.json' }
@@ -43,6 +44,7 @@ export function McpPage() {
         {rows.map(({ config, status }) => <ServerRow key={config.id} config={config} status={status} tools={tools.filter((t) => t.serverId === config.id)} resourceCount={resources.filter((r) => r.serverId === config.id).length} promptCount={prompts.filter((p) => p.serverId === config.id).length}
           onEdit={() => setDialog({ open: true, config })} onLogs={() => status && setLogsFor(status)} onTest={setTester} />)}
       </Section>
+      <OrchestratorSection />
       <ServerDialog state={dialog} onClose={() => setDialog({ open: false })} />
       {logsFor && <LogsDialog server={logsFor} onClose={() => setLogsFor(null)} />}
       {tester && <ToolTester tool={tester} onClose={() => setTester(null)} />}

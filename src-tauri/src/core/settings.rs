@@ -356,6 +356,16 @@ impl Default for RouterSettings {
     fn default() -> Self { Self { enabled: false, source: "npm".into(), overrides: BTreeMap::new(), excluded_models: vec![], sticky_sessions: true, route_single_shot: true, tpm_limit: None, embeddings_provider_id: None } }
 }
 
+/// Caret as an MCP server for other agents (see `orchestrator`, docs/ORCHESTRATOR.md). Loopback only, bearer token.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase", default)]
+pub struct OrchestratorSettings {
+    pub enabled: bool,
+    /// Preferred port on 127.0.0.1; the next 10 are tried when it is busy.
+    pub port: u16,
+}
+impl Default for OrchestratorSettings { fn default() -> Self { Self { enabled: false, port: 17431 } } }
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
 pub struct Settings {
@@ -378,10 +388,11 @@ pub struct Settings {
     pub acp: AcpSettings,
     pub terminal: TerminalSettings,
     pub router: RouterSettings,
+    pub orchestrator: OrchestratorSettings,
 }
 impl Default for Settings {
     fn default() -> Self {
-        Self { providers: default_providers(), models: default_models(), tab: Default::default(), agent: Default::default(), indexing: Default::default(), ui: Default::default(), privacy: Default::default(), general: Default::default(), user_rules: String::new(), lsp: Default::default(), mcp: Default::default(), custom_modes: vec![], beta: Default::default(), keybindings: BTreeMap::new(), verify: Default::default(), sandbox: Default::default(), acp: Default::default(), terminal: Default::default(), router: Default::default() }
+        Self { providers: default_providers(), models: default_models(), tab: Default::default(), agent: Default::default(), indexing: Default::default(), ui: Default::default(), privacy: Default::default(), general: Default::default(), user_rules: String::new(), lsp: Default::default(), mcp: Default::default(), custom_modes: vec![], beta: Default::default(), keybindings: BTreeMap::new(), verify: Default::default(), sandbox: Default::default(), acp: Default::default(), terminal: Default::default(), router: Default::default(), orchestrator: Default::default() }
     }
 }
 

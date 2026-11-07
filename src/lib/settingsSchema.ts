@@ -88,6 +88,7 @@ export const DEFAULTS: Settings = {
   acp: { enabled: true, defaultAgentId: 'caret', agents: [], passMcpServers: true, sessionDefaults: {}, terminalSafety: true },
   terminal: { blocks: true, shellIntegration: true, aiEnabled: true, programStatus: true, maxBlocks: 200, suggestions: 'ai' },
   router: { enabled: false, source: 'npm', overrides: {}, excludedModels: [], stickySessions: true, routeSingleShot: true, tpmLimit: undefined, embeddingsProviderId: undefined },
+  orchestrator: { enabled: false, port: 17431 },
 }
 
 export const SETTINGS_FIELDS: SettingField[] = [
@@ -224,6 +225,8 @@ export const SETTINGS_FIELDS: SettingField[] = [
 
   // ── MCP / LSP toggles ──
   { id: 'mcp.enabled', page: 'mcp', type: 'boolean', title: 'Enable MCP', description: 'Connect to configured MCP servers and expose their tools to the agent.' },
+  { id: 'orchestrator.enabled', page: 'mcp', type: 'boolean', title: 'Caret as an MCP server', description: 'Serve Caret itself as a loopback MCP server so Claude Code, Codex, Cursor or another Caret can create and drive threads here (bearer token required).', group: 'Orchestrator', keywords: ['orchestrator', 'mcp server', 'claude code', 'codex', 'cursor', 't3'] },
+  { id: 'orchestrator.port', page: 'mcp', type: 'number', title: 'Orchestrator port', description: 'Preferred 127.0.0.1 port; the next ten are tried when it is busy.', min: 1024, max: 65535, step: 1, group: 'Orchestrator', dependsOn: 'orchestrator.enabled', keywords: ['orchestrator'] },
   { id: 'lsp.enabled', page: 'appearance', type: 'boolean', title: 'Language servers', description: 'Start installed language servers for diagnostics, hover, go to definition.', group: 'Editor', keywords: ['lsp', 'intellisense'] },
 ]
 

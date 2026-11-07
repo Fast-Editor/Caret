@@ -186,6 +186,7 @@ export interface Settings {
   mcp: { enabled: boolean }; customModes: CustomMode[]; beta: BetaSettings
   keybindings: Record<string, string | null>
   verify: VerifySettings; sandbox: SandboxSettings; acp: AcpSettings; terminal: TerminalSettings; router: RouterSettings
+  orchestrator: OrchestratorSettings
 }
 export interface RouterSettings { enabled: boolean; source: 'npm' | 'bundled'; overrides: Record<string, string>; excludedModels: string[]; stickySessions: boolean; routeSingleShot: boolean; tpmLimit?: number; embeddingsProviderId?: string }
 export type RouterTier = 'simple' | 'medium' | 'complex' | 'reasoning'
@@ -525,3 +526,10 @@ export interface HistoryEntry {
 }
 export interface HistorySearchHit { entry: HistoryEntry; score: number; why: string }
 export interface HistoryNlResult { hits: HistorySearchHit[]; keywords: string[]; usedModel: boolean }
+
+// ───────────────────────────── orchestrator (Caret as an MCP server) ─────────────────────────────
+/** Caret exposes itself as a loopback MCP server so other agents can spawn and steer threads (docs/ORCHESTRATOR.md). */
+export interface OrchestratorSettings { enabled: boolean; port: number }
+export interface OrchestratorStatus { enabled: boolean; running: boolean; url?: string; port?: number; tokenPath: string; token: string; endpointPath: string; error?: string }
+/** Ready-to-paste client configuration for the orchestrator endpoint. */
+export interface OrchestratorSnippets { claudeCode: string; codexToml: string; cursorJson: string; caretJson: string }

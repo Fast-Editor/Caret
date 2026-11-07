@@ -22,6 +22,7 @@ top-level [README](../README.md) has the overview, install instructions and the 
 | [PROVIDERS.md](PROVIDERS.md) | Configuring AI providers and models: Anthropic, OpenAI, Azure, OpenAI-compatible servers, Ollama, OpenRouter, Gemini; keys; embeddings |
 | [AUTO_ROUTING.md](AUTO_ROUTING.md) | "Auto" model routing through the managed Lynkr sidecar: tiers, overrides, security model, troubleshooting |
 | [ACP.md](ACP.md) | External agents over the Agent Client Protocol (Claude Code, Codex, Gemini CLI, OpenCode…), per-agent model/effort/mode |
+| [ORCHESTRATOR.md](ORCHESTRATOR.md) | Caret as an MCP server: let Claude Code, Codex, Cursor or another Caret spawn, steer, read and approve Caret threads on any provider or external agent (loopback, bearer token) |
 | [VERIFIED_DIFF.md](VERIFIED_DIFF.md) | The verification engine that runs after agent turns: checks, risk tiers, proof panel, build-before-test |
 | [SANDBOX.md](SANDBOX.md) | Shell command classification, macOS Seatbelt / Linux bubblewrap sandboxing, MCP tool pins |
 | [TERMINAL.md](TERMINAL.md) | Semantic terminal blocks (OSC 133 / 7501), shell integration, program status, customisation (colours, suggestions, fix-it, clickable paths, history search) |
@@ -33,7 +34,8 @@ top-level [README](../README.md) has the overview, install instructions and the 
 ## Where things live on disk
 
 - User configuration: `~/.caret/` — `settings.json`, `secrets.json` (API keys), `keybindings.json`, `mcp.json`, rules, memories,
-  sessions, checkpoints, the search index, `bin/caret` (launcher), `acp/` (external agent adapters), `lynkr/` (Auto routing sidecar).
+  sessions, checkpoints, the search index, `bin/caret` (launcher), `acp/` (external agent adapters), `lynkr/` (Auto routing sidecar),
+  `orchestrator/` (`token` and `endpoint.json` for the MCP server that lets other agents drive Caret).
 - Project configuration: `<repo>/.caret/` (rules and project settings); `.cursor/rules` and `AGENTS.md` are read when present.
 
 ## Contributing to the docs
