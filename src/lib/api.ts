@@ -160,6 +160,14 @@ const apiBase = {
     steer: (req: T.SendMessageRequest) => invoke<void>('chat_steer', { req }),
     queueUpdate: (sessionId: string, queuedId: string, text: string, context?: T.ContextItem[]) => invoke<void>('chat_queue_update', { sessionId, queuedId, text, context }),
     queueMove: (sessionId: string, queuedId: string, index: number) => invoke<void>('chat_queue_move', { sessionId, queuedId, index }),
+    // thread lifecycle, title regeneration, message search (docs/THREADS.md)
+    /** `until` in unix ms; null un-snoozes. */
+    snoozeSession: (sessionId: string, until: number | null) => invoke<T.ChatSessionSummary>('chat_snooze_session', { sessionId, until }),
+    settleSession: (sessionId: string, settled: boolean) => invoke<T.ChatSessionSummary>('chat_settle_session', { sessionId, settled }),
+    /** Summaries from every workspace's session store (each carries `workspaceRoot`). */
+    listSessionsAll: (includeArchived = false) => invoke<T.ChatSessionSummary[]>('chat_list_sessions_all', { includeArchived }),
+    regenerateTitle: (sessionId: string) => invoke<string>('chat_regenerate_title', { sessionId }),
+    searchMessages: (query: string, opts?: { includeArchived?: boolean; allWorkspaces?: boolean; limit?: number }) => invoke<T.MessageSearchHit[]>('chat_search_messages', { query, includeArchived: opts?.includeArchived ?? false, allWorkspaces: opts?.allWorkspaces ?? false, limit: opts?.limit ?? 50 }),
   },
 
   ai: {

@@ -49,3 +49,8 @@ html[data-motion="off"] .chat-lift:hover { transform: none; box-shadow: none; }
 
 /* Task progress bar */
 .chat-progress { transition: width var(--dur-slow) var(--ease); }
+
+/* Message search: brief outline on the revealed message (docs/THREADS.md). */
+@keyframes chat-msg-flash { 0%, 60% { box-shadow: inset 0 0 0 1px var(--accent); } 100% { box-shadow: none; } }
+.chat-msg-flash { border-radius: 6px; animation: chat-msg-flash 1.8s var(--ease) both; }
+html[data-motion="off"] .chat-msg-flash { animation: none; box-shadow: inset 0 0 0 1px var(--accent); }

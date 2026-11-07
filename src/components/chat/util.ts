@@ -1,4 +1,4 @@
-import type { ContextItem, ContextItemKind, ToolCallRecord, Usage } from '@/types'
+import type { ChatSessionSummary, ContextItem, ContextItemKind, ToolCallRecord, Usage } from '@/types'
 
 export function baseName(p: string): string { return p.split('/').filter(Boolean).pop() ?? p }
 
@@ -33,13 +33,12 @@ export function fmtRelative(ts: number): string {
   if (d < 7 * 86_400_000) return `${Math.floor(d / 86_400_000)}d ago`
   return new Date(ts).toLocaleDateString()
 }
-export function dayGroup(ts: number): 'Today' | 'Yesterday' | 'This week' | 'Earlier' {
-  const now = new Date(); const d = new Date(ts)
+export function dayGroup(ts: number, nowMs = Date.now()): 'Today' | 'Yesterday' | 'This week' | 'Earlier' {
+  const now = new Date(nowMs)
   const startToday = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime()
   if (ts >= startToday) return 'Today'
   if (ts >= startToday - 86_400_000) return 'Yesterday'
   if (ts >= startToday - 6 * 86_400_000) return 'This week'
-  void d
   return 'Earlier'
 }
 
@@ -134,3 +133,145 @@ export const MOD = isMac() ? '⌘' : 'Ctrl+'
 export function uid(prefix = 'c'): string { return `${prefix}_${Math.random().toString(36).slice(2, 10)}${Date.now().toString(36)}` }
 
 export function severityRank(s: string): number { return ({ critical: 0, high: 1, medium: 2, low: 3, info: 4 } as Record<string, number>)[s] ?? 5 }
+
+// ───────────── thread lifecycle grouping (docs/THREADS.md) ─────────────
+export type ThreadSectionId = 'working' | 'pinned' | 'today' | 'yesterday' | 'week' | 'earlier' | 'snoozed' | 'settled' | 'archived'
+export interface ThreadSection {
+  id: ThreadSectionId
+  title: string
+  sessions: ChatSessionSummary[]
+  /** Snoozed and Settled start collapsed. */
+  defaultCollapsed: boolean
+  /** Effective fold state after applying `GroupOpts.folds`. */
+  collapsed: boolean
+}
+export interface GroupOpts {
+  /** Include the Archived section (the list's "archived" toggle). */
+  showArchived?: boolean
+  includeSubagents?: boolean
+  /** Clock for day buckets and snooze expiry (tests). */
+  now?: number
+  /** Persisted fold state keyed by section id or `project:<root>` (ui store). */
+  folds?: Record<string, boolean>
+  /** Busy predicate for the Working section (`isSessionBusy` from the chat store). */
+  isBusy?: (status: string | undefined) => boolean
+  /** Case-insensitive filter over title and last message preview. */
+  query?: string
+}
+type Cmp = (a: ChatSessionSummary, b: ChatSessionSummary) => number
+const SECTION_ORDER: ThreadSectionId[] = ['working', 'pinned', 'today', 'yesterday', 'week', 'earlier', 'snoozed', 'settled', 'archived']
+const SECTION_TITLE: Record<ThreadSectionId, string> = { working: 'Working', pinned: 'Pinned', today: 'Today', yesterday: 'Yesterday', week: 'This week', earlier: 'Earlier', snoozed: 'Snoozed', settled: 'Settled', archived: 'Archived' }
+const DAY_SECTION: Record<ReturnType<typeof dayGroup>, ThreadSectionId> = { Today: 'today', Yesterday: 'yesterday', 'This week': 'week', Earlier: 'earlier' }
+const COLLAPSED_BY_DEFAULT = new Set<ThreadSectionId>(['snoozed', 'settled'])
+
+export const defaultIsBusy = (status: string | undefined): boolean => status === 'running' || status === 'awaiting-approval' || status === 'awaiting-input' || status === 'summarizing'
+
+export function isSnoozed(s: Pick<ChatSessionSummary, 'snoozedUntil'>, now = Date.now()): boolean { return typeof s.snoozedUntil === 'number' && s.snoozedUntil > now }
+
+/** Lifecycle section of one thread. Precedence: archived, working, snoozed, settled, pinned, then the day bucket. */
+export function threadSection(s: ChatSessionSummary, opts: GroupOpts = {}): ThreadSectionId {
+  const now = opts.now ?? Date.now()
+  const busy = opts.isBusy ?? defaultIsBusy
+  if (s.archived) return 'archived'
+  if (busy(s.status)) return 'working'
+  if (isSnoozed(s, now)) return 'snoozed'
+  if (s.settled) return 'settled'
+  if (s.pinned) return 'pinned'
+  return DAY_SECTION[dayGroup(s.updatedAt, now)]
+}
+
+const matchesQuery = (s: ChatSessionSummary, q: string): boolean => !q || s.title.toLowerCase().includes(q) || (s.lastMessagePreview ?? '').toLowerCase().includes(q)
+const workingRank = (s: ChatSessionSummary): number => (s.status === 'awaiting-approval' || s.status === 'awaiting-input' ? 0 : 1)
+const byUpdated: Cmp = (a, b) => b.updatedAt - a.updatedAt
+const SORTERS: Partial<Record<ThreadSectionId, Cmp>> = {
+  working: (a, b) => workingRank(a) - workingRank(b) || byUpdated(a, b),
+  pinned: (a, b) => (b.pinnedAt ?? 0) - (a.pinnedAt ?? 0) || byUpdated(a, b),
+  snoozed: (a, b) => (a.snoozedUntil ?? 0) - (b.snoozedUntil ?? 0) || byUpdated(a, b),
+  archived: (a, b) => (b.archivedAt ?? b.updatedAt) - (a.archivedAt ?? a.updatedAt) || byUpdated(a, b),
+}
+
+/** Ordered, foldable sections for the history popover and the Agents sidebar. Empty sections are omitted. */
+export function groupSessions(sessions: ChatSessionSummary[], opts: GroupOpts = {}): ThreadSection[] {
+  const q = (opts.query ?? '').trim().toLowerCase()
+  const buckets = new Map<ThreadSectionId, ChatSessionSummary[]>()
+  for (const s of sessions) {
+    if (s.isSubagent && !opts.includeSubagents) continue
+    if (!matchesQuery(s, q)) continue
+    const id = threadSection(s, opts)
+    if (id === 'archived' && !opts.showArchived) continue
+    const list = buckets.get(id) ?? []
+    list.push(s)
+    buckets.set(id, list)
+  }
+  return SECTION_ORDER.filter((id) => buckets.has(id)).map((id) => {
+    const defaultCollapsed = COLLAPSED_BY_DEFAULT.has(id)
+    return { id, title: SECTION_TITLE[id], sessions: [...(buckets.get(id) ?? [])].sort(SORTERS[id] ?? byUpdated), defaultCollapsed, collapsed: opts.folds?.[id] ?? defaultCollapsed }
+  })
+}
+
+export interface ProjectGroup {
+  /** Workspace root ('' for sessions without a folder). Fold key: `project:<root>`. */
+  root: string
+  title: string
+  current: boolean
+  count: number
+  collapsed: boolean
+  sections: ThreadSection[]
+}
+export const projectFoldKey = (root: string): string => `project:${root}`
+
+/** One group per workspace root (current workspace first, then most recent activity), each with its lifecycle sections. */
+export function groupSessionsByProject(sessions: ChatSessionSummary[], currentRoot: string | null | undefined, opts: GroupOpts = {}): ProjectGroup[] {
+  const byRoot = new Map<string, ChatSessionSummary[]>()
+  for (const s of sessions) { const r = s.workspaceRoot ?? ''; const l = byRoot.get(r) ?? []; l.push(s); byRoot.set(r, l) }
+  const groups: ProjectGroup[] = []
+  for (const [root, list] of byRoot) {
+    const sections = groupSessions(list, opts)
+    const count = sections.reduce((n, sec) => n + sec.sessions.length, 0)
+    if (!count) continue
+    groups.push({ root, title: root ? baseName(root) : 'No folder', current: !!currentRoot && root === currentRoot, count, collapsed: opts.folds?.[projectFoldKey(root)] ?? false, sections })
+  }
+  const latest = (g: ProjectGroup): number => Math.max(...g.sections.flatMap((sec) => sec.sessions.map((s) => s.updatedAt)))
+  return groups.sort((a, b) => Number(b.current) - Number(a.current) || latest(b) - latest(a) || a.title.localeCompare(b.title))
+}
+
+/** Thread ids in display order, skipping collapsed sections and groups (next/previous thread commands). */
+export function flattenThreadOrder(input: ThreadSection[] | ProjectGroup[]): string[] {
+  const out: string[] = []
+  for (const item of input) {
+    if (item.collapsed) continue
+    if ('sections' in item) { for (const sec of item.sections) if (!sec.collapsed) out.push(...sec.sessions.map((s) => s.id)) }
+    else out.push(...item.sessions.map((s) => s.id))
+  }
+  return out
+}
+
+/** Snooze presets: 1 hour, tonight 18:00 (tomorrow 18:00 once that has passed), tomorrow 09:00, next Monday 09:00. */
+export function snoozePresets(now = Date.now()): { id: string; label: string; until: number }[] {
+  const d = new Date(now)
+  const at = (dayOffset: number, hour: number): number => new Date(d.getFullYear(), d.getMonth(), d.getDate() + dayOffset, hour, 0, 0, 0).getTime()
+  const tonightIsToday = at(0, 18) > now
+  const daysToMonday = (8 - d.getDay()) % 7 || 7
+  return [
+    { id: 'hour', label: '1 hour', until: now + 3_600_000 },
+    { id: 'tonight', label: tonightIsToday ? 'Tonight 18:00' : 'Tomorrow 18:00', until: tonightIsToday ? at(0, 18) : at(1, 18) },
+    { id: 'tomorrow', label: 'Tomorrow 09:00', until: at(1, 9) },
+    { id: 'week', label: 'Next week (Mon 09:00)', until: at(daysToMonday, 9) },
+  ]
+}
+
+/** Wake-time label for snoozed rows: "in 45m", "Today 18:00", "Tomorrow 09:00", "Mon 09:00", else a date. */
+export function fmtWake(until: number, now = Date.now()): string {
+  const diff = until - now
+  if (diff <= 0) return 'now'
+  if (diff < 3_600_000) return `in ${Math.max(1, Math.round(diff / 60_000))}m`
+  const t = new Date(until)
+  const n = new Date(now)
+  const hm = `${String(t.getHours()).padStart(2, '0')}:${String(t.getMinutes()).padStart(2, '0')}`
+  const startToday = new Date(n.getFullYear(), n.getMonth(), n.getDate()).getTime()
+  const dayIdx = Math.round((new Date(t.getFullYear(), t.getMonth(), t.getDate()).getTime() - startToday) / 86_400_000)
+  if (dayIdx === 0) return `Today ${hm}`
+  if (dayIdx === 1) return `Tomorrow ${hm}`
+  if (dayIdx < 7) return `${['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'][t.getDay()]} ${hm}`
+  return `${t.toLocaleDateString()} ${hm}`
+}

@@ -25,6 +25,7 @@ top-level [README](../README.md) has the overview, install instructions and the 
 | [UI_COMMANDS.md](UI_COMMANDS.md) | The UI command registry (`runCommand` ids) and bus topics |
 | [PROVIDERS.md](PROVIDERS.md) | Configuring AI providers and models: Anthropic, OpenAI, Azure, OpenAI-compatible servers, Ollama, OpenRouter, Gemini; keys; embeddings |
 | [AUTO_ROUTING.md](AUTO_ROUTING.md) | "Auto" model routing through the managed Lynkr sidecar: tiers, overrides, security model, troubleshooting |
+| [THREADS.md](THREADS.md) | Chat thread lifecycle: pin, snooze, settle, archive with undo, the Working section, group by project, auto-settle, title regeneration, message search and the next/previous thread commands |
 | [ACP.md](ACP.md) | External agents over the Agent Client Protocol (Claude Code, Codex, Cursor, Grok Build, Gemini CLI, OpenCode, Pi…), per-agent model/effort/mode, sign-in and extra accounts |
 | [VERIFIED_DIFF.md](VERIFIED_DIFF.md) | The verification engine that runs after agent turns: checks, risk tiers, proof panel, build-before-test |
 | [SANDBOX.md](SANDBOX.md) | Shell command classification, macOS Seatbelt / Linux bubblewrap sandboxing, MCP tool pins |

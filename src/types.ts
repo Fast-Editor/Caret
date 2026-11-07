@@ -187,6 +187,7 @@ export interface Settings {
   keybindings: Record<string, string | null>
   verify: VerifySettings; sandbox: SandboxSettings; acp: AcpSettings; terminal: TerminalSettings; router: RouterSettings
   notifications: NotificationsSettings
+  chat: ChatSettings
 }
 export interface RouterSettings { enabled: boolean; source: 'npm' | 'bundled'; overrides: Record<string, string>; excludedModels: string[]; stickySessions: boolean; routeSingleShot: boolean; tpmLimit?: number; embeddingsProviderId?: string }
 export type RouterTier = 'simple' | 'medium' | 'complex' | 'reasoning'
@@ -269,11 +270,14 @@ export interface ChatSession {
   worktreePath?: string; branch?: string; status: SessionStatus; queuedMessages: QueuedMessage[]
   summary?: string; parentSessionId?: string; isSubagent?: boolean; contextTokens: number; pinned?: boolean; archived?: boolean
   agentId?: string; agentKind?: AgentKind; lastVerificationId?: string; reviewComments?: ReviewComment[]
+  snoozedUntil?: number; settled?: boolean; archivedAt?: number; pinnedAt?: number
 }
 export interface ChatSessionSummary {
   id: string; title: string; workspaceRoot: string; createdAt: number; updatedAt: number; mode: ModeId
   status: SessionStatus; messageCount: number; lastMessagePreview: string; worktreePath?: string; isSubagent?: boolean
   pendingChangeCount: number; pinned?: boolean; archived?: boolean; modelId?: string; agentId?: string; riskTier?: RiskTier
+  /** Thread lifecycle (docs/THREADS.md): snoozed until (unix ms), settled flag, timestamps for archive and pin. */
+  snoozedUntil?: number; settled?: boolean; archivedAt?: number; pinnedAt?: number
 }
 export type AgentEvent =
   | { type: 'session-status'; sessionId: string; status: SessionStatus }
@@ -303,6 +307,7 @@ export type AgentEvent =
   | { type: 'routed'; sessionId: string; messageId: string; routing: RoutingInfo }
   | { type: 'steer'; sessionId: string; pending: QueuedMessage[] }
   | { type: 'review-comments'; sessionId: string; comments: ReviewComment[] }
+  | { type: 'session-updated'; session: ChatSessionSummary }
   | { type: 'error'; sessionId: string; message: string }
 export interface PendingChange {
   changeId: string; sessionId: string; path: string; kind: FileChangeSummary['kind']
@@ -541,3 +546,10 @@ export interface NotificationsSettings {
 }
 /** Why a desktop notification fired (one per session transition). */
 export type AgentNotificationKind = 'finished' | 'failed' | 'approval' | 'question'
+// ───────────────────────────── chat threads: lifecycle settings and message search (docs/THREADS.md) ─────────────────────────────
+export interface ChatSettings {
+  /** Mark idle, unpinned, unarchived threads as settled after this many days without activity (0 = off). */
+  autoSettleDays: number
+}
+/** One hit from `chat_search_messages`. */
+export interface MessageSearchHit { sessionId: string; sessionTitle: string; workspaceRoot: string; messageId: string; role: MessageRole; snippet: string; updatedAt: number }

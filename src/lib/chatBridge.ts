@@ -12,7 +12,8 @@ import { initReviewStore, useReview } from '@/store/review'
 import { useUi } from '@/store/ui'
 import { notify } from '@/store/notifications'
 import { observeAgentEvent } from '@/lib/desktopNotifications'
-import { uid, baseName } from '@/components/chat/util'
+import { useWorkspace } from '@/store/workspace'
+import { uid, baseName, flattenThreadOrder, groupSessions, groupSessionsByProject } from '@/components/chat/util'
 
 let initialized = false
 let pending: AgentEvent[] = []
@@ -68,6 +69,26 @@ export async function startInNewThread(sessionId: string, overrides?: Partial<Se
   const title = useChat.getState().sessions.find((s) => s.id === id)?.title
   notify('info', 'Started in a new thread', title && title !== 'New chat' ? title : undefined, { actions: [{ id: 'open', label: 'Open' }], onAction: (a) => { if (a === 'open') openPane(id) } })
   return id
+}
+
+/** Thread ids in the order the history list shows them (grouped, collapsed sections skipped, current workspace only). */
+export function visibleThreadOrder(): string[] {
+  const chat = useChat.getState()
+  const ui = useUi.getState()
+  const opts = { showArchived: ui.threadShowArchived, folds: ui.threadFolds, isBusy: isSessionBusy }
+  const local = new Set(chat.sessions.map((s) => s.id))
+  const order = ui.threadGroupByProject && chat.allSessions.length
+    ? flattenThreadOrder(groupSessionsByProject(chat.allSessions, useWorkspace.getState().workspace?.root ?? null, opts))
+    : flattenThreadOrder(groupSessions(chat.sessions, opts))
+  return order.filter((id) => local.has(id))
+}
+function cycleThread(dir: 1 | -1): void {
+  const order = visibleThreadOrder()
+  if (!order.length) return
+  const chat = useChat.getState()
+  const i = order.indexOf(chat.activeSessionId ?? '')
+  const next = order[i === -1 ? (dir === 1 ? 0 : order.length - 1) : (i + dir + order.length) % order.length]
+  openPane(next)
 }
 
 function selectionItem(sel: SelectionInfo): ContextItem {
@@ -148,5 +169,10 @@ export function initChatModule(): void {
     { id: 'chat.selectModel', title: 'Chat: Select Model', category: 'Chat', hidden: true, run: (a) => useChat.getState().setModel(null, (a as { modelId?: string } | undefined)?.modelId ?? AUTO_MODEL) },
     { id: 'chat.steer', title: 'Chat: Steer Running Agent', category: 'Chat', run: async (a) => { const o = (a ?? {}) as { text?: string; sessionId?: string }; const c = useChat.getState(); const id = o.sessionId ?? c.activeSessionId; if (!id) return; await c.steer(id, o.text ? { text: o.text } : undefined) } },
     { id: 'chat.sendInNewThread', title: 'Chat: Send Draft in New Thread', category: 'Chat', run: async (a) => { const o = (a ?? {}) as { text?: string; sessionId?: string }; const id = o.sessionId ?? useChat.getState().activeSessionId; if (!id) return null; return startInNewThread(id, o.text ? { text: o.text } : undefined) } },
+    // thread lifecycle (docs/THREADS.md)
+    { id: 'chat.regenerateTitle', title: 'Chat: Regenerate Thread Title', category: 'Chat', run: (a) => { const id = (a as { sessionId?: string } | undefined)?.sessionId ?? useChat.getState().activeSessionId; if (id) return useChat.getState().regenerateTitle(id) } },
+    { id: 'chat.searchMessages', title: 'Chat: Search Messages in All Threads', category: 'Chat', run: (a) => { openPane(); useChat.getState().openHistorySearch((a as { query?: string } | undefined)?.query ?? '') } },
+    { id: 'chat.nextThread', title: 'Chat: Next Thread', category: 'Chat', keybinding: 'ctrl+alt+]', run: () => cycleThread(1) },
+    { id: 'chat.prevThread', title: 'Chat: Previous Thread', category: 'Chat', keybinding: 'ctrl+alt+[', run: () => cycleThread(-1) },
   ])
 }

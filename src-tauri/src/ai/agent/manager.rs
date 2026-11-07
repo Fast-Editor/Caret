@@ -141,16 +141,81 @@ impl AgentManager {
     pub fn list_sessions(&self, include_archived: bool) -> Vec<SessionSummary> {
         let key = self.ws_key();
         let mut list = self.store.read_index(&key);
+        self.merge_loaded(&mut list, &key);
+        self.apply_lifecycle(&mut list, self.settings().chat.auto_settle_days);
+        Self::finish_list(list, include_archived)
+    }
+    /// Summaries from every workspace's session store ("group by project"); each summary carries `workspace_root`.
+    pub fn list_sessions_all(&self, include_archived: bool) -> Vec<SessionSummary> {
+        let days = self.settings().chat.auto_settle_days;
+        let mut all = vec![];
+        for key in crate::core::sessions::all_workspace_keys() {
+            let mut list = self.store.read_index(&key);
+            self.merge_loaded(&mut list, &key);
+            self.apply_lifecycle(&mut list, days);
+            all.extend(list);
+        }
+        Self::finish_list(all, include_archived)
+    }
+    fn merge_loaded(&self, list: &mut Vec<SessionSummary>, key: &str) {
         for e in self.sessions.iter() {
             let s = e.value().session.lock();
             if self.ws_key_of(&s) != key { continue; }
             let sv = s.summary_view();
             if let Some(x) = list.iter_mut().find(|x| x.id == sv.id) { *x = sv; } else { list.push(sv); }
         }
+    }
+    fn finish_list(mut list: Vec<SessionSummary>, include_archived: bool) -> Vec<SessionSummary> {
         list.retain(|s| include_archived || s.archived != Some(true));
         list.sort_by(|a, b| b.pinned.unwrap_or(false).cmp(&a.pinned.unwrap_or(false)).then(b.updated_at.cmp(&a.updated_at)));
         list
     }
+
+    // ───────── thread lifecycle (docs/THREADS.md) ─────────
+    /// Listing-time maintenance: wake threads whose snooze expired and, when `auto_settle_days > 0`, settle idle,
+    /// unpinned, unarchived, unsnoozed threads older than that. Changes are persisted and announced with `SessionUpdated`.
+    pub fn apply_lifecycle(&self, list: &mut [SessionSummary], auto_settle_days: u32) {
+        let now = now_ms();
+        let settle_before = if auto_settle_days > 0 { now.saturating_sub(auto_settle_days as u64 * 86_400_000) } else { 0 };
+        for sv in list.iter_mut() {
+            let wake = sv.snoozed_until.map(|t| t <= now).unwrap_or(false);
+            let settle = settle_before > 0 && !sv.settled && !sv.pinned.unwrap_or(false) && sv.archived != Some(true) && sv.snoozed_until.is_none() && sv.status == SessionStatus::Idle && sv.updated_at < settle_before;
+            if !wake && !settle { continue; }
+            match self.mutate_session(&sv.id, Some(&sv.workspace_root), |s| { if wake { s.snoozed_until = None; } if settle { s.settled = true; } }) {
+                Ok(fresh) => *sv = fresh,
+                Err(e) => tracing::warn!(error=%e, id=%sv.id, "lifecycle update failed"),
+            }
+        }
+    }
+    /// Apply `f` to a session (loaded, or on disk in this or another workspace), persist immediately and emit `SessionUpdated`.
+    pub fn mutate_session(&self, id: &str, root: Option<&str>, f: impl FnOnce(&mut Session)) -> Result<SessionSummary> {
+        if let Some(h) = self.get_loaded(id) {
+            let sv = { let mut s = h.session.lock(); f(&mut s); s.summary_view() };
+            self.persist_now(&h);
+            self.emit(AgentEvent::SessionUpdated { session: sv.clone() });
+            return Ok(sv);
+        }
+        let key = self.locate_key(id, root)?;
+        let mut s = self.store.load(&key, id)?;
+        f(&mut s);
+        self.store.save_now(&self.ws_key_of(&s), &s)?;
+        let sv = s.summary_view();
+        self.emit(AgentEvent::SessionUpdated { session: sv.clone() });
+        Ok(sv)
+    }
+    /// Workspace key holding `<id>.json`: current workspace, then global, then the hinted root, then every store.
+    fn locate_key(&self, id: &str, root: Option<&str>) -> Result<String> {
+        let ws = self.ws_key();
+        if self.store.exists(&ws, id) { return Ok(ws); }
+        if self.store.exists("global", id) { return Ok("global".into()); }
+        if let Some(r) = root.filter(|r| !r.is_empty()) { let k = workspace_key(Some(Path::new(r))); if self.store.exists(&k, id) { return Ok(k); } }
+        self.store.find_workspace_key(id).ok_or_else(|| CaretError::not_found(format!("session {id}")))
+    }
+    pub fn set_pinned(&self, id: &str, pinned: bool) -> Result<SessionSummary> { self.mutate_session(id, None, |s| { s.pinned = pinned; s.pinned_at = if pinned { Some(now_ms()) } else { None }; }) }
+    pub fn set_archived(&self, id: &str, archived: bool) -> Result<SessionSummary> { self.mutate_session(id, None, |s| { s.archived = archived; s.archived_at = if archived { Some(now_ms()) } else { None }; }) }
+    /// `None` (or a time in the past) un-snoozes.
+    pub fn set_snoozed(&self, id: &str, until: Option<u64>) -> Result<SessionSummary> { let now = now_ms(); self.mutate_session(id, None, |s| { s.snoozed_until = until.filter(|t| *t > now); }) }
+    pub fn set_settled(&self, id: &str, settled: bool) -> Result<SessionSummary> { self.mutate_session(id, None, |s| { s.settled = settled; }) }
 
     pub async fn delete_session(&self, id: &str) -> Result<()> {
         self.stop(id);
@@ -166,6 +231,9 @@ impl AgentManager {
     // ───────── run / queue / stop ─────────
     pub async fn submit(self: &Arc<Self>, req: SendMessageRequest) -> Result<()> {
         let h = self.handle(&req.session_id)?;
+        // New activity wakes a snoozed thread and re-opens a settled one.
+        let woke = { let mut s = h.session.lock(); let w = s.snoozed_until.is_some() || s.settled; s.snoozed_until = None; s.settled = false; w };
+        if woke { let sv = h.session.lock().summary_view(); self.emit(AgentEvent::SessionUpdated { session: sv }); }
         if h.is_running() {
             let q = QueuedMessage::from_request(req);
             let queued = { let mut s = h.session.lock(); s.queued.push(q); s.queued.clone() };

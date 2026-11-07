@@ -357,6 +357,8 @@ pub enum AgentEvent {
     ReviewComments { session_id: String, comments: Vec<ReviewComment> },
     /// Messages steered into the running turn and not yet injected (empty once the runner drained them).
     Steer { session_id: String, pending: Vec<QueuedMessage> },
+    /// Lifecycle metadata changed (pin / archive / snooze / settle / auto-wake); carries the fresh summary.
+    SessionUpdated { session: SessionSummary },
 }
 
 // ───────────────────────── session ─────────────────────────
@@ -374,6 +376,21 @@ pub struct SessionSummary {
     #[serde(default, skip_serializing_if = "Option::is_none")] pub parent_session_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")] pub agent_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")] pub risk_tier: Option<u8>,
+    /// Unix ms until which the thread is snoozed (hidden in the Snoozed section); cleared on wake.
+    #[serde(default, skip_serializing_if = "Option::is_none")] pub snoozed_until: Option<u64>,
+    /// Marked done by the user or by `chat.autoSettleDays`.
+    #[serde(default)] pub settled: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")] pub archived_at: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")] pub pinned_at: Option<u64>,
+}
+
+/// One hit from `chat_search_messages` (= TS `MessageSearchHit`).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MessageSearchHit {
+    pub session_id: String, pub session_title: String, pub workspace_root: String, pub message_id: String, pub role: MessageRole,
+    /// ~160 chars of message text around the first match.
+    pub snippet: String, pub updated_at: u64,
 }
 
 /// UI projection of a session (= TS `ChatSession`).
@@ -397,6 +414,10 @@ pub struct ChatSessionView {
     #[serde(skip_serializing_if = "Option::is_none")] pub agent_kind: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")] pub last_verification_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")] pub review_comments: Option<Vec<ReviewComment>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")] pub snoozed_until: Option<u64>,
+    #[serde(default)] pub settled: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")] pub archived_at: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")] pub pinned_at: Option<u64>,
 }
 
 /// Full in-memory + on-disk session (transcript included).
@@ -440,10 +461,15 @@ pub struct Session {
     #[serde(default)] pub agent_id: Option<String>,
     #[serde(default)] pub last_verification_id: Option<String>,
     #[serde(default)] pub review_comments: Vec<ReviewComment>,
+    /// Thread lifecycle (see docs/THREADS.md): snooze hides the thread until a wake time, settle marks it done.
+    #[serde(default)] pub snoozed_until: Option<u64>,
+    #[serde(default)] pub settled: bool,
+    #[serde(default)] pub archived_at: Option<u64>,
+    #[serde(default)] pub pinned_at: Option<u64>,
 }
 impl Default for Session {
     fn default() -> Self {
-        Self { id: new_id(), title: "New chat".into(), workspace_root: String::new(), cwd: String::new(), created_at: now_ms(), updated_at: now_ms(), mode: "agent".into(), model_id: None, messages: vec![], transcript: vec![], transcript_model: None, todos: vec![], usage: Usage::default(), changes: vec![], checkpoints: vec![], worktree_path: None, branch: None, status: SessionStatus::Idle, queued: vec![], summary: None, parent_session_id: None, is_subagent: false, pinned: false, archived: false, title_generated: false, session_allow: vec![], transcript_marks: vec![], current_turn: None, context_tokens: 0, agent_id: None, last_verification_id: None, review_comments: vec![] }
+        Self { id: new_id(), title: "New chat".into(), workspace_root: String::new(), cwd: String::new(), created_at: now_ms(), updated_at: now_ms(), mode: "agent".into(), model_id: None, messages: vec![], transcript: vec![], transcript_model: None, todos: vec![], usage: Usage::default(), changes: vec![], checkpoints: vec![], worktree_path: None, branch: None, status: SessionStatus::Idle, queued: vec![], summary: None, parent_session_id: None, is_subagent: false, pinned: false, archived: false, title_generated: false, session_allow: vec![], transcript_marks: vec![], current_turn: None, context_tokens: 0, agent_id: None, last_verification_id: None, review_comments: vec![], snoozed_until: None, settled: false, archived_at: None, pinned_at: None }
     }
 }
 impl Session {
@@ -452,11 +478,11 @@ impl Session {
     pub fn pending_summaries(&self) -> Vec<FileChangeSummary> { self.changes.iter().filter(|c| c.status == ChangeStatus::Pending).map(|c| c.summary()).collect() }
     pub fn touch(&mut self) { self.updated_at = now_ms(); }
     pub fn view(&self) -> ChatSessionView {
-        ChatSessionView { id: self.id.clone(), title: self.title.clone(), workspace_root: self.workspace_root.clone(), created_at: self.created_at, updated_at: self.updated_at, mode: self.mode.clone(), model_id: self.model_id.clone(), messages: self.messages.clone(), todos: self.todos.clone(), usage: self.usage.clone(), pending_changes: self.pending_summaries(), worktree_path: self.worktree_path.clone(), branch: self.branch.clone(), status: self.status, queued_messages: self.queued.clone(), summary: self.summary.clone(), parent_session_id: self.parent_session_id.clone(), is_subagent: if self.is_subagent { Some(true) } else { None }, context_tokens: self.context_tokens, pinned: if self.pinned { Some(true) } else { None }, archived: if self.archived { Some(true) } else { None }, checkpoints: self.checkpoints.clone(), agent_id: self.agent_id.clone(), agent_kind: self.agent_id.as_deref().map(|a| if a == "caret" { "caret".to_string() } else { "acp".to_string() }), last_verification_id: self.last_verification_id.clone(), review_comments: if self.review_comments.is_empty() { None } else { Some(self.review_comments.clone()) } }
+        ChatSessionView { id: self.id.clone(), title: self.title.clone(), workspace_root: self.workspace_root.clone(), created_at: self.created_at, updated_at: self.updated_at, mode: self.mode.clone(), model_id: self.model_id.clone(), messages: self.messages.clone(), todos: self.todos.clone(), usage: self.usage.clone(), pending_changes: self.pending_summaries(), worktree_path: self.worktree_path.clone(), branch: self.branch.clone(), status: self.status, queued_messages: self.queued.clone(), summary: self.summary.clone(), parent_session_id: self.parent_session_id.clone(), is_subagent: if self.is_subagent { Some(true) } else { None }, context_tokens: self.context_tokens, pinned: if self.pinned { Some(true) } else { None }, archived: if self.archived { Some(true) } else { None }, checkpoints: self.checkpoints.clone(), agent_id: self.agent_id.clone(), agent_kind: self.agent_id.as_deref().map(|a| if a == "caret" { "caret".to_string() } else { "acp".to_string() }), last_verification_id: self.last_verification_id.clone(), review_comments: if self.review_comments.is_empty() { None } else { Some(self.review_comments.clone()) }, snoozed_until: self.snoozed_until, settled: self.settled, archived_at: self.archived_at, pinned_at: self.pinned_at }
     }
     pub fn summary_view(&self) -> SessionSummary {
         let last = self.messages.iter().rev().find(|m| matches!(m.role, MessageRole::User | MessageRole::Assistant)).map(|m| m.preview(120)).unwrap_or_default();
-        SessionSummary { id: self.id.clone(), title: self.title.clone(), workspace_root: self.workspace_root.clone(), created_at: self.created_at, updated_at: self.updated_at, mode: self.mode.clone(), status: self.status, message_count: self.messages.len(), last_message_preview: last, worktree_path: self.worktree_path.clone(), is_subagent: if self.is_subagent { Some(true) } else { None }, pending_change_count: self.changes.iter().filter(|c| c.status == ChangeStatus::Pending).count(), pinned: if self.pinned { Some(true) } else { None }, archived: if self.archived { Some(true) } else { None }, model_id: self.model_id.clone(), parent_session_id: self.parent_session_id.clone(), agent_id: self.agent_id.clone(), risk_tier: None }
+        SessionSummary { id: self.id.clone(), title: self.title.clone(), workspace_root: self.workspace_root.clone(), created_at: self.created_at, updated_at: self.updated_at, mode: self.mode.clone(), status: self.status, message_count: self.messages.len(), last_message_preview: last, worktree_path: self.worktree_path.clone(), is_subagent: if self.is_subagent { Some(true) } else { None }, pending_change_count: self.changes.iter().filter(|c| c.status == ChangeStatus::Pending).count(), pinned: if self.pinned { Some(true) } else { None }, archived: if self.archived { Some(true) } else { None }, model_id: self.model_id.clone(), parent_session_id: self.parent_session_id.clone(), agent_id: self.agent_id.clone(), risk_tier: None, snoozed_until: self.snoozed_until, settled: self.settled, archived_at: self.archived_at, pinned_at: self.pinned_at }
     }
     /// Rough token estimate of the transcript (text + ~1500 per image).
     pub fn estimate_context_tokens(&self) -> u64 {

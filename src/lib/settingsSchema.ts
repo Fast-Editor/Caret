@@ -89,6 +89,7 @@ export const DEFAULTS: Settings = {
   terminal: { blocks: true, shellIntegration: true, aiEnabled: true, programStatus: true, maxBlocks: 200, suggestions: 'ai' },
   router: { enabled: false, source: 'npm', overrides: {}, excludedModels: [], stickySessions: true, routeSingleShot: true, tpmLimit: undefined, embeddingsProviderId: undefined },
   notifications: { desktop: true, onlyWhenUnfocused: true, onFinish: true, onError: true, onApproval: true, onQuestion: true, sound: false },
+  chat: { autoSettleDays: 0 },
 }
 
 export const SETTINGS_FIELDS: SettingField[] = [
@@ -233,6 +234,7 @@ export const SETTINGS_FIELDS: SettingField[] = [
   // ── MCP / LSP toggles ──
   { id: 'mcp.enabled', page: 'mcp', type: 'boolean', title: 'Enable MCP', description: 'Connect to configured MCP servers and expose their tools to the agent.' },
   { id: 'lsp.enabled', page: 'appearance', type: 'boolean', title: 'Language servers', description: 'Start installed language servers for diagnostics, hover, go to definition.', group: 'Editor', keywords: ['lsp', 'intellisense'] },
+  { id: 'chat.autoSettleDays', page: 'agent', type: 'number', title: 'Auto-settle idle threads', description: 'Move threads with no activity for this many days to the Settled section (0 = off). Pinned, snoozed and archived threads are never auto-settled.', unit: 'days', min: 0, max: 365, step: 1, group: 'Threads', keywords: ['settle', 'thread', 'lifecycle', 'history', 'snooze'] },
 ]
 
 export function getPath(obj: unknown, path: string): unknown {

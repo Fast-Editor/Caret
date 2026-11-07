@@ -1,11 +1,13 @@
 import { create } from 'zustand'
 import type {
   AgentEvent, ApprovalOption, ChatSession, ChatSessionSummary, ContextItem, Effort, ImageAttachment, ModeId, SendMessageRequest,
-  SlashCommandInfo, ThinkingPref, TodoItem, PendingChange, Checkpoint, ModelConfig,
+  SlashCommandInfo, ThinkingPref, TodoItem, PendingChange, Checkpoint, ModelConfig, MessageSearchHit,
 } from '@/types'
 import { api } from '@/lib/api'
 import { emit as busEmit } from '@/lib/bus'
+import { runCommand } from '@/lib/commands'
 import { useSettings } from '@/store/settings'
+import { notify } from '@/store/notifications'
 import { applyAgentEvents, emptyCoreState, type ChatCoreState, type PendingQuestion } from './chatReducer'
 import { BUILTIN_SLASH } from '@/components/chat/mentions'
 import { uid } from '@/components/chat/util'
@@ -58,6 +60,15 @@ export interface ChatState extends ChatCoreState {
   checkpoints: Record<string, Checkpoint[]>
   favoriteModels: string[]
   composerFocusNonce: number
+  // thread lifecycle (docs/THREADS.md)
+  /** Sessions from every workspace; populated while "group by project" is on. */
+  allSessions: ChatSessionSummary[]
+  /** Select this session once the list of a newly opened workspace arrives (thread opened from another project). */
+  pendingSelect: string | null
+  /** Message to scroll into view once its session is shown (message search). */
+  revealTarget: { sessionId: string; messageId: string } | null
+  /** Bumped by `chat.searchMessages`: the history popover opens focused on the search box with this query. */
+  historySearch: { nonce: number; query: string }
 
   // event ingestion
   ingest: (events: AgentEvent[]) => void
@@ -112,6 +123,18 @@ export interface ChatState extends ChatCoreState {
   sendInNewThread: (sessionId: string, overrides?: Partial<SendMessageRequest>) => Promise<string | null>
   queueUpdate: (sessionId: string, queuedId: string, text: string, context?: ContextItem[]) => Promise<void>
   queueMove: (sessionId: string, queuedId: string, index: number) => Promise<void>
+  // thread lifecycle (docs/THREADS.md)
+  /** `until` in unix ms; null un-snoozes. */
+  snoozeSession: (id: string, until: number | null) => Promise<void>
+  /** Settling shows a 5 s "Undo" toast unless `opts.undo === false`. */
+  settleSession: (id: string, settled: boolean, opts?: { undo?: boolean }) => Promise<void>
+  regenerateTitle: (id: string) => Promise<void>
+  loadAllSessions: () => Promise<void>
+  searchMessages: (query: string, opts?: { includeArchived?: boolean; allWorkspaces?: boolean; limit?: number }) => Promise<MessageSearchHit[]>
+  /** Open a thread; a thread from another workspace offers to open that folder first. `messageId` scrolls to a message. */
+  openThread: (id: string, workspaceRoot?: string, messageId?: string) => Promise<void>
+  clearReveal: () => void
+  openHistorySearch: (query?: string) => void
 }
 
 /** Same request shape `send` builds from a draft (shared by steer / background send). Null when there is nothing to send. */
@@ -127,6 +150,25 @@ function requestFromDraft(sessionId: string, d: ComposerDraft, overrides?: Parti
   }
   delete (req as Partial<SendMessageRequest>).activeFile
   return req
+}
+
+function patchSummaries(list: ChatSessionSummary[], id: string, patch: Partial<ChatSessionSummary>): ChatSessionSummary[] {
+  return list.some((x) => x.id === id) ? list.map((x) => (x.id === id ? { ...x, ...patch } : x)) : list
+}
+/** Mirror list-level agent events onto the cross-workspace list (kept in sync without a reload). */
+function applyToAll(list: ChatSessionSummary[], events: AgentEvent[]): ChatSessionSummary[] {
+  let next = list
+  for (const e of events) {
+    if (e.type === 'session-updated') next = patchSummaries(next, e.session.id, e.session)
+    else if (e.type === 'session-created') next = next.some((x) => x.id === e.session.id) ? patchSummaries(next, e.session.id, e.session) : [e.session, ...next]
+    else if (e.type === 'session-deleted') next = next.filter((x) => x.id !== e.sessionId)
+    else if (e.type === 'title') next = patchSummaries(next, e.sessionId, { title: e.title })
+    else if (e.type === 'session-status') next = patchSummaries(next, e.sessionId, { status: e.status })
+  }
+  return next
+}
+function undoToast(title: string, undo: () => void): void {
+  notify('info', title, undefined, { timeoutMs: 5000, actions: [{ id: 'undo', label: 'Undo' }], onAction: (a) => { if (a === 'undo') undo() } })
 }
 
 const FAV_KEY = 'caret.chat.favoriteModels'
@@ -154,6 +196,10 @@ export const useChat = create<ChatState>((set, get) => ({
   checkpoints: {},
   favoriteModels: loadFavs(),
   composerFocusNonce: 0,
+  allSessions: [],
+  pendingSelect: null,
+  revealTarget: null,
+  historySearch: { nonce: 0, query: '' },
 
   ingest: (events) => {
     if (!events.length) return
@@ -161,6 +207,7 @@ export const useChat = create<ChatState>((set, get) => ({
     const core: ChatCoreState = { sessions: s.sessions, loaded: s.loaded, approvals: s.approvals, questions: s.questions, versions: s.versions, streaming: s.streaming, steering: s.steering }
     const next = applyAgentEvents(core, events)
     if (next !== core) set(next)
+    if (s.allSessions.length) { const all = applyToAll(s.allSessions, events); if (all !== s.allSessions) set({ allSessions: all }) }
     // external (ACP) agent status is UI-only state: fan out to the composer's agent picker
     for (const e of events) if (e.type === 'agent-status') busEmit('chat:agent-status', e)
     // auto-activate newly created foreground sessions when none is active
@@ -172,6 +219,9 @@ export const useChat = create<ChatState>((set, get) => ({
     set({ sessions, sessionsLoaded: true })
     const active = get().activeSessionId
     if (active && !sessions.some((s) => s.id === active)) set({ activeSessionId: null })
+    const pending = get().pendingSelect
+    if (pending) { set({ pendingSelect: null }); if (sessions.some((s) => s.id === pending)) void get().selectSession(pending) }
+    if (get().allSessions.length) void get().loadAllSessions()
   },
   loadSession: async (id) => {
     if (get().loadingSession[id]) return get().loaded[id] ?? null
@@ -225,7 +275,11 @@ export const useChat = create<ChatState>((set, get) => ({
     await get().loadSessions()
   },
   pinSession: async (id, pinned) => { await api.chat.pinSession(id, pinned); set((s) => ({ sessions: s.sessions.map((x) => (x.id === id ? { ...x, pinned } : x)) })) },
-  archiveSession: async (id, archived) => { await api.chat.archiveSession(id, archived); set((s) => ({ sessions: s.sessions.map((x) => (x.id === id ? { ...x, archived } : x)) })) },
+  archiveSession: async (id, archived) => {
+    await api.chat.archiveSession(id, archived)
+    set((s) => ({ sessions: patchSummaries(s.sessions, id, { archived, archivedAt: archived ? Date.now() : undefined }) }))
+    if (archived) undoToast('Thread archived', () => void get().archiveSession(id, false))
+  },
   exportSession: (id, format) => api.chat.exportSession(id, format),
 
   send: async (sessionId, overrides) => {
@@ -360,6 +414,38 @@ export const useChat = create<ChatState>((set, get) => ({
   },
   queueUpdate: (sessionId, queuedId, text, context) => api.chat.queueUpdate(sessionId, queuedId, text, context),
   queueMove: (sessionId, queuedId, index) => api.chat.queueMove(sessionId, queuedId, index),
+  // ───────── thread lifecycle (docs/THREADS.md) ─────────
+  snoozeSession: async (id, until) => {
+    const sv = await api.chat.snoozeSession(id, until)
+    set((s) => ({ sessions: patchSummaries(s.sessions, id, { snoozedUntil: sv.snoozedUntil, settled: sv.settled }), allSessions: patchSummaries(s.allSessions, id, { snoozedUntil: sv.snoozedUntil, settled: sv.settled }) }))
+  },
+  settleSession: async (id, settled, opts) => {
+    await api.chat.settleSession(id, settled)
+    set((s) => ({ sessions: patchSummaries(s.sessions, id, { settled }), allSessions: patchSummaries(s.allSessions, id, { settled }) }))
+    if (settled && opts?.undo !== false) undoToast('Thread settled', () => void get().settleSession(id, false))
+  },
+  regenerateTitle: async (id) => {
+    try { await api.chat.regenerateTitle(id) } // the `title` event updates the list and the pane
+    catch (e) { notify('error', 'Could not regenerate title', e instanceof Error ? e.message : String(e)); throw e }
+  },
+  loadAllSessions: async () => {
+    try { set({ allSessions: await api.chat.listSessionsAll(true) }) } catch (e) { console.error('loadAllSessions failed', e) }
+  },
+  searchMessages: (query, opts) => api.chat.searchMessages(query, opts),
+  openThread: async (id, workspaceRoot, messageId) => {
+    const local = get().sessions.some((s) => s.id === id)
+    if (!local && workspaceRoot) {
+      const name = workspaceRoot.split('/').filter(Boolean).pop() ?? workspaceRoot
+      if (!window.confirm(`This thread belongs to "${name}" (${workspaceRoot}). Open that folder to continue it?`)) return
+      set({ pendingSelect: id, revealTarget: messageId ? { sessionId: id, messageId } : null })
+      await runCommand('workspace.openFolder', { path: workspaceRoot }) // workspace-changed reloads the list, which selects `pendingSelect`
+      return
+    }
+    set({ revealTarget: messageId ? { sessionId: id, messageId } : null })
+    await get().selectSession(id)
+  },
+  clearReveal: () => set({ revealTarget: null }),
+  openHistorySearch: (query = '') => set((s) => ({ historyOpen: true, historySearch: { nonce: s.historySearch.nonce + 1, query } })),
 }))
 
 export function fallbackModes(): ModeDescriptor[] {

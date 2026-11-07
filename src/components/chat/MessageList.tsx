@@ -14,9 +14,9 @@ const Row = memo(function Row({ message, sessionId, isLast, entering }: { messag
   // same instance; restored transcripts mount with `entering=false`).
   const [enter] = useState(entering)
   const cls = enter ? 'animate-fade-up' : undefined
-  if (message.role === 'user') return <div className={cls}><UserMessage message={message} sessionId={sessionId} isLast={isLast} /></div>
-  if (message.role === 'system') return <div className={`px-3 py-1 ${cls ?? ''}`}>{message.parts.map((p, i) => (p.type === 'summary' ? <SummaryPart key={i} text={p.text} /> : p.type === 'text' ? <div key={i} className="text-[11.5px] text-faint italic">{p.text}</div> : null))}</div>
-  return <div className={cls}><AssistantMessage message={message} sessionId={sessionId} isLast={isLast} /></div>
+  if (message.role === 'user') return <div className={cls} data-message-id={message.id}><UserMessage message={message} sessionId={sessionId} isLast={isLast} /></div>
+  if (message.role === 'system') return <div className={`px-3 py-1 ${cls ?? ''}`} data-message-id={message.id}>{message.parts.map((p, i) => (p.type === 'summary' ? <SummaryPart key={i} text={p.text} /> : p.type === 'text' ? <div key={i} className="text-[11.5px] text-faint italic">{p.text}</div> : null))}</div>
+  return <div className={cls} data-message-id={message.id}><AssistantMessage message={message} sessionId={sessionId} isLast={isLast} /></div>
 }, (a, b) => a.message.id === b.message.id && a.version === b.version && a.isLast === b.isLast)
 
 /**
@@ -26,6 +26,7 @@ const Row = memo(function Row({ message, sessionId, isLast, entering }: { messag
 export function MessageList({ sessionId, messages, header }: { sessionId: string; messages: ChatMessage[]; header?: React.ReactNode }) {
   const versions = useChat((s) => s.versions)
   const streamingId = useChat((s) => s.streaming[sessionId])
+  const reveal = useChat((s) => s.revealTarget)
   const ref = useRef<HTMLDivElement>(null)
   const [stick, setStick] = useState(true)
   const [unread, setUnread] = useState(0)
@@ -74,6 +75,20 @@ export function MessageList({ sessionId, messages, header }: { sessionId: string
   useEffect(() => { if (!stick) return; const id = requestAnimationFrame(() => apply('delta')); return () => cancelAnimationFrame(id) }, [versions, stick, streamingId, apply])
   // Viewport resizes (pane drag, keyboard) re-pin instantly.
   useEffect(() => { const el = ref.current; if (!el || typeof ResizeObserver === 'undefined') return; const ro = new ResizeObserver(() => apply('resize')); ro.observe(el); return () => ro.disconnect() }, [apply])
+
+  // Message search: reveal a message (widen the window if it is hidden), scroll it into view, flash it, then clear the request.
+  useEffect(() => {
+    if (!reveal || reveal.sessionId !== sessionId) return
+    const idx = messages.findIndex((m) => m.id === reveal.messageId)
+    if (idx === -1) return
+    if (idx < start) { setWindow(messages.length - idx + 20); return } // re-runs once the window has grown
+    const el = ref.current?.querySelector<HTMLElement>(`[data-message-id="${reveal.messageId}"]`)
+    if (!el) return
+    setStick(false); stickRef.current = false
+    el.scrollIntoView({ block: 'center' })
+    el.classList.add('chat-msg-flash'); window.setTimeout(() => el.classList.remove('chat-msg-flash'), 1800)
+    useChat.getState().clearReveal()
+  }, [reveal, sessionId, messages, start])
 
   const [pillMounted, pillVisible] = usePresence(!stick)
   const jump = () => { const el = ref.current; if (el) scrollTo(el, el.scrollHeight); setStick(true); setUnread(0) }

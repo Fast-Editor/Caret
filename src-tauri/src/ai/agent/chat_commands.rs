@@ -56,9 +56,9 @@ pub fn chat_duplicate_session(mgr: Mgr<'_>, session_id: String) -> Result<ChatSe
 }
 
 #[tauri::command]
-pub fn chat_pin_session(mgr: Mgr<'_>, session_id: String, pinned: bool) -> Result<()> { let h = mgr.handle(&session_id)?; { h.session.lock().pinned = pinned; } mgr.persist_now(&h); Ok(()) }
+pub fn chat_pin_session(mgr: Mgr<'_>, session_id: String, pinned: bool) -> Result<()> { mgr.set_pinned(&session_id, pinned).map(|_| ()) }
 #[tauri::command]
-pub fn chat_archive_session(mgr: Mgr<'_>, session_id: String, archived: bool) -> Result<()> { let h = mgr.handle(&session_id)?; { h.session.lock().archived = archived; } mgr.persist_now(&h); Ok(()) }
+pub fn chat_archive_session(mgr: Mgr<'_>, session_id: String, archived: bool) -> Result<()> { mgr.set_archived(&session_id, archived).map(|_| ()) }
 
 #[tauri::command(async)]
 pub fn chat_export_session(mgr: Mgr<'_>, session_id: String, format: String) -> Result<String> {
@@ -280,3 +280,36 @@ pub fn chat_queue_update(mgr: Mgr<'_>, session_id: String, queued_id: String, te
 /// Move a queued message to `index` (clamped to the queue bounds); the queue drains in order.
 #[tauri::command]
 pub fn chat_queue_move(mgr: Mgr<'_>, session_id: String, queued_id: String, index: usize) -> Result<()> { mgr.queue_move(&session_id, &queued_id, index).map(|_| ()) }
+// ───────── thread lifecycle, title regeneration, message search (docs/THREADS.md) ─────────
+/// Snooze until `until` (unix ms); `None` or a past time un-snoozes. Emits `session-updated`.
+#[tauri::command]
+pub fn chat_snooze_session(mgr: Mgr<'_>, session_id: String, until: Option<u64>) -> Result<SessionSummary> { mgr.set_snoozed(&session_id, until) }
+
+#[tauri::command]
+pub fn chat_settle_session(mgr: Mgr<'_>, session_id: String, settled: bool) -> Result<SessionSummary> { mgr.set_settled(&session_id, settled) }
+
+/// Summaries from every workspace's session store (summaries carry `workspaceRoot`).
+#[tauri::command(async)]
+pub fn chat_list_sessions_all(mgr: Mgr<'_>, include_archived: Option<bool>) -> Result<Vec<SessionSummary>> { Ok(mgr.list_sessions_all(include_archived.unwrap_or(false))) }
+
+/// Re-run title generation; the `title` event updates the UI. Needs at least one assistant reply.
+#[tauri::command]
+pub async fn chat_regenerate_title(app: AppHandle, mgr: Mgr<'_>, session_id: String) -> Result<String> {
+    let h = mgr.handle(&session_id)?;
+    let model_id = {
+        let mut s = h.session.lock();
+        if !s.messages.iter().any(|m| m.role == MessageRole::Assistant) { return Err(CaretError::invalid("Send a message and wait for a reply before regenerating the title")); }
+        s.title_generated = false;
+        s.model_id.clone()
+    };
+    let settings = mgr.settings();
+    let resolved = crate::ai::llm::resolve_model(&settings, &app.state::<SettingsState>(), model_id.as_deref())?;
+    runner::generate_title(mgr.inner().clone(), h, resolved).await
+}
+
+/// Case-insensitive substring search over message text in session files (this workspace or all), newest first.
+#[tauri::command(async)]
+pub fn chat_search_messages(mgr: Mgr<'_>, query: String, include_archived: Option<bool>, all_workspaces: Option<bool>, limit: Option<usize>) -> Result<Vec<MessageSearchHit>> {
+    let keys = if all_workspaces.unwrap_or(false) { crate::core::sessions::all_workspace_keys() } else { vec![mgr.ws_key()] };
+    Ok(mgr.store.search_messages(&keys, &query, include_archived.unwrap_or(false), limit.unwrap_or(50).min(500)))
+}
