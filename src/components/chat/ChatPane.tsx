@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { Tooltip } from 'radix-ui'
-import { History, LayoutPanelLeft, Plus, Settings, X } from 'lucide-react'
+import { Columns3, GitFork, History, LayoutPanelLeft, Plus, Settings, X } from 'lucide-react'
 import { useChat, isSessionBusy } from '@/store/chat'
 import { useUi } from '@/store/ui'
 import { runCommand } from '@/lib/commands'
@@ -27,6 +27,11 @@ export function ChatPane({ embedded }: { embedded?: boolean } = {}) {
   const createSession = useChat((s) => s.createSession)
   const renameSession = useChat((s) => s.renameSession)
   const selectSession = useChat((s) => s.selectSession)
+  const forkSession = useChat((s) => s.forkSession)
+  // "Forked from" link: only for forks (subagent children share parentSessionId but are not forks).
+  const parentId = session?.parentSessionId && !session.isSubagent ? session.parentSessionId : undefined
+  const parentTitle = useChat((s) => (parentId ? s.sessions.find((x) => x.id === parentId)?.title : undefined))
+  const groupSize = useChat((s) => (session?.fanOutGroup ? s.sessions.filter((x) => x.fanOutGroup === session.fanOutGroup).length : 0))
   const focusNonce = useChat((s) => s.composerFocusNonce)
   const setChat = useUi((s) => s.set)
   const [editingTitle, setEditingTitle] = useState(false)
@@ -57,12 +62,21 @@ export function ChatPane({ embedded }: { embedded?: boolean } = {}) {
           ) : (
             <button type="button" onDoubleClick={() => { setTitle(titleText); setEditingTitle(true) }} title={usage ? `Session usage: ${fmtTokens(usage.inputTokens)} in · ${fmtTokens(usage.outputTokens)} out${usage.costUsd !== undefined ? ` · ${fmtCost(usage.costUsd)}` : ''} (double-click to rename)` : 'Double-click to rename'} className="flex-1 min-w-0 text-left text-[12.5px] font-medium truncate-1">{titleText}{session?.worktreePath && <span className="ml-1.5 text-[10px] text-faint font-normal">worktree</span>}</button>
           )}
+          {session && session.messages.length > 0 && <IconBtn title="Fork thread (copy the whole conversation into a new thread)" onClick={() => { if (activeId) void forkSession(activeId).catch((e) => void runCommand('app.notify', { level: 'error', title: 'Fork failed', message: e instanceof Error ? e.message : String(e) })) }}><GitFork size={14} /></IconBtn>}
           <IconBtn title="New chat (⌘I)" onClick={() => void createSession().then(() => useChat.getState().focusComposer())}><Plus size={14} /></IconBtn>
           <HistoryPopover><button type="button" title="History (⌘⇧H)" className="flex items-center justify-center w-6 h-6 rounded hover:bg-hover text-muted hover:text-fg"><History size={14} /></button></HistoryPopover>
           {!embedded && <IconBtn title="Agents layout" onClick={() => void runCommand('chat.toggleAgentsLayout')}><LayoutPanelLeft size={14} /></IconBtn>}
           <IconBtn title="Agent settings" onClick={() => void runCommand('settings.open', { page: 'agent' })}><Settings size={14} /></IconBtn>
           {!embedded && <IconBtn title="Close pane (⌘L)" onClick={() => setChat({ chatVisible: false })}><X size={14} /></IconBtn>}
         </div>
+        {(parentId || groupSize >= 2) && (
+          <div className="h-6 shrink-0 flex items-center gap-2 px-3 border-b border-border bg-app/40 text-[11px] text-muted animate-fade">
+            {parentId && <button type="button" onClick={() => void selectSession(parentId)} className="inline-flex items-center gap-1 hover:text-fg truncate-1" title="Open the parent thread"><GitFork size={11} /> Forked from <span className="underline decoration-dotted">{parentTitle ?? 'parent thread'}</span></button>}
+            <span className="flex-1" />
+            {groupSize >= 2 && !embedded && <button type="button" onClick={() => void runCommand('chat.toggleAgentsLayout')} className="inline-flex items-center gap-1 hover:text-fg" title="Compare the answers of this fan-out side by side"><Columns3 size={11} /> Compare {groupSize}</button>}
+            {groupSize >= 2 && embedded && <span className="inline-flex items-center gap-1" title="This thread is part of a multi-model comparison"><Columns3 size={11} /> 1 of {groupSize}</span>}
+          </div>
+        )}
         {activeId ? (
           <>
             {session && session.messages.length > 0 ? <MessageList sessionId={activeId} messages={session.messages} /> : <div key={activeId} className="flex-1 min-h-0 overflow-y-auto animate-fade"><EmptyState sessionId={activeId} /></div>}

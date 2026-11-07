@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { ArrowUp, AtSign, FolderGit2, Image as ImageIcon, Paperclip, Square } from 'lucide-react'
+import { ArrowUp, AtSign, Columns3, FolderGit2, Image as ImageIcon, Paperclip, Square } from 'lucide-react'
 import type { ContextItem, ImageAttachment, SlashCommandInfo } from '@/types'
-import { AUTO_MODEL, isSessionBusy, resolveModel, useChat } from '@/store/chat'
+import { AUTO_MODEL, isSessionBusy, resolveModel, useChat, useModelGroups } from '@/store/chat'
+import { isFanOut, pruneCompare, sendLabel } from './composer/compareModels'
 import { useSettings } from '@/store/settings'
 import { api } from '@/lib/api'
 import { runCommand } from '@/lib/commands'
@@ -31,6 +32,7 @@ export function Composer({ sessionId, autoFocusNonce }: { sessionId: string; aut
   const draft = useChat((s) => s.drafts[sessionId]) ?? useChat.getState().draft(sessionId)
   const update = useChat((s) => s.updateDraft)
   const send = useChat((s) => s.send)
+  const fanOut = useChat((s) => s.fanOut)
   const stop = useChat((s) => s.stop)
   const addContext = useChat((s) => s.addContext)
   const removeContext = useChat((s) => s.removeContext)
@@ -48,6 +50,11 @@ export function Composer({ sessionId, autoFocusNonce }: { sessionId: string; aut
   const [dragOver, setDragOver] = useState(false)
   const model = resolveModel(draft.modelId)
   const pills = usePresenceList(draft.context, (c) => c.id)
+  // Multi-model fan-out: 2+ models picked in the model picker (built-in agent only) turns Send into "Send to N".
+  const groups = useModelGroups()
+  const enabledModelIds = useMemo(() => groups.flatMap((g) => g.models.map((m) => m.id)), [groups])
+  const compareIds = useMemo(() => pruneCompare(draft.compareModelIds ?? [], enabledModelIds), [draft.compareModelIds, enabledModelIds])
+  const fanOutMode = isFanOut(compareIds) && (draft.agentId ?? CARET_AGENT) === CARET_AGENT
 
   useEffect(() => { taRef.current?.focus() }, [autoFocusNonce, sessionId])
   // Materialise the draft so selectors return a stable object.
@@ -108,7 +115,10 @@ export function Composer({ sessionId, autoFocusNonce }: { sessionId: string; aut
     if (sc && MODE_SLASH.has(sc.name)) { void setMode(sessionId, sc.name); update(sessionId, { text: sc.args }); if (!sc.args) return }
     const ctx = [...draft.context]
     if (draft.includeActiveFile && activeFile && !ctx.some((c) => c.path === activeFile.path && (c.kind === 'file' || c.kind === 'active-file'))) ctx.push({ id: uid('af'), kind: 'active-file', label: 'Current file', path: activeFile.path })
-    try { await send(sessionId, { context: ctx, activeFile: activeFile?.path }) } catch (e) { void runCommand('app.notify', { level: 'error', title: 'Send failed', message: e instanceof Error ? e.message : String(e) }) }
+    try {
+      if (fanOutMode) { await fanOut(sessionId, compareIds, { context: ctx }); return }
+      await send(sessionId, { context: ctx, activeFile: activeFile?.path })
+    } catch (e) { void runCommand('app.notify', { level: 'error', title: fanOutMode ? 'Fan-out failed' : 'Send failed', message: e instanceof Error ? e.message : String(e) }) }
   }
 
   const onKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
@@ -188,7 +198,11 @@ export function Composer({ sessionId, autoFocusNonce }: { sessionId: string; aut
         <button type="button" onClick={() => void attachImage()} title="Attach image" className="flex items-center justify-center w-6 h-6 rounded hover:bg-hover text-muted press">{draft.images.length ? <ImageIcon size={13} /> : <Paperclip size={13} />}</button>
         <span className="chat-send-slot" data-busy={busy}>
           <button type="button" onClick={() => void stop(sessionId)} data-active={busy} tabIndex={busy ? 0 : -1} aria-hidden={!busy} title="Stop (Esc)" className="flex items-center justify-center w-6 h-6 rounded bg-danger/20 text-danger hover:bg-danger/30 press"><Square size={11} fill="currentColor" /></button>
-          <button type="button" onClick={() => void doSend()} data-active={!busy} tabIndex={busy ? -1 : 0} aria-hidden={busy} disabled={!busy && !draft.text.trim() && !draft.images.length} title={`Send (⏎)${draft.modelId === AUTO_MODEL ? ' · Auto model' : ''} · ${MOD}⏎ accepts changes`} className="flex items-center justify-center w-6 h-6 rounded bg-accent text-accent-fg hover:bg-accent-hover disabled:opacity-40 disabled:hover:bg-accent press"><ArrowUp size={14} /></button>
+          {fanOutMode ? (
+            <button type="button" onClick={() => void doSend()} data-active={!busy} tabIndex={busy ? -1 : 0} aria-hidden={busy} disabled={!busy && !draft.text.trim() && !draft.images.length} title={`Send to ${compareIds.length} models (⏎): one thread per model, side by side in the Agents layout`} className="flex items-center gap-1 h-6 px-2 rounded bg-accent text-accent-fg hover:bg-accent-hover disabled:opacity-40 disabled:hover:bg-accent press text-[11.5px] font-medium whitespace-nowrap" data-testid="send-fanout"><Columns3 size={12} /> {sendLabel(compareIds)}</button>
+          ) : (
+            <button type="button" onClick={() => void doSend()} data-active={!busy} tabIndex={busy ? -1 : 0} aria-hidden={busy} disabled={!busy && !draft.text.trim() && !draft.images.length} title={`Send (⏎)${draft.modelId === AUTO_MODEL ? ' · Auto model' : ''} · ${MOD}⏎ accepts changes`} className="flex items-center justify-center w-6 h-6 rounded bg-accent text-accent-fg hover:bg-accent-hover disabled:opacity-40 disabled:hover:bg-accent press"><ArrowUp size={14} /></button>
+          )}
         </span>
       </div>
     </div>

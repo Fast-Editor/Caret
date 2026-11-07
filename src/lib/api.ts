@@ -154,6 +154,12 @@ const apiBase = {
     contextPreview: (items: T.ContextItem[]) => invoke<{ totalTokens: number; items: { id: string; tokens: number; truncated: boolean }[] }>('chat_context_preview', { items }),
     mentionCandidates: (kind: T.ContextItemKind, query: string, limit = 30) => invoke<T.ContextItem[]>('chat_mention_candidates', { kind, query, limit }),
     toolCatalog: () => invoke<{ name: string; displayName: string; description: string; group: string; readonly: boolean }[]>('chat_tool_catalog'),
+    /** Clone a thread; with `messageId` the fork keeps history up to and including that message. */
+    forkSession: (sessionId: string, messageId?: string) => invoke<T.ChatSession>('chat_fork_session', { sessionId, messageId }),
+    /** Move an idle thread to another agent and/or model; the conversation is transferred within `chat.handoffBudgetTokens`. */
+    handoffSession: (sessionId: string, target: { agentId?: string; modelId?: string }) => invoke<T.ChatSession>('chat_handoff_session', { sessionId, agentId: target.agentId, modelId: target.modelId }),
+    /** Send one prompt to several models at once (one session per model, same `fanOutGroup`). Returns the session ids. */
+    fanOut: (req: T.FanOutRequest) => invoke<string[]>('chat_fan_out', { ...req }),
   },
 
   ai: {

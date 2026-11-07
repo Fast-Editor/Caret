@@ -1,5 +1,5 @@
 import { memo, useEffect, useRef, useState } from 'react'
-import { Check, Copy, RotateCcw } from 'lucide-react'
+import { Check, Copy, GitFork, RotateCcw } from 'lucide-react'
 import type { ChatMessage } from '@/types'
 import { Markdown } from '@/lib/markdown'
 import { ToolCallCard } from './ToolCallCard'
@@ -30,8 +30,9 @@ const StreamingText = memo(function StreamingText({ text, streaming, sessionId }
   return <Markdown text={t} streaming={streaming} sessionId={sessionId} className={`text-[13px] ${streaming ? 'chat-live' : ''}`} />
 })
 
-export const AssistantMessage = memo(function AssistantMessage({ message, sessionId, isLast }: { message: ChatMessage; sessionId: string; isLast: boolean }) {
+export const AssistantMessage = memo(function AssistantMessage({ message, sessionId, isLast, readOnly }: { message: ChatMessage; sessionId: string; isLast: boolean; readOnly?: boolean }) {
   const regenerate = useChat((s) => s.regenerate)
+  const forkSession = useChat((s) => s.forkSession)
   const streaming = message.status === 'streaming'
   const [copied, setCopied] = useState(false)
   const allText = message.parts.filter((p) => p.type === 'text').map((p) => (p.type === 'text' ? p.text : '')).join('\n\n')
@@ -52,7 +53,7 @@ export const AssistantMessage = memo(function AssistantMessage({ message, sessio
           case 'question': return <QuestionCard key={key} question={p.question} answer={p.answer} sessionId={sessionId} />
           case 'plan': return <PlanCard key={key} path={p.path} title={p.title} sessionId={sessionId} />
           case 'summary': return <SummaryPart key={key} text={p.text} />
-          case 'error': return <ErrorPart key={key} message={p.message} onRetry={isLast ? () => void regenerate(sessionId, message.id) : undefined} />
+          case 'error': return <ErrorPart key={key} message={p.message} onRetry={isLast && !readOnly ? () => void regenerate(sessionId, message.id) : undefined} />
           case 'image': return <img key={key} src={`data:${p.image.mime};base64,${p.image.dataBase64}`} alt={p.image.name} className="my-1.5 max-w-full rounded border border-border animate-pop" />
           case 'context': case 'checkpoint': return null
           default: return null
@@ -65,7 +66,8 @@ export const AssistantMessage = memo(function AssistantMessage({ message, sessio
           <UsageFooter usage={message.usage} durationMs={message.durationMs} modelId={message.modelId} routing={message.routing} />
           <span className="flex-1" />
           <div className="flex items-center gap-2 opacity-0 group-hover/msg:opacity-100 transition-opacity">
-            {isLast && <button type="button" onClick={() => void regenerate(sessionId, message.id)} title="Regenerate" className="text-faint hover:text-fg press"><RotateCcw size={11} /></button>}
+            {!readOnly && <button type="button" onClick={() => void forkSession(sessionId, message.id)} title="Fork from here (new thread with the history up to this message)" className="text-faint hover:text-fg press"><GitFork size={11} /></button>}
+            {isLast && !readOnly && <button type="button" onClick={() => void regenerate(sessionId, message.id)} title="Regenerate" className="text-faint hover:text-fg press"><RotateCcw size={11} /></button>}
             {allText && <button type="button" onClick={() => void copy()} title="Copy response" className="text-faint hover:text-fg press">{copied ? <Check size={11} className="text-success animate-pop" /> : <Copy size={11} />}</button>}
           </div>
         </div>

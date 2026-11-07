@@ -18,7 +18,7 @@ use std::sync::Arc;
 use tauri::Manager;
 use tokio_util::sync::CancellationToken;
 
-fn resolve(mgr: &AgentManager, settings: &Settings, model_id: Option<&str>) -> Result<ResolvedModel> {
+pub(crate) fn resolve(mgr: &AgentManager, settings: &Settings, model_id: Option<&str>) -> Result<ResolvedModel> {
     match mgr.app_opt() { Some(app) => { let secrets = app.state::<SettingsState>(); llm::resolve_model(settings, &secrets, model_id) } None => llm::resolve_model(settings, &SettingsState::load(), model_id) }
 }
 

@@ -241,3 +241,43 @@ pub async fn start_plan_build(app: &AppHandle, plan_path: &str, session_id: Opti
     mgr.submit(SendMessageRequest { session_id: sid.clone(), text: format!("Implement the following plan completely. Work through the steps in order, verify as you go, and report what was done.\n\nPlan file: {plan_path}\n\n{content}"), mode: "agent".into(), context: vec![ContextItem { id: format!("plan:{plan_path}"), kind: "plan".into(), label: title, path: Some(plan_path.to_string()), ..Default::default() }], ..Default::default() }).await?;
     Ok(sid)
 }
+
+// ───────── forks, provider handoff and multi-model fan-out (logic in agent/handoff.rs) ─────────
+
+/// Clone a session; with `message_id` the fork keeps history up to and including that message.
+#[tauri::command(async)]
+pub fn chat_fork_session(mgr: Mgr<'_>, session_id: String, message_id: Option<String>) -> Result<ChatSessionView> {
+    let h = mgr.handle(&session_id)?;
+    let budget = mgr.settings().chat.handoff_budget_tokens as usize;
+    let nh = crate::ai::agent::handoff::fork_session(&mgr, &h, message_id.as_deref().filter(|m| !m.is_empty()), budget)?;
+    let v = nh.session.lock().view(); Ok(v)
+}
+
+/// Move an idle thread to another agent (`caret` or an ACP agent id) and/or model, transferring the conversation
+/// within `chat.handoffBudgetTokens`. Leaves a muted system note and emits `SessionReset`.
+#[tauri::command]
+pub async fn chat_handoff_session(app: AppHandle, mgr: Mgr<'_>, session_id: String, agent_id: Option<String>, model_id: Option<String>) -> Result<ChatSessionView> {
+    let h = mgr.handle(&session_id)?;
+    let settings = mgr.settings();
+    let secrets = app.state::<SettingsState>();
+    let resolve = |m: Option<&str>| crate::ai::llm::resolve_model(&settings, &secrets, m);
+    let previous_agent = { let s = h.session.lock(); s.agent_id.clone().filter(|a| a != "caret") };
+    crate::ai::agent::handoff::handoff_session(&mgr, &h, agent_id.as_deref(), model_id.as_deref(), &settings, &resolve).await?;
+    // Leaving an external agent: drop its live session so a later return starts fresh with the transferred history.
+    let now_agent = { let s = h.session.lock(); s.agent_id.clone().filter(|a| a != "caret") };
+    if previous_agent.is_some() && previous_agent != now_agent {
+        let st = app.state::<crate::acp::AcpState>();
+        crate::acp::bridge::stop(&st.inner, &session_id);
+        st.inner.links.remove(&session_id);
+    }
+    let v = h.session.lock().view(); Ok(v)
+}
+
+/// Send one prompt to several models at once: one session per model (forks of `session_id` when it has messages),
+/// all sharing a `fan_out_group`. Returns the session ids in `model_ids` order.
+#[tauri::command]
+pub async fn chat_fan_out(mgr: Mgr<'_>, session_id: Option<String>, text: String, model_ids: Vec<String>, use_worktree: Option<bool>, mode: Option<String>, context: Option<Vec<ContextItem>>, images: Option<Vec<ImageAttachment>>, thinking: Option<String>, effort: Option<String>) -> Result<Vec<String>> {
+    let settings = mgr.settings();
+    let req = crate::ai::agent::handoff::FanOutRequest { session_id: session_id.filter(|s| !s.is_empty()), text, model_ids, use_worktree: use_worktree.unwrap_or(false), mode, context: context.unwrap_or_default(), images: images.unwrap_or_default(), thinking, effort };
+    crate::ai::agent::handoff::fan_out(mgr.inner(), &settings, req).await
+}

@@ -115,6 +115,7 @@ pub fn build_system_prompt(ctx: &PromptContext) -> Vec<SystemBlock> {
     let mcp_tools: Vec<&String> = ctx.tool_names.iter().filter(|t| t.starts_with("mcp_") || t.starts_with("mcp__")).collect();
     if !mcp_tools.is_empty() { knowledge.push_str(&format!("## MCP tools\n{} MCP tool(s) are available (prefixed `mcp_`). Use them when they fit the task better than local tools.\n\n", mcp_tools.len())); }
     if ctx.tool_names.iter().any(|t| t.starts_with("browser_")) { knowledge.push_str("## Browser\nBrowser tools (`browser_*`) can open pages, take DOM snapshots, click and type — use them to verify web UIs or read documentation.\n\n"); }
+    if ctx.tool_names.iter().any(|t| t == "read_thread") { knowledge.push_str("## Thread history\nOlder turns of this thread may have been compacted into a summary or handed over from another agent or model. When the user refers to something the summary lacks, call `read_thread` to read those messages verbatim instead of guessing.\n\n"); }
 
     // (c) volatile --------------------------------------------------------------
     let mut volatile = String::new();

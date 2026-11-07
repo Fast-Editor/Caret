@@ -261,3 +261,187 @@ async fn run_turn_with_unavailable_provider_ends_in_error_state() {
     assert!(ev.iter().any(|e| matches!(e, AgentEvent::MessageEnd { status: MessageStatus::Error, .. })));
     assert!(ev.iter().any(|e| matches!(e, AgentEvent::SessionStatus { status: SessionStatus::Idle, .. })));
 }
+
+// ───────────────────────── forks / handoff / fan-out (agent/handoff.rs) ─────────────────────────
+
+/// Two complete turns with transcript marks: t1 = (u1, a1) at transcript 0..2, t2 = (u2, a2) at 2..4.
+fn seed_two_turns(h: &SessionHandle) -> Vec<String> {
+    let mut s = h.session.lock();
+    let mut ids = vec![];
+    for (turn, u, a) in [("t1", "u1", "a1"), ("t2", "u2", "a2")] {
+        let len = s.transcript.len();
+        s.transcript_marks.push((turn.into(), len));
+        let mut um = ChatMessage::new(MessageRole::User); um.turn_id = Some(turn.into()); um.checkpoint_id = Some(turn.into()); um.parts.push(MessagePart::Text { text: u.into() });
+        let mut am = ChatMessage::new(MessageRole::Assistant); am.turn_id = Some(turn.into()); am.parts.push(MessagePart::Text { text: a.into() }); am.status = Some(MessageStatus::Done);
+        ids.push(um.id.clone()); ids.push(am.id.clone());
+        s.messages.push(um); s.messages.push(am);
+        s.transcript.push(crate::ai::llm::Message::user_text(u));
+        s.transcript.push(crate::ai::llm::Message::assistant_text(a));
+    }
+    ids
+}
+
+#[tokio::test]
+async fn fork_at_message_keeps_exact_messages_and_transcript_marks() {
+    use crate::ai::agent::handoff::fork_session;
+    let ws = temp_workspace();
+    let (mgr, h) = new_mgr(ws.path()).await;
+    let ids = seed_two_turns(&h);
+    let src_id = h.id();
+    // Cut after a1 (last message of t1): exact cut at t2's mark.
+    let f = fork_session(&mgr, &h, Some(&ids[1]), 12_000).unwrap();
+    {
+        let s = f.session.lock();
+        assert_eq!(s.messages.len(), 2); assert_eq!(s.messages[1].text(), "a1");
+        assert_eq!(s.transcript.len(), 2); assert_eq!(s.transcript[1].text(), "a1");
+        assert_eq!(s.transcript_marks, vec![("t1".to_string(), 0)]);
+        assert_eq!(s.parent_session_id.as_deref(), Some(src_id.as_str()));
+        assert_eq!(s.fork_of_message_id.as_deref(), Some(ids[1].as_str()));
+        assert_eq!(s.title, "Fork: Test"); assert!(!s.is_subagent); assert!(s.fan_out_group.is_none());
+        assert!(s.messages.iter().all(|m| m.checkpoint_id.is_none()), "checkpoint links belong to the parent");
+    }
+    assert!(mgr.test_events.lock().iter().any(|e| matches!(e, AgentEvent::SessionCreated { session } if session.id == f.id() && session.parent_session_id.as_deref() == Some(src_id.as_str()))));
+    assert!(mgr.handle(&f.id()).is_ok(), "fork is live in the manager");
+    // Cut after u2 (user message, partial turn): transcript before t2 plus the kept user text; t2 keeps its mark.
+    let f2 = fork_session(&mgr, &h, Some(&ids[2]), 12_000).unwrap();
+    {
+        let s = f2.session.lock();
+        assert_eq!(s.messages.len(), 3);
+        assert_eq!(s.transcript.len(), 3); assert_eq!(s.transcript[2].role, crate::ai::llm::Role::User); assert_eq!(s.transcript[2].text(), "u2");
+        assert_eq!(s.transcript_marks, vec![("t1".to_string(), 0), ("t2".to_string(), 2)]);
+    }
+    // No cut: a full copy.
+    let f3 = fork_session(&mgr, &h, None, 12_000).unwrap();
+    { let s = f3.session.lock(); assert_eq!(s.messages.len(), 4); assert_eq!(s.transcript.len(), 4); assert_eq!(s.transcript_marks.len(), 2); assert!(s.fork_of_message_id.is_none()); }
+    // Marks gone (as after compaction): the transcript is rebuilt from the kept messages.
+    { let mut s = h.session.lock(); s.transcript_marks.clear(); }
+    let f4 = fork_session(&mgr, &h, Some(&ids[1]), 12_000).unwrap();
+    { let s = f4.session.lock(); assert_eq!(s.messages.len(), 2); assert_eq!(s.transcript.len(), 2); assert_eq!(s.transcript[0].text(), "u1"); assert_eq!(s.transcript[1].text(), "a1"); assert!(s.transcript_marks.is_empty()); }
+    // The source is untouched.
+    { let s = h.session.lock(); assert_eq!(s.messages.len(), 4); assert_eq!(s.transcript.len(), 4); }
+    assert!(fork_session(&mgr, &h, Some("missing"), 12_000).is_err());
+}
+
+#[tokio::test]
+async fn handoff_acp_to_builtin_rebuilds_transcript_and_leaves_note() {
+    use crate::ai::agent::handoff::handoff_session;
+    let ws = temp_workspace();
+    let (mgr, h) = new_mgr(ws.path()).await;
+    seed_two_turns(&h);
+    { let mut s = h.session.lock(); s.agent_id = Some("codex".into()); s.transcript.clear(); s.transcript_marks.clear(); }
+    let settings = Settings::default();
+    let no_model = |_: Option<&str>| -> crate::error::Result<crate::ai::llm::ResolvedModel> { Err(crate::error::CaretError::config("no model in tests")) };
+    // Running sessions refuse.
+    h.running.store(true, std::sync::atomic::Ordering::SeqCst);
+    assert!(handoff_session(&mgr, &h, Some("caret"), None, &settings, &no_model).await.is_err());
+    h.running.store(false, std::sync::atomic::Ordering::SeqCst);
+    let before = mgr.test_events.lock().len();
+    let out = handoff_session(&mgr, &h, Some("caret"), None, &settings, &no_model).await.unwrap();
+    assert_eq!(out.transferred, 4); assert_eq!(out.summarized, 0);
+    assert_eq!(out.note, "Handed off to Caret. Transferred 4 messages.");
+    {
+        let s = h.session.lock();
+        assert!(s.agent_id.is_none());
+        assert_eq!(s.transcript.len(), 4, "u1 a1 u2 a2 rebuilt as text turns");
+        assert_eq!(s.transcript[0].role, crate::ai::llm::Role::User); assert_eq!(s.transcript[3].text(), "a2");
+        let note = s.messages.last().unwrap();
+        assert_eq!(note.role, MessageRole::System);
+        assert!(matches!(&note.parts[0], MessagePart::Text { text } if text == &out.note));
+    }
+    assert!(mgr.test_events.lock()[before..].iter().any(|e| matches!(e, AgentEvent::SessionReset { session_id } if *session_id == h.id())));
+    // Same agent, no model: nothing to do.
+    assert!(handoff_session(&mgr, &h, Some("caret"), None, &settings, &no_model).await.is_err());
+}
+
+#[tokio::test]
+async fn handoff_over_budget_summarises_older_messages() {
+    use crate::ai::agent::handoff::handoff_session;
+    let ws = temp_workspace();
+    let (mgr, h) = new_mgr(ws.path()).await;
+    seed_two_turns(&h);
+    { let mut s = h.session.lock(); s.agent_id = Some("codex".into()); s.transcript.clear(); s.transcript_marks.clear(); }
+    let mut settings = Settings::default(); settings.chat.handoff_budget_tokens = 500; // floor is 500; each seeded message costs ~5 tokens
+    // Pad the second user message so the budget overflows and the oldest turn must be summarised.
+    { let mut s = h.session.lock(); let big = "word ".repeat(400); if let MessagePart::Text { text } = &mut s.messages[2].parts[0] { *text = big; } }
+    let no_model = |_: Option<&str>| -> crate::error::Result<crate::ai::llm::ResolvedModel> { Err(crate::error::CaretError::config("no model in tests")) };
+    let out = handoff_session(&mgr, &h, Some("caret"), None, &settings, &no_model).await.unwrap();
+    assert!(out.summarized >= 1 && out.transferred >= 1, "{out:?}");
+    assert!(out.note.contains("summarised"), "{}", out.note);
+    let s = h.session.lock();
+    assert!(s.transcript[0].text().starts_with("<conversation_summary>"), "summary exchange opens the transcript");
+    assert!(s.transcript[0].text().contains("- User: u1"), "digest fallback lists the compacted messages");
+    assert_eq!(s.transcript[1].role, crate::ai::llm::Role::Assistant);
+    assert!(s.summary.is_some());
+    let note = s.messages.last().unwrap();
+    assert!(note.parts.iter().any(|p| matches!(p, MessagePart::Summary { .. })), "note carries the expandable summary");
+}
+
+#[tokio::test]
+async fn handoff_model_change_drops_thinking_and_sets_model() {
+    use crate::ai::agent::handoff::handoff_session;
+    let ws = temp_workspace();
+    let (mgr, h) = new_mgr(ws.path()).await;
+    seed_two_turns(&h);
+    { let mut s = h.session.lock(); s.model_id = Some("claude-opus-5-5".into()); s.transcript_model = Some("claude-opus-5-5".into()); s.transcript[1].content.insert(0, crate::ai::llm::ContentBlock::Thinking { text: "hmm".into(), signature: None }); }
+    let settings = Settings::default();
+    let resolve = |m: Option<&str>| crate::ai::llm::resolve_model(&settings, &crate::core::settings::SettingsState::load(), m);
+    let out = handoff_session(&mgr, &h, None, Some("gpt-5"), &settings, &resolve).await.unwrap();
+    assert_eq!(out.note, "Switched to GPT-5.");
+    let s = h.session.lock();
+    assert_eq!(s.model_id.as_deref(), Some("gpt-5"));
+    assert_eq!(s.transcript_model.as_deref(), Some("gpt-5"));
+    assert!(s.transcript.iter().all(|m| !m.content.iter().any(|b| matches!(b, crate::ai::llm::ContentBlock::Thinking { .. }))), "model-bound thinking blocks are dropped");
+    assert_eq!(s.transcript.len(), 4);
+}
+
+#[tokio::test]
+async fn fan_out_creates_one_session_per_model_with_a_shared_group() {
+    use crate::ai::agent::handoff::{fan_out, FanOutRequest};
+    let ws = temp_workspace();
+    let (mgr, h) = new_mgr(ws.path()).await;
+    let settings = Settings::default();
+    // Fresh sessions (no source history).
+    let ids = fan_out(&mgr, &settings, FanOutRequest { text: "Explain the build".into(), model_ids: vec!["claude-opus-5-5".into(), "gpt-5".into(), "gpt-5".into()], ..Default::default() }).await.unwrap();
+    assert_eq!(ids.len(), 2, "duplicate models collapse");
+    let a = mgr.handle(&ids[0]).unwrap(); let b = mgr.handle(&ids[1]).unwrap();
+    let (ga, gb) = (a.session.lock().fan_out_group.clone(), b.session.lock().fan_out_group.clone());
+    assert!(ga.is_some()); assert_eq!(ga, gb);
+    assert_eq!(a.session.lock().model_id.as_deref(), Some("claude-opus-5-5")); assert_eq!(b.session.lock().model_id.as_deref(), Some("gpt-5"));
+    assert_eq!(a.session.lock().title, "Explain the build · Claude Opus 5.5"); assert_eq!(b.session.lock().title, "Explain the build · GPT-5");
+    assert!(a.session.lock().parent_session_id.is_none());
+    for id in &ids { assert!(mgr.test_events.lock().iter().any(|e| matches!(e, AgentEvent::SessionCreated { session } if session.id == *id && session.fan_out_group == ga))); }
+    // Both turns were submitted (providers are stubs: they end in error quickly) and each session got its user message.
+    for _ in 0..200 { tokio::time::sleep(std::time::Duration::from_millis(25)).await; if !a.is_running() && !b.is_running() { break; } }
+    assert!(!a.is_running() && !b.is_running());
+    assert_eq!(a.session.lock().messages[0].text(), "Explain the build"); assert_eq!(b.session.lock().messages[0].text(), "Explain the build");
+    // From a session with history: forks carrying the parent id and its messages.
+    seed_two_turns(&h);
+    let ids2 = fan_out(&mgr, &settings, FanOutRequest { session_id: Some(h.id()), text: "and now?".into(), model_ids: vec!["claude-opus-5-5".into(), "gpt-5".into()], ..Default::default() }).await.unwrap();
+    assert_eq!(ids2.len(), 2);
+    let c = mgr.handle(&ids2[0]).unwrap();
+    for _ in 0..200 { tokio::time::sleep(std::time::Duration::from_millis(25)).await; if !c.is_running() { break; } }
+    { let s = c.session.lock(); assert_eq!(s.parent_session_id.as_deref(), Some(h.id().as_str())); assert!(s.title.starts_with("Test · ")); assert!(s.messages.len() >= 5, "4 inherited + the fan-out prompt"); assert_eq!(s.messages[4].text(), "and now?"); }
+    assert!(fan_out(&mgr, &settings, FanOutRequest { text: "x".into(), model_ids: vec![], ..Default::default() }).await.is_err());
+}
+
+#[tokio::test]
+async fn read_thread_tool_pages_earlier_messages() {
+    let ws = temp_workspace();
+    let (mgr, h) = new_mgr(ws.path()).await;
+    seed_two_turns(&h);
+    let mid = seed(&h, "r1", "read_thread"); // adds the in-flight turn t1b... (seed uses turn t1 which is also seeded; mark the current turn explicitly)
+    { let mut s = h.session.lock(); s.current_turn = Some("t1".into()); }
+    let c = ctx(&mgr, &h, Settings::default(), &mid, "r1");
+    let tool = mgr.registry.get("read_thread").unwrap();
+    assert!(tool.readonly());
+    let (_, out) = execute_one(mgr.clone(), h.clone(), c, ToolRun { id: "r1".into(), name: "read_thread".into(), input: json!({"offset": 0, "limit": 1}), tool: Some(tool.clone()) }).await;
+    assert!(!out.is_error, "{}", out.text);
+    assert!(out.text.contains("has 2 earlier message(s)"), "t1 messages are the current turn and excluded: {}", out.text);
+    assert!(out.text.contains("#0 user:\nu2")); assert!(!out.text.contains("a2")); assert!(out.text.contains("offset=1"));
+    let c = ctx(&mgr, &h, Settings::default(), &mid, "r1");
+    let (_, out) = execute_one(mgr.clone(), h.clone(), c, ToolRun { id: "r1".into(), name: "read_thread".into(), input: json!({"offset": 1}), tool: Some(tool.clone()) }).await;
+    assert!(out.text.contains("#1 assistant:\na2"), "{}", out.text);
+    let c = ctx(&mgr, &h, Settings::default(), &mid, "r1");
+    let (_, out) = execute_one(mgr.clone(), h.clone(), c, ToolRun { id: "r1".into(), name: "read_thread".into(), input: json!({"offset": 9}), tool: Some(tool) }).await;
+    assert!(out.text.contains("No messages at offset 9"), "{}", out.text);
+}

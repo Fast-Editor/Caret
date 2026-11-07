@@ -99,6 +99,13 @@ impl AgentManager {
             if let Some((_, h)) = self.sessions.remove(&id) { let s = h.session.lock(); let _ = self.store.save_now(&self.ws_key_of(&s), &s); }
         }
     }
+    /// Register a session handle built elsewhere (forks, fan-out) so it is live immediately; persists and evicts idle handles.
+    pub fn adopt(&self, h: Arc<SessionHandle>) -> Arc<SessionHandle> {
+        self.sessions.insert(h.id(), h.clone());
+        self.persist_now(&h);
+        self.evict_idle();
+        h
+    }
     pub fn persist(&self, h: &SessionHandle) { let s = h.session.lock(); self.store.save(&self.ws_key_of(&s), &s); }
     pub fn persist_now(&self, h: &SessionHandle) { let s = h.session.lock(); let _ = self.store.save_now(&self.ws_key_of(&s), &s); }
     /// Record the latest verification report for a session (verify engine) and refresh listeners.

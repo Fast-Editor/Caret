@@ -525,3 +525,24 @@ export interface HistoryEntry {
 }
 export interface HistorySearchHit { entry: HistoryEntry; score: number; why: string }
 export interface HistoryNlResult { hits: HistorySearchHit[]; keywords: string[]; usedModel: boolean }
+
+// ───────────────────────────── forks, provider handoff, multi-model fan-out ─────────────────────────────
+// Appended as interface merges so the diff stays append-only (TypeScript merges same-name interfaces in a module).
+/** Chat thread features (mirrors `ChatSettings` in src-tauri/src/core/settings.rs). */
+export interface ChatSettings {
+  /** Token budget (chars/4) for the context transferred when a thread is handed to another agent or model. */
+  handoffBudgetTokens: number
+}
+export interface Settings { chat: ChatSettings }
+export interface ChatSession {
+  /** Parent message this fork was cut after (`chat_fork_session` with a message id). */
+  forkOfMessageId?: string
+  /** Shared id of a multi-model fan-out batch (`chat_fan_out`). */
+  fanOutGroup?: string
+}
+export interface ChatSessionSummary { fanOutGroup?: string }
+/** `chat_fan_out` arguments (camelCase of the Rust command parameters). */
+export interface FanOutRequest {
+  sessionId?: string; text: string; modelIds: string[]; useWorktree?: boolean; mode?: ModeId
+  context?: ContextItem[]; images?: ImageAttachment[]; thinking?: ThinkingPref; effort?: Effort
+}

@@ -134,5 +134,6 @@ export function initChatModule(): void {
     } },
     { id: 'chat.toggleAgentsLayout', title: 'View: Toggle Agents Layout', category: 'View', hidden: true, run: () => { if (hasCommand('view.toggleAgentsLayout')) return runCommand('view.toggleAgentsLayout'); const ui = useUi.getState(); ui.set({ layout: ui.layout === 'agents' ? 'editor' : 'agents' }) } },
     { id: 'chat.selectModel', title: 'Chat: Select Model', category: 'Chat', hidden: true, run: (a) => useChat.getState().setModel(null, (a as { modelId?: string } | undefined)?.modelId ?? AUTO_MODEL) },
+    { id: 'chat.fork', title: 'Chat: Fork Thread', category: 'Chat', run: async (a) => { const o = a as { sessionId?: string; messageId?: string } | undefined; const c = useChat.getState(); const id = o?.sessionId ?? c.activeSessionId; if (!id) return; const s = await c.forkSession(id, o?.messageId); openPane(s.id); return s.id } },
   ])
 }
