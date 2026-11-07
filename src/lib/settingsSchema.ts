@@ -65,6 +65,7 @@ export const DEFAULTS: Settings = {
     maxIterations: 60, maxToolOutputChars: 30000, webSearchEnabled: true, webSearchProvider: 'duckduckgo', webSearchEndpoint: undefined, webSearchApiKeyRef: undefined,
     subagentModelId: undefined, summarizeThresholdRatio: 0.8, chimeOnFinish: false, thinking: 'auto', effort: 'high', commandTimeoutSecs: 120,
     mcpAutoRun: false, autoRunMcpTools: [], largeContextMode: false, parallelToolCalls: true,
+    permissionMode: undefined, maxPermissionMode: undefined,
   },
   indexing: { enabled: true, embeddingsProviderId: undefined, embeddingsModel: undefined, maxFileSizeKb: 512, excludeGlobs: ['**/node_modules/**', '**/target/**', '**/dist/**', '**/build/**', '**/.git/**', '**/*.min.js', '**/*.lock', '**/package-lock.json', '**/*.map'], chunkLines: 60, chunkOverlap: 10, autoIndexNewFolders: true, hybridAlpha: 0.5, gitGraphIndexing: false },
   ui: {
@@ -88,7 +89,15 @@ export const DEFAULTS: Settings = {
   acp: { enabled: true, defaultAgentId: 'caret', agents: [], passMcpServers: true, sessionDefaults: {}, terminalSafety: true },
   terminal: { blocks: true, shellIntegration: true, aiEnabled: true, programStatus: true, maxBlocks: 200, suggestions: 'ai' },
   router: { enabled: false, source: 'npm', overrides: {}, excludedModels: [], stickySessions: true, routeSingleShot: true, tpmLimit: undefined, embeddingsProviderId: undefined },
+  worktrees: { perThreadDefault: false, location: '.caret/worktrees', branchTemplate: 'caret/{slug}', cleanupInactiveDays: 14, cleanupSettled: true, cleanupMerged: true, cleanupNoCommits: true, onLocalChanges: 'keep', deleteBranchWithWorktree: true, autoCleanup: false },
 }
+
+const PERMISSION_MODE_OPTIONS: SelectOption[] = [
+  { value: 'supervised', label: 'Supervised', description: 'Every command, edit and MCP tool asks first' },
+  { value: 'auto-accept-edits', label: 'Auto-accept edits', description: 'Edits inside the workspace apply; only allowlisted, non-destructive commands run' },
+  { value: 'auto', label: 'Auto', description: 'Edits and safe/caution commands run; destructive commands ask' },
+  { value: 'full-access', label: 'Full access', description: 'Everything runs, destructive commands included; blocked and denylisted stay denied' },
+]
 
 export const SETTINGS_FIELDS: SettingField[] = [
   // ── Auto routing (rendered inside Settings → Models by AutoRoutingSection) ──
@@ -130,7 +139,9 @@ export const SETTINGS_FIELDS: SettingField[] = [
   { id: 'agent.subagentModelId', page: 'agent', type: 'model', title: 'Subagent model', description: 'Model for `task` subagents. Empty uses the session model.', optional: true, group: 'Defaults' },
   { id: 'agent.thinking', page: 'agent', type: 'select', title: 'Thinking', options: [{ value: 'auto', label: 'Auto' }, { value: 'on', label: 'On' }, { value: 'off', label: 'Off' }], group: 'Defaults', keywords: ['reasoning'] },
   { id: 'agent.effort', page: 'agent', type: 'select', title: 'Effort', description: 'Reasoning depth for models that support effort.', options: ['low', 'medium', 'high', 'xhigh', 'max'].map((v) => ({ value: v, label: v })), group: 'Defaults' },
-  { id: 'agent.autoRun', page: 'agent', type: 'select', title: 'Auto-run commands', description: 'How terminal commands proposed by the agent are approved.', options: [{ value: 'off', label: 'Off — always ask' }, { value: 'allowlist', label: 'Allowlist — run matching commands automatically' }, { value: 'all', label: 'All — run every command (YOLO)' }], warning: 'Running every command without review can damage your system. Use allowlists where possible.', group: 'Auto-run', keywords: ['yolo'] },
+  { id: 'agent.permissionMode', page: 'agent', type: 'select', title: 'Default permission mode', description: 'What new threads may do without asking. Threads can pick their own mode in the composer (shield icon). Unset derives the mode from the legacy Auto-run setting: off = Supervised, allowlist = Auto-accept edits, all = Auto.', options: PERMISSION_MODE_OPTIONS, optional: true, placeholder: 'Derived from Auto-run', group: 'Permissions', keywords: ['permission', 'supervised', 'full access', 'yolo', 'approval'] },
+  { id: 'agent.maxPermissionMode', page: 'agent', type: 'select', title: 'Maximum permission mode (cap)', description: 'No thread can exceed this mode, whatever it requests. Set it in the Workspace scope (.caret/settings.json) to lower the cap for one project, for example to keep a shared repository at Supervised.', options: PERMISSION_MODE_OPTIONS, optional: true, placeholder: 'No cap', group: 'Permissions', keywords: ['permission', 'cap', 'limit', 'workspace'] },
+  { id: 'agent.autoRun', page: 'agent', type: 'select', title: 'Auto-run commands (legacy)', description: 'Used only when no default permission mode is set: how terminal commands proposed by the agent are approved.', options: [{ value: 'off', label: 'Off — always ask' }, { value: 'allowlist', label: 'Allowlist — run matching commands automatically' }, { value: 'all', label: 'All — run every command (YOLO)' }], warning: 'Running every command without review can damage your system. Use allowlists where possible.', group: 'Auto-run', keywords: ['yolo'] },
   { id: 'agent.commandAllowlist', page: 'agent', type: 'stringList', title: 'Command allowlist', description: 'Prefixes that run without approval when auto-run is set to Allowlist.', group: 'Auto-run' },
   { id: 'agent.commandDenylist', page: 'agent', type: 'stringList', title: 'Command denylist', description: 'Commands containing these fragments always require explicit approval.', group: 'Auto-run' },
   { id: 'agent.commandTimeoutSecs', page: 'agent', type: 'number', title: 'Command timeout', unit: 's', min: 5, max: 3600, step: 5, group: 'Auto-run' },
@@ -152,6 +163,16 @@ export const SETTINGS_FIELDS: SettingField[] = [
   { id: 'agent.summarizeThresholdRatio', page: 'agent', type: 'number', title: 'Summarize at context usage', description: 'Fraction of the context window after which older turns are summarized.', min: 0.3, max: 0.95, step: 0.05, group: 'Behaviour' },
   { id: 'agent.largeContextMode', page: 'agent', type: 'boolean', title: 'Large context mode', description: 'Include more file content per request (higher cost).', group: 'Behaviour' },
   { id: 'agent.chimeOnFinish', page: 'agent', type: 'boolean', title: 'Play a chime when the agent finishes', group: 'Behaviour' },
+  { id: 'worktrees.perThreadDefault', page: 'agent', type: 'boolean', title: 'Worktree per thread by default', description: 'New threads start in their own git worktree (the composer pill can still turn it off).', group: 'Worktrees', keywords: ['worktree', 'isolation', 'background agent'] },
+  { id: 'worktrees.location', page: 'agent', type: 'string', title: 'Worktree location', description: 'Folder for agent worktrees: relative to the workspace root, absolute, or ~/ path.', placeholder: '.caret/worktrees', group: 'Worktrees' },
+  { id: 'worktrees.branchTemplate', page: 'agent', type: 'string', title: 'Branch name template', description: 'Placeholders: {slug} (thread title), {model}, {id}, {date}.', placeholder: 'caret/{slug}', group: 'Worktrees' },
+  { id: 'worktrees.cleanupInactiveDays', page: 'agent', type: 'number', title: 'Clean up after inactivity', description: 'Offer to remove worktrees of threads idle for this many days. 0 turns the policy off.', unit: 'days', min: 0, max: 365, group: 'Worktrees' },
+  { id: 'worktrees.cleanupSettled', page: 'agent', type: 'boolean', title: 'Clean up archived threads', description: 'Worktrees of archived threads qualify for cleanup.', group: 'Worktrees' },
+  { id: 'worktrees.cleanupMerged', page: 'agent', type: 'boolean', title: 'Clean up merged branches', description: 'Worktrees whose branch is merged into the default branch qualify for cleanup.', group: 'Worktrees' },
+  { id: 'worktrees.cleanupNoCommits', page: 'agent', type: 'boolean', title: 'Clean up worktrees without commits', description: 'Worktrees whose branch never moved past its base qualify for cleanup.', group: 'Worktrees' },
+  { id: 'worktrees.onLocalChanges', page: 'agent', type: 'select', title: 'On local changes', description: 'What cleanup does with uncommitted changes in a worktree.', options: [{ value: 'keep', label: 'Keep: skip dirty worktrees' }, { value: 'stash', label: 'Stash: save changes to the repository stash, then remove' }, { value: 'discard', label: 'Discard: remove anyway' }], group: 'Worktrees' },
+  { id: 'worktrees.deleteBranchWithWorktree', page: 'agent', type: 'boolean', title: 'Delete branch with worktree', description: 'Also delete the branch when it has no unmerged commits (branches with commits are always kept).', group: 'Worktrees' },
+  { id: 'worktrees.autoCleanup', page: 'agent', type: 'boolean', title: 'Run cleanup on app start', description: 'Apply the policies above automatically when Caret starts or a folder opens, and report what was removed.', group: 'Worktrees' },
   { id: 'agent.webSearchEnabled', page: 'agent', type: 'boolean', title: 'Enable web search tool', group: 'Web' },
   { id: 'agent.webSearchProvider', page: 'agent', type: 'select', title: 'Web search provider', options: [{ value: 'duckduckgo', label: 'DuckDuckGo (no key)' }, { value: 'searxng', label: 'SearXNG (self-hosted)' }, { value: 'brave', label: 'Brave Search API' }, { value: 'tavily', label: 'Tavily' }], dependsOn: 'agent.webSearchEnabled', group: 'Web' },
   { id: 'agent.webSearchEndpoint', page: 'agent', type: 'string', title: 'Search endpoint', description: 'SearXNG base URL.', placeholder: 'http://localhost:8080', optional: true, dependsOn: 'agent.webSearchEnabled', group: 'Web' },

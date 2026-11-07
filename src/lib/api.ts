@@ -154,6 +154,15 @@ const apiBase = {
     contextPreview: (items: T.ContextItem[]) => invoke<{ totalTokens: number; items: { id: string; tokens: number; truncated: boolean }[] }>('chat_context_preview', { items }),
     mentionCandidates: (kind: T.ContextItemKind, query: string, limit = 30) => invoke<T.ContextItem[]>('chat_mention_candidates', { kind, query, limit }),
     toolCatalog: () => invoke<{ name: string; displayName: string; description: string; group: string; readonly: boolean }[]>('chat_tool_catalog'),
+    /** Per-thread permission mode; `null` returns the thread to the settings default. Live ACP sessions get the mapped mode. */
+    setPermissionMode: (sessionId: string, mode: T.PermissionMode | null) => invoke<T.ChatSession>('chat_set_permission_mode', { sessionId, mode }),
+    worktreeStatus: (sessionId: string) => invoke<T.WorktreeStatus>('chat_worktree_status', { sessionId }),
+    worktreeCleanupPreview: () => invoke<T.WorktreeCleanupCandidate[]>('chat_worktree_cleanup_preview'),
+    worktreeCleanup: (sessionIds: string[]) => invoke<T.WorktreeCleanupReport>('chat_worktree_cleanup', { sessionIds }),
+    /** Scratch thread: its own git repo under ~/.caret/scratch/<id>; works with no folder open. */
+    createScratchSession: (opts?: { mode?: T.ModeId; modelId?: string; title?: string; agentId?: string }) => invoke<T.ChatSession>('chat_create_scratch_session', { ...opts }),
+    /** Move a scratch thread's folder to `targetDir` (new or empty) and re-home the session there. */
+    promoteScratch: (sessionId: string, targetDir: string) => invoke<T.ChatSession>('chat_promote_scratch', { sessionId, targetDir }),
   },
 
   ai: {

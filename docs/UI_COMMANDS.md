@@ -50,6 +50,8 @@ terminal's status changes. `settings.terminal.aiEnabled=false` hides ⌘K, expla
 ## Agents (ACP)
 
 - `chat.new` accepts `{ mode?, agentId? }` — `agentId` is `caret` (built-in) or an ACP agent id (`claude-code`, `codex`, `gemini`, `pi`, `glm`, or a custom id). Returns the session id.
+- `chat.newScratch` ("Chat: New Scratch Thread") accepts `{ mode?, agentId?, title? }` and works with no folder open: the thread gets its own throwaway git repository under `~/.caret/scratch/<id>`; the chat pane banner offers "Make it a project..." (moves the folder, opens it as the workspace). Returns the session id.
+- `chat.newBackground` (mod+e) starts a thread in a git worktree; `settings.worktrees.perThreadDefault` makes every new thread do that. Source Control > Worktrees has "Clean up agent worktrees" (preview + remove per the cleanup policies).
 - `settings.open` with `{ page: 'agents' }` opens the external agents page.
 - Bus topics: `chat:agent-status` (per-session `AcpAgentStatus` fan-out of the `agent-status` agent event), `chat:agent-changed` (composer picker changed `{ sessionId, agentId }`), `acp:changed` (install/toggle/probe finished; pickers reload).
 - Automation: `window.__caret.stores.chat` exposes the chat store for `scripts/e2e.mjs`.

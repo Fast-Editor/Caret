@@ -147,6 +147,10 @@ export interface AgentSettings {
   subagentModelId?: string; summarizeThresholdRatio: number; chimeOnFinish: boolean
   thinking: ThinkingPref; effort: Effort; commandTimeoutSecs: number; mcpAutoRun: boolean
   autoRunMcpTools: string[]; largeContextMode: boolean; parallelToolCalls: boolean
+  /** Default permission mode for new threads; unset derives it from `autoRun`. */
+  permissionMode?: PermissionMode
+  /** Cap: the effective mode never exceeds this (a workspace .caret/settings.json can lower it). */
+  maxPermissionMode?: PermissionMode
 }
 export interface IndexingSettings {
   enabled: boolean; embeddingsProviderId?: string; embeddingsModel?: string; maxFileSizeKb: number
@@ -186,6 +190,7 @@ export interface Settings {
   mcp: { enabled: boolean }; customModes: CustomMode[]; beta: BetaSettings
   keybindings: Record<string, string | null>
   verify: VerifySettings; sandbox: SandboxSettings; acp: AcpSettings; terminal: TerminalSettings; router: RouterSettings
+  worktrees: WorktreeSettings
 }
 export interface RouterSettings { enabled: boolean; source: 'npm' | 'bundled'; overrides: Record<string, string>; excludedModels: string[]; stickySessions: boolean; routeSingleShot: boolean; tpmLimit?: number; embeddingsProviderId?: string }
 export type RouterTier = 'simple' | 'medium' | 'complex' | 'reasoning'
@@ -226,6 +231,8 @@ export interface ApprovalRequest {
   kind: 'command' | 'mcp' | 'file-delete' | 'file-edit' | 'outside-workspace' | 'web' | 'subagent' | 'browser'
   title: string; detail: string; command?: string; cwd?: string; options: ApprovalOption[]; allowAlwaysPattern?: string
   classification?: CommandClassification; riskTier?: RiskTier; sandboxed?: boolean; agentId?: string
+  /** Effective permission mode the policy applied when it asked. */
+  permissionMode?: PermissionMode
 }
 export interface AgentQuestion { questionId: string; question: string; options?: string[]; allowFreeText: boolean }
 export interface FileChangeSummary {
@@ -268,11 +275,16 @@ export interface ChatSession {
   worktreePath?: string; branch?: string; status: SessionStatus; queuedMessages: QueuedMessage[]
   summary?: string; parentSessionId?: string; isSubagent?: boolean; contextTokens: number; pinned?: boolean; archived?: boolean
   agentId?: string; agentKind?: AgentKind; lastVerificationId?: string; reviewComments?: ReviewComment[]
+  /** Per-thread permission mode override (unset = settings default). */
+  permissionMode?: PermissionMode
+  /** Scratch thread living in ~/.caret/scratch/<id> until promoted to a project. */
+  scratch?: boolean
 }
 export interface ChatSessionSummary {
   id: string; title: string; workspaceRoot: string; createdAt: number; updatedAt: number; mode: ModeId
   status: SessionStatus; messageCount: number; lastMessagePreview: string; worktreePath?: string; isSubagent?: boolean
   pendingChangeCount: number; pinned?: boolean; archived?: boolean; modelId?: string; agentId?: string; riskTier?: RiskTier
+  scratch?: boolean
 }
 export type AgentEvent =
   | { type: 'session-status'; sessionId: string; status: SessionStatus }
@@ -525,3 +537,15 @@ export interface HistoryEntry {
 }
 export interface HistorySearchHit { entry: HistoryEntry; score: number; why: string }
 export interface HistoryNlResult { hits: HistorySearchHit[]; keywords: string[]; usedModel: boolean }
+
+// ───────────────────────────── permission modes, worktree policies, scratch threads ─────────────────────────────
+/** Mirror of `policy::PermissionMode` (kebab-case). Ordered from most to least restrictive. */
+export type PermissionMode = 'supervised' | 'auto-accept-edits' | 'auto' | 'full-access'
+export interface WorktreeSettings {
+  perThreadDefault: boolean; location: string; branchTemplate: string
+  cleanupInactiveDays: number; cleanupSettled: boolean; cleanupMerged: boolean; cleanupNoCommits: boolean
+  onLocalChanges: 'keep' | 'stash' | 'discard'; deleteBranchWithWorktree: boolean; autoCleanup: boolean
+}
+export interface WorktreeStatus { path: string; branch?: string; hasCommitsBeyondBase: boolean; dirty: boolean; mergedIntoDefault: boolean; lastActivity: number }
+export interface WorktreeCleanupCandidate { sessionId: string; title: string; path: string; branch?: string; reasons: string[]; dirty: boolean }
+export interface WorktreeCleanupReport { removed: string[]; skipped: { sessionId: string; reason: string }[]; notes: string[] }

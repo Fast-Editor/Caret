@@ -1,8 +1,9 @@
 import { create } from 'zustand'
 import type {
   AgentEvent, ApprovalOption, ChatSession, ChatSessionSummary, ContextItem, Effort, ImageAttachment, ModeId, SendMessageRequest,
-  SlashCommandInfo, ThinkingPref, TodoItem, PendingChange, Checkpoint, ModelConfig,
+  SlashCommandInfo, ThinkingPref, TodoItem, PendingChange, Checkpoint, ModelConfig, PermissionMode,
 } from '@/types'
+import { useWorkspace } from '@/store/workspace'
 import { api } from '@/lib/api'
 import { emit as busEmit } from '@/lib/bus'
 import { useSettings } from '@/store/settings'
@@ -40,7 +41,7 @@ export function defaultDraft(mode?: ModeId): ComposerDraft {
   return {
     text: '', context: [], images: [], mode: mode ?? (s?.agent.defaultMode as ModeId) ?? 'agent',
     modelId: s?.agent.defaultModelId ?? AUTO_MODEL, thinking: (s?.agent.thinking as ThinkingPref) ?? 'auto', effort: (s?.agent.effort as Effort) ?? 'high',
-    includeActiveFile: true, useWorktree: false, agentId: s?.acp?.defaultAgentId || 'caret',
+    includeActiveFile: true, useWorktree: s?.worktrees?.perThreadDefault ?? false, agentId: s?.acp?.defaultAgentId || 'caret',
   }
 }
 
@@ -105,6 +106,13 @@ export interface ChatState extends ChatCoreState {
   toggleFavoriteModel: (modelId: string) => void
   focusComposer: () => void
   reset: () => void
+  // permission modes / scratch threads
+  setPermissionMode: (sessionId: string, mode: PermissionMode | null) => Promise<void>
+  createScratchSession: (opts?: { mode?: ModeId; modelId?: string; title?: string; agentId?: string }) => Promise<ChatSession>
+  /** Move a scratch thread into `targetDir`, open it as the workspace and keep the thread selected. */
+  promoteScratch: (sessionId: string, targetDir: string) => Promise<void>
+  /** Session to select once the workspace-change reload finishes (set by promoteScratch). */
+  pendingSelect: string | null
 }
 
 const FAV_KEY = 'caret.chat.favoriteModels'
@@ -166,12 +174,16 @@ export const useChat = create<ChatState>((set, get) => ({
     }
   },
   createSession: async (opts) => {
-    const session = await api.chat.createSession({ mode: opts?.mode, modelId: opts?.modelId === AUTO_MODEL ? undefined : opts?.modelId, title: opts?.title, useWorktree: opts?.useWorktree, agentId: opts?.agentId })
+    // `worktrees.perThreadDefault` seeds the worktree flag; when that default fails (no git repo) fall back to a plain thread.
+    const defaultWorktree = opts?.useWorktree === undefined && !!useSettings.getState().settings?.worktrees?.perThreadDefault && !!useWorkspace.getState().workspace
+    const base = { mode: opts?.mode, modelId: opts?.modelId === AUTO_MODEL ? undefined : opts?.modelId, title: opts?.title, agentId: opts?.agentId }
+    let session: ChatSession
+    try { session = await api.chat.createSession({ ...base, useWorktree: opts?.useWorktree ?? defaultWorktree }) } catch (e) { if (!defaultWorktree) throw e; console.warn('worktree-by-default failed, creating a plain thread', e); session = await api.chat.createSession({ ...base, useWorktree: false }) }
     set((s) => ({
       loaded: { ...s.loaded, [session.id]: session },
       sessions: s.sessions.some((x) => x.id === session.id) ? s.sessions : [{ id: session.id, title: session.title, workspaceRoot: session.workspaceRoot, createdAt: session.createdAt, updatedAt: session.updatedAt, mode: session.mode, status: session.status, messageCount: 0, lastMessagePreview: '', worktreePath: session.worktreePath, isSubagent: session.isSubagent, pendingChangeCount: 0, modelId: session.modelId }, ...s.sessions],
       activeSessionId: opts?.activate === false ? s.activeSessionId : session.id,
-      drafts: { ...s.drafts, [session.id]: { ...defaultDraft(session.mode), modelId: session.modelId ?? AUTO_MODEL, useWorktree: !!opts?.useWorktree, agentId: session.agentId ?? opts?.agentId ?? 'caret' } },
+      drafts: { ...s.drafts, [session.id]: { ...defaultDraft(session.mode), modelId: session.modelId ?? AUTO_MODEL, useWorktree: !!session.worktreePath, agentId: session.agentId ?? opts?.agentId ?? 'caret' } },
     }))
     return session
   },
@@ -316,6 +328,31 @@ export const useChat = create<ChatState>((set, get) => ({
   toggleFavoriteModel: (modelId) => set((s) => { const f = s.favoriteModels.includes(modelId) ? s.favoriteModels.filter((m) => m !== modelId) : [...s.favoriteModels, modelId]; try { localStorage.setItem(FAV_KEY, JSON.stringify(f)) } catch {} return { favoriteModels: f } }),
   focusComposer: () => set((s) => ({ composerFocusNonce: s.composerFocusNonce + 1 })),
   reset: () => set({ ...emptyCoreState(), activeSessionId: null, drafts: {}, sessionsLoaded: false, changeCache: {}, checkpoints: {} }),
+
+  // ───────── permission modes / scratch threads ─────────
+  pendingSelect: null,
+  setPermissionMode: async (sessionId, mode) => {
+    // optimistic: the picker reflects the choice immediately; the backend view confirms it
+    set((s) => ({ loaded: s.loaded[sessionId] ? { ...s.loaded, [sessionId]: { ...s.loaded[sessionId], permissionMode: mode ?? undefined } } : s.loaded }))
+    const session = await api.chat.setPermissionMode(sessionId, mode)
+    set((s) => ({ loaded: s.loaded[sessionId] ? { ...s.loaded, [sessionId]: { ...s.loaded[sessionId], permissionMode: session.permissionMode } } : s.loaded }))
+  },
+  createScratchSession: async (opts) => {
+    const session = await api.chat.createScratchSession({ mode: opts?.mode, modelId: opts?.modelId === AUTO_MODEL ? undefined : opts?.modelId, title: opts?.title, agentId: opts?.agentId })
+    set((s) => ({
+      loaded: { ...s.loaded, [session.id]: session },
+      sessions: s.sessions.some((x) => x.id === session.id) ? s.sessions : [{ id: session.id, title: session.title, workspaceRoot: session.workspaceRoot, createdAt: session.createdAt, updatedAt: session.updatedAt, mode: session.mode, status: session.status, messageCount: 0, lastMessagePreview: '', isSubagent: session.isSubagent, pendingChangeCount: 0, modelId: session.modelId, scratch: true }, ...s.sessions],
+      activeSessionId: session.id,
+      drafts: { ...s.drafts, [session.id]: { ...defaultDraft(session.mode), modelId: session.modelId ?? AUTO_MODEL, useWorktree: false, agentId: session.agentId ?? opts?.agentId ?? 'caret' } },
+    }))
+    return session
+  },
+  promoteScratch: async (sessionId, targetDir) => {
+    const session = await api.chat.promoteScratch(sessionId, targetDir)
+    // Opening the folder resets the chat store (workspaceChanged); the bridge re-selects `pendingSelect` after reloading.
+    set({ pendingSelect: session.id })
+    await useWorkspace.getState().open(session.workspaceRoot)
+  },
 }))
 
 export function fallbackModes(): ModeDescriptor[] {

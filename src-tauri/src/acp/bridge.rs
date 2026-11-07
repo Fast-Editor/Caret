@@ -117,6 +117,38 @@ pub fn terminal_gate(class: &crate::sandbox::CommandClassification) -> TerminalG
     if class.blocked || class.denylisted { TerminalGate::Block } else if class.is_destructive() { TerminalGate::Ask } else { TerminalGate::Allow }
 }
 
+/// Mode-aware gate: full access skips the destructive-command prompt; Block always holds.
+pub fn terminal_gate_for(class: &crate::sandbox::CommandClassification, mode: crate::ai::agent::policy::PermissionMode) -> TerminalGate {
+    match terminal_gate(class) { TerminalGate::Ask if mode == crate::ai::agent::policy::PermissionMode::FullAccess => TerminalGate::Allow, g => g }
+}
+
+/// Push a Caret permission mode onto the external agent: a matching session mode (`session/set_mode`) or, failing
+/// that, its approval/permission config option. Returns true when the agent state changed (callers emit status).
+pub async fn apply_permission_mode(inner: &AcpInner, link: &SessionLink, conn: &AgentConn, mode: crate::ai::agent::policy::PermissionMode) -> bool {
+    use crate::acp::permission_map::{plan, AcpPermissionAction};
+    let action = { let modes = link.modes.lock().clone(); let opts = link.config_options.lock().clone(); plan(mode, modes.as_ref(), opts.as_deref()) };
+    match action {
+        AcpPermissionAction::SetMode(id) => {
+            if link.modes.lock().as_ref().map(|m| m.current_mode_id == id).unwrap_or(false) { return false; }
+            match conn.set_mode(&link.acp_id, &id).await {
+                Ok(()) => { if let Some(ms) = link.modes.lock().as_mut() { ms.current_mode_id = id.clone(); } inner.log(&link.agent_id, format!("[acp] permission mode {} -> session mode {id}", mode.id())); true }
+                Err(e) => { inner.log(&link.agent_id, format!("[acp] could not set session mode {id} for permission mode {}: {}", mode.id(), e.message)); false }
+            }
+        }
+        AcpPermissionAction::SetConfigOption { config_id, value } => {
+            if link.config_options.lock().as_ref().map(|o| o.iter().any(|x| x.id == config_id && x.current_value == value)).unwrap_or(false) { return false; }
+            match conn.set_config_option(&link.acp_id, &config_id, &value).await {
+                Ok(Some(opts)) => { *link.config_options.lock() = Some(opts); }
+                Ok(None) => { if let Some(opts) = link.config_options.lock().as_mut() { if let Some(o) = opts.iter_mut().find(|o| o.id == config_id) { o.current_value = value.clone(); } } }
+                Err(e) => { inner.log(&link.agent_id, format!("[acp] could not set {config_id}={value} for permission mode {}: {}", mode.id(), e.message)); return false; }
+            }
+            inner.log(&link.agent_id, format!("[acp] permission mode {} -> {config_id}={value}", mode.id()));
+            true
+        }
+        AcpPermissionAction::None => { inner.log(&link.agent_id, format!("[acp] agent exposes no mode or option for permission mode {}; Caret's own gates still apply", mode.id())); false }
+    }
+}
+
 fn make_log(inner: Arc<AcpInner>, agent_id: String) -> Arc<dyn Fn(String) + Send + Sync> {
     Arc::new(move |line: String| { tracing::debug!(agent=%agent_id, "{line}"); inner.log(&agent_id, line); })
 }
@@ -203,6 +235,9 @@ pub async fn ensure_session(inner: &Arc<AcpInner>, mgr: &Arc<AgentManager>, app:
             }
         }
     }
+    // Mirror the thread's effective permission mode onto the agent (Claude Code / Gemini modes, Codex approval policy).
+    let pmode = { let s = h.session.lock(); crate::ai::agent::policy::effective_permission_mode(&settings, &s) };
+    apply_permission_mode(inner, &link, conn, pmode).await;
     emit_agent_status(inner, mgr, &link, conn);
     // Replay updates (available commands, mode) the agent sent before the link existed.
     if let Some((_, early)) = inner.pending_updates.remove(&res.session_id) {
@@ -562,7 +597,8 @@ impl Bridge {
             if d.is_empty() { d = format!("{} wants to run: {}", link.agent_id, title); }
             d
         };
-        let req = ApprovalRequest { approval_id: new_id(), session_id: link.caret_id.clone(), tool_call_id: tc.tool_call_id.clone(), kind: akind, title: title.clone(), detail, command: command.clone(), cwd: Some(h.session.lock().cwd_path().to_string_lossy().to_string()), options, allow_always_pattern: None, classification: None, risk_tier: None, sandboxed: Some(false), agent_id: Some(link.agent_id.clone()) };
+        let pmode = { let s = h.session.lock(); crate::ai::agent::policy::effective_permission_mode(&self.mgr.settings(), &s) };
+        let req = ApprovalRequest { approval_id: new_id(), session_id: link.caret_id.clone(), tool_call_id: tc.tool_call_id.clone(), kind: akind, title: title.clone(), detail, command: command.clone(), cwd: Some(h.session.lock().cwd_path().to_string_lossy().to_string()), options, allow_always_pattern: None, classification: None, risk_tier: None, sandboxed: Some(false), agent_id: Some(link.agent_id.clone()), permission_mode: Some(pmode) };
         let cancel = link.cancel.lock().clone();
         let res = self.mgr.request_approval(&h, &mid, req, &cancel).await;
         let outcome = match res {
@@ -621,7 +657,8 @@ impl Bridge {
         if settings.acp.terminal_safety {
             let class = crate::sandbox::classify_with(&command_line, Some(&cwd), root.as_deref(), &settings.agent.command_allowlist, &settings.agent.command_denylist);
             risk = class.overall_risk.clone();
-            match terminal_gate(&class) {
+            let pmode = { let s = h.session.lock(); crate::ai::agent::policy::effective_permission_mode(&settings, &s) };
+            match terminal_gate_for(&class, pmode) {
                 TerminalGate::Block => {
                     let why = if class.reasons.is_empty() { class.labels.join(", ") } else { class.reasons.join("; ") };
                     self.inner.log(&link.agent_id, format!("[terminal] blocked by safety policy: {command_line} [{why}]"));
@@ -636,7 +673,7 @@ impl Bridge {
                             approval_id: new_id(), session_id: link.caret_id.clone(), tool_call_id: format!("acp-terminal-{}", new_id()), kind: ApprovalKind::Command,
                             title: "Run destructive command".into(), detail: format!("{} wants to run: {command_line}", link.agent_id), command: Some(command_line.clone()),
                             cwd: Some(cwd.to_string_lossy().to_string()), options: vec![ApprovalOption::Allow, ApprovalOption::AllowSession, ApprovalOption::Deny],
-                            allow_always_pattern: Some(command_line.trim().to_string()), classification: Some(class.clone()), risk_tier: Some(class.risk_tier()), sandboxed: Some(will_sandbox), agent_id: Some(link.agent_id.clone()),
+                            allow_always_pattern: Some(command_line.trim().to_string()), classification: Some(class.clone()), risk_tier: Some(class.risk_tier()), sandboxed: Some(will_sandbox), agent_id: Some(link.agent_id.clone()), permission_mode: Some(pmode),
                         };
                         let cancel = link.cancel.lock().clone();
                         match self.mgr.request_approval(&h, &mid, req, &cancel).await {

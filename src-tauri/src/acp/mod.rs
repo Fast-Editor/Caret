@@ -14,6 +14,7 @@ pub mod protocol;
 pub mod process;
 pub mod client;
 pub mod bridge;
+pub mod permission_map;
 pub mod registry;
 pub mod commands;
 pub use commands::*;

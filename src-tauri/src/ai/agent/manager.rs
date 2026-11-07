@@ -67,7 +67,8 @@ impl AgentManager {
     pub fn settings(&self) -> Arc<Settings> { Arc::new(self.app_opt().map(|a| a.state::<SettingsState>().effective()).unwrap_or_else(|| SettingsState::load().effective())) }
     pub fn workspace_root(&self) -> Option<PathBuf> { match self.app_opt() { Some(a) => a.state::<WorkspaceState>().root(), None => self.fallback_root.lock().clone() } }
     pub fn ws_key(&self) -> String { workspace_key(self.workspace_root().as_deref()) }
-    pub fn ws_key_of(&self, s: &Session) -> String { workspace_key(s.root().as_deref()) }
+    /// Scratch threads always live under the "global" key so they are reachable from any (or no) workspace.
+    pub fn ws_key_of(&self, s: &Session) -> String { if s.scratch { "global".into() } else { workspace_key(s.root().as_deref()) } }
 
     // ───────── events ─────────
     pub fn subscribe(&self, ch: Channel<AgentEvent>) { *self.channel.write() = Some(ch); }
@@ -100,6 +101,14 @@ impl AgentManager {
         }
     }
     pub fn persist(&self, h: &SessionHandle) { let s = h.session.lock(); self.store.save(&self.ws_key_of(&s), &s); }
+    /// Register a session built elsewhere (scratch threads): persist, announce, keep the loaded set bounded.
+    pub fn adopt(&self, h: Arc<SessionHandle>) {
+        let id = h.id();
+        self.sessions.insert(id, h.clone());
+        self.persist_now(&h);
+        self.emit(AgentEvent::SessionCreated { session: h.session.lock().summary_view() });
+        self.evict_idle();
+    }
     pub fn persist_now(&self, h: &SessionHandle) { let s = h.session.lock(); let _ = self.store.save_now(&self.ws_key_of(&s), &s); }
     /// Record the latest verification report for a session (verify engine) and refresh listeners.
     pub fn set_last_verification(&self, session_id: &str, report_id: &str) {
@@ -123,8 +132,9 @@ impl AgentManager {
         if let Some((pid, _)) = parent { s.parent_session_id = Some(pid.to_string()); s.is_subagent = true; }
         if use_worktree {
             let root = root.clone().ok_or_else(CaretError::no_workspace)?;
-            let (path, branch) = create_worktree(&root, &s.title, &s.id).await?;
-            s.worktree_path = Some(path.to_string_lossy().to_string()); s.branch = Some(branch); s.cwd = path.to_string_lossy().to_string();
+            let model = s.model_id.clone().or_else(|| settings.default_model().map(|m| m.id.clone()));
+            let (path, branch, base) = create_worktree(&root, &settings.worktrees, &s.title, &s.id, model.as_deref()).await?;
+            s.worktree_path = Some(path.to_string_lossy().to_string()); s.branch = Some(branch); s.worktree_base = base; s.cwd = path.to_string_lossy().to_string();
         }
         let h = SessionHandle::new(s);
         let id = h.id();
@@ -138,9 +148,11 @@ impl AgentManager {
     pub fn list_sessions(&self, include_archived: bool) -> Vec<SessionSummary> {
         let key = self.ws_key();
         let mut list = self.store.read_index(&key);
+        // Scratch threads are workspace-independent: list them everywhere.
+        if key != "global" { list.extend(self.store.read_index("global").into_iter().filter(|s| s.scratch == Some(true))); }
         for e in self.sessions.iter() {
             let s = e.value().session.lock();
-            if self.ws_key_of(&s) != key { continue; }
+            if self.ws_key_of(&s) != key && !s.scratch { continue; }
             let sv = s.summary_view();
             if let Some(x) = list.iter_mut().find(|x| x.id == sv.id) { *x = sv; } else { list.push(sv); }
         }
@@ -151,8 +163,14 @@ impl AgentManager {
 
     pub async fn delete_session(&self, id: &str) -> Result<()> {
         self.stop(id);
-        let (worktree, root, ws_key) = match self.handle(id) { Ok(h) => { let s = h.session.lock(); (s.worktree_path.clone(), s.root(), self.ws_key_of(&s)) } Err(_) => (None, self.workspace_root(), self.ws_key()) };
-        if let (Some(wt), Some(root)) = (worktree, root) { let _ = tokio::process::Command::new("git").args(["worktree", "remove", "--force", &wt]).current_dir(&root).output().await; }
+        let (worktree, branch, root, ws_key, scratch_dir) = match self.handle(id) { Ok(h) => { let s = h.session.lock(); (s.worktree_path.clone(), s.branch.clone(), s.root(), self.ws_key_of(&s), if s.scratch { Some(PathBuf::from(&s.workspace_root)) } else { None }) } Err(_) => (None, None, self.workspace_root(), self.ws_key(), None) };
+        if let (Some(wt), Some(root)) = (worktree, root) {
+            let _ = tokio::process::Command::new("git").args(["worktree", "remove", "--force", &wt]).current_dir(&root).output().await;
+            // Branch follows the worktree when the policy says so; `-d` keeps branches with unmerged commits.
+            if let Some(b) = branch { if self.settings().worktrees.delete_branch_with_worktree { let _ = tokio::process::Command::new("git").args(["branch", "-d", &b]).current_dir(&root).output().await; } }
+        }
+        // A deleted scratch thread takes its throwaway repository with it.
+        if let Some(dir) = scratch_dir { if dir.starts_with(crate::ai::agent::scratch::scratch_root()) { let _ = std::fs::remove_dir_all(&dir); } }
         self.sessions.remove(id);
         self.store.delete(&ws_key, id)?;
         checkpoints::remove_session(&ws_key, id);
@@ -378,15 +396,34 @@ pub fn slugify(s: &str) -> String {
     out.trim_matches('-').chars().take(32).collect()
 }
 
-/// Create a git worktree under <root>/.caret/worktrees/<slug> on branch caret/<slug>.
-pub async fn create_worktree(root: &Path, title: &str, id: &str) -> Result<(PathBuf, String)> {
-    let mut slug = slugify(title); if slug.is_empty() || slug == "new-chat" { slug = format!("agent-{}", &id[..8]); } else { slug = format!("{}-{}", slug, &id[..4]); }
-    let dir = root.join(".caret").join("worktrees"); std::fs::create_dir_all(&dir)?;
-    // keep worktrees out of git status
-    let exclude = root.join(".git").join("info").join("exclude");
-    if let Ok(cur) = std::fs::read_to_string(&exclude) { if !cur.contains(".caret/worktrees") { let _ = std::fs::write(&exclude, format!("{cur}\n.caret/worktrees/\n")); } } else if root.join(".git").is_dir() { let _ = std::fs::create_dir_all(exclude.parent().unwrap()); let _ = std::fs::write(&exclude, ".caret/worktrees/\n"); }
-    let path = dir.join(&slug); let branch = format!("caret/{slug}");
-    let out = tokio::process::Command::new("git").args(["worktree", "add", "-b", &branch, path.to_str().unwrap_or("")]).current_dir(root).output().await.map_err(|e| CaretError::io(format!("git: {e}")))?;
+/// Create a git worktree at `<worktrees.location>/<slug>` on a branch rendered from `worktrees.branchTemplate`.
+/// Returns `(path, branch, base commit)`; the base lets cleanup tell "no commits" from "merged" later.
+pub async fn create_worktree(root: &Path, cfg: &crate::core::settings::WorktreeSettings, title: &str, id: &str, model: Option<&str>) -> Result<(PathBuf, String, Option<String>)> {
+    use crate::ai::agent::worktrees;
+    let slug = worktrees::worktree_slug(title, id);
+    let dir = worktrees::resolve_location(root, &cfg.location); std::fs::create_dir_all(&dir)?;
+    // keep in-repo worktree folders out of git status
+    if let Ok(rel) = dir.strip_prefix(root) {
+        let rel = rel.to_string_lossy().trim_matches('/').to_string();
+        if !rel.is_empty() {
+            let exclude = root.join(".git").join("info").join("exclude");
+            let line = format!("{rel}/");
+            if let Ok(cur) = std::fs::read_to_string(&exclude) { if !cur.lines().any(|l| l.trim() == line) { let _ = std::fs::write(&exclude, format!("{cur}\n{line}\n")); } } else if root.join(".git").is_dir() { let _ = std::fs::create_dir_all(exclude.parent().unwrap()); let _ = std::fs::write(&exclude, format!("{line}\n")); }
+        }
+    }
+    let path = dir.join(&slug);
+    let mut branch = worktrees::render_branch_template(&cfg.branch_template, &slug, model, id, &worktrees::today());
+    let mut out = worktree_add(root, &path, &branch).await?;
+    if !out.status.success() && String::from_utf8_lossy(&out.stderr).contains("already exists") {
+        // Template without a unique placeholder (e.g. `{model}` alone): disambiguate with part of the id.
+        branch = format!("{branch}-{}", &id[..4.min(id.len())]);
+        out = worktree_add(root, &path, &branch).await?;
+    }
     if !out.status.success() { return Err(CaretError::new("git", format!("git worktree add failed: {}", String::from_utf8_lossy(&out.stderr)))); }
-    Ok((path, branch))
+    let base = tokio::process::Command::new("git").args(["rev-parse", "HEAD"]).current_dir(&path).output().await.ok().filter(|o| o.status.success()).map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string()).filter(|s| !s.is_empty());
+    Ok((path, branch, base))
+}
+
+async fn worktree_add(root: &Path, path: &Path, branch: &str) -> Result<std::process::Output> {
+    tokio::process::Command::new("git").args(["worktree", "add", "-b", branch, path.to_str().unwrap_or("")]).current_dir(root).output().await.map_err(|e| CaretError::io(format!("git: {e}")))
 }

@@ -22,9 +22,47 @@ Evasion coverage (all tested in `classify.rs`): `\rm`, `sh -c "…"`, `bash -lc 
 
 Path context: `outside-workspace` is computed against the session cwd/workspace root; `/tmp` and `$TMPDIR` count as neither outside nor system.
 
+## Permission modes
+
+`policy::PermissionMode` (`supervised` | `auto-accept-edits` | `auto` | `full-access`, kebab-case in JSON) decides what
+runs without asking. The classifier, the denylist and the session-allow memory ("allow for this session") apply in
+every mode; `blocked` and denylisted commands are denied in every mode.
+
+| Action | Supervised | Auto-accept edits | Auto | Full access |
+|---|---|---|---|---|
+| shell `safe` / `caution` | asks | runs only when allowlisted | runs | runs |
+| shell `destructive` | asks (exact command) | asks (exact command) | asks (exact command) | runs |
+| shell `blocked` / denylisted | denied | denied | denied | denied |
+| file edit inside the workspace | asks | auto | auto | auto |
+| edit outside workspace / protected dotfile / delete | asks (protection prompt) | asks (protection prompt) | asks (protection prompt) | auto (protections skipped) |
+| MCP tool | asks unless remembered (session or always-allow list) | per `mcpAutoRun` / allow list | auto | auto |
+| MCP tool whose pinned description changed | asks | asks | asks | asks |
+| browser JavaScript eval | asks | asks | auto | auto |
+| OS sandbox for commands | on | on | on | on |
+
+Resolution (`policy::effective_permission_mode`): thread override (`Session.permissionMode`, composer shield icon,
+`chat_set_permission_mode(session_id, mode | null)`) → `agent.permissionMode` → legacy `agent.autoRun`
+(`off` = supervised, `allowlist` = auto-accept-edits, `all` = auto); then clamped to `agent.maxPermissionMode`
+(`min(requested, cap)`). Workspace settings layer over user settings, so a project's `.caret/settings.json` can lower the
+cap (or the default) for that project only; the composer greys out modes above the cap. A custom chat mode with
+`autoRun: false` forces Supervised for its tools regardless. `ApprovalRequest.permissionMode` carries the mode that was
+in effect so the approval card can show "Mode: Auto".
+
+External agents (ACP, `acp/permission_map.rs`): after `session/new` and on every mode change Caret maps the effective
+mode onto the agent. Session modes win: supervised → `default` (or `ask` / `normal`); auto-accept-edits → `acceptEdits`
+/ `autoEdit`; auto → an `auto` mode if one exists, else `acceptEdits` / `autoEdit`; full-access → `bypassPermissions` /
+`yolo` / `full-access` / `danger`. Without a matching mode, a config option whose id or name contains "approval" or
+"permission" gets the closest value (Codex: `untrusted` / `on-request` / `on-failure` / `never`). Agents that expose
+neither keep Caret's own gates. Caret's terminal gate for agent terminals (`terminal_gate_for`) skips the
+destructive-command prompt in full access; Block always holds.
+
+Settings UI: Settings → Agent → Permissions (default mode, cap). Tests: `cargo test --lib policy` (every mode × safe /
+destructive / blocked / allowlisted command, edits inside and outside the workspace, delete, MCP, cap clamping, legacy
+derivation) and `cargo test --lib permission_map` (ACP mapping).
+
 ## Where it is enforced
 
-- `ai/agent/policy.rs` → `decide()` Shell branch: denylist → classification (`blocked` ⇒ `Deny`) → session allow → auto-run (destructive never auto-runs). `Decision::NeedsApproval` carries the `classification`.
+- `ai/agent/policy.rs` → `decide()` Shell branch: denylist → classification (`blocked` ⇒ `Deny`) → session allow → permission mode (destructive only auto-runs in full access). `Decision::NeedsApproval` carries the `classification`.
 - `ai/agent/runner.rs`: classification + `riskTier` (0/1/2) + `sandboxed` are attached to the `ApprovalRequest` and the `ToolCallRecord`, so the card shows pills whether or not approval was needed.
 - `ai/agent/tools/shell_tools.rs`: `policy_for(settings, root, cwd)` → `wrap_with(...)` for foreground and background commands; `CARET_SANDBOXED=1` in the child env; strict mode errors when no backend exists.
 - Hooks (`beforeShellExecution`) still run first and can veto.
