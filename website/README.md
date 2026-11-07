@@ -25,12 +25,19 @@ The root `vercel.json` installs and builds inside `website/` and serves `website
 short redirects for `/github`, `/releases`, `/issues` and `/download/latest`. `.vercelignore` keeps the Rust build
 directories out of the upload.
 
-From the CLI (already linked as project `caret`):
+From the CLI (already linked as project `caret` in the `lynkrteam` scope): Vercel reads the local commit author and
+blocks deployments whose author is not a member of the team, so deploy from a copy of the checkout without `.git`:
 
 ```bash
 npx vercel login
-npx vercel deploy --prod --yes        # from the repository root
+rsync -a --exclude .git --exclude node_modules --exclude 'website/node_modules' --exclude 'website/.next' \
+  --exclude 'website/out' --exclude 'src-tauri/target*' ./ /tmp/caret-deploy/
+mkdir -p /tmp/caret-deploy/.vercel && cp .vercel/project.json /tmp/caret-deploy/.vercel/
+npx vercel deploy --prod --yes --scope lynkrteam --cwd /tmp/caret-deploy
 ```
+
+Production: https://caret-lynkrteam.vercel.app (also https://caret-ochre.vercel.app). Deployment Protection was turned
+off for the project so the site is public.
 
 For automatic deploys on push, open the project in the Vercel dashboard → **Settings → Git** and connect
 `Fast-Editor/Caret`; leave **Root Directory** empty (the root `vercel.json` handles the build). A custom domain goes
