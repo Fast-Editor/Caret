@@ -245,7 +245,7 @@ pub async fn submit(inner: Arc<AcpInner>, mgr: Arc<AgentManager>, app: Option<Ap
             let q = { let mut s = h.session.lock(); if s.queued.is_empty() { None } else { Some(s.queued.remove(0)) } };
             if let Some(q) = q {
                 mgr.emit(AgentEvent::Queue { session_id: h.id(), queued: h.session.lock().queued.clone() });
-                next = Some(q.request.unwrap_or(SendMessageRequest { session_id: h.id(), text: q.text, context: q.context, images: q.images, mode: q.mode.unwrap_or_else(|| h.session.lock().mode.clone()), ..Default::default() }));
+                next = Some({ let s = h.session.lock(); q.into_request(&s) });
             }
         }
         h.running.store(false, Ordering::SeqCst);

@@ -108,3 +108,30 @@ describe('routed events', () => {
     expect(st.versions.m1).toBeGreaterThanOrEqual(2)
   })
 })
+
+describe('steer and queue events', () => {
+  const item = (id: string, text: string) => ({ id, text, context: [], images: [] })
+  it('tracks pending steer messages per session and clears them when drained', () => {
+    let st = applyAgentEvent(withSession(), { type: 'steer', sessionId: 's1', pending: [item('q1', 'also rename it')] })
+    expect(st.steering.s1).toEqual([item('q1', 'also rename it')])
+    expect(st.loaded.s1.queuedMessages).toEqual([])
+    st = applyAgentEvent(st, { type: 'steer', sessionId: 's1', pending: [] })
+    expect(st.steering.s1).toBeUndefined()
+  })
+  it('drops stale steer rows when the turn ends and when the session is deleted', () => {
+    let st = applyAgentEvent(withSession(), { type: 'steer', sessionId: 's1', pending: [item('q1', 'x')] })
+    st = applyAgentEvent(st, { type: 'session-status', sessionId: 's1', status: 'running' })
+    expect(st.steering.s1).toHaveLength(1)
+    st = applyAgentEvent(st, { type: 'session-status', sessionId: 's1', status: 'idle' })
+    expect(st.steering.s1).toBeUndefined()
+    st = applyAgentEvent(st, { type: 'steer', sessionId: 's1', pending: [item('q2', 'y')] })
+    st = applyAgentEvent(st, { type: 'session-deleted', sessionId: 's1' })
+    expect(st.steering).toEqual({})
+  })
+  it('replaces the queue wholesale and keeps the persisted request on items', () => {
+    const req = { sessionId: 's1', text: 'later', context: [], images: [], mode: 'agent' as const, modelId: 'gpt-5', thinking: 'on' as const }
+    const st = applyAgentEvent(withSession(), { type: 'queue', sessionId: 's1', queued: [{ ...item('q1', 'later'), request: req }] })
+    expect(st.loaded.s1.queuedMessages[0].request?.modelId).toBe('gpt-5')
+    expect(st.steering).toEqual({})
+  })
+})

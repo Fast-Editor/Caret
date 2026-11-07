@@ -261,3 +261,166 @@ async fn run_turn_with_unavailable_provider_ends_in_error_state() {
     assert!(ev.iter().any(|e| matches!(e, AgentEvent::MessageEnd { status: MessageStatus::Error, .. })));
     assert!(ev.iter().any(|e| matches!(e, AgentEvent::SessionStatus { status: SessionStatus::Idle, .. })));
 }
+
+// ───────────────────────── steer + editable queue ─────────────────────────
+
+#[test]
+fn inject_steer_appends_to_trailing_user_message_and_mirrors_ui_message() {
+    use crate::ai::agent::runner::inject_steer;
+    use crate::ai::llm::{ContentBlock, Message as LlmMessage, Role, ToolResultContent};
+    let mut s = Session::default();
+    s.transcript.push(LlmMessage::user_text("do it"));
+    s.transcript.push(LlmMessage { role: Role::Assistant, content: vec![ContentBlock::ToolUse { id: "t1".into(), name: "read_file".into(), input: json!({}) }] });
+    s.transcript.push(LlmMessage { role: Role::User, content: vec![ContentBlock::ToolResult { tool_use_id: "t1".into(), content: vec![ToolResultContent::Text { text: "ok".into() }], is_error: false }] });
+    let item = QueuedMessage { id: "q1".into(), text: "also check tests".into(), context: vec![ContextItem { id: "f".into(), kind: "file".into(), label: "main.rs".into(), path: Some("main.rs".into()), ..Default::default() }], ..Default::default() };
+    let um = inject_steer(&mut s, &item, "turn1", "agent", "<file path=\"main.rs\">fn main() {}</file>\n", &[]);
+    // Tool results were the trailing user message: the steer is merged behind them, no second user turn.
+    assert_eq!(s.transcript.len(), 3);
+    let last = s.transcript.last().unwrap();
+    assert_eq!(last.role, Role::User);
+    assert!(matches!(last.content[0], ContentBlock::ToolResult { .. }), "tool results stay first");
+    assert!(matches!(&last.content[1], ContentBlock::Text { text } if text.starts_with("<attached_context>")));
+    assert!(matches!(&last.content[2], ContentBlock::Text { text } if text == "also check tests"));
+    // UI message mirrors it inside the same turn.
+    assert_eq!(s.messages.len(), 1); assert_eq!(s.messages[0].id, um.id);
+    assert_eq!(um.role, MessageRole::User); assert_eq!(um.turn_id.as_deref(), Some("turn1")); assert_eq!(um.mode.as_deref(), Some("agent"));
+    assert!(um.parts.iter().any(|p| matches!(p, MessagePart::Context { items } if items.len() == 1)));
+    assert_eq!(um.text(), "also check tests");
+    // After an assistant answer a fresh user turn is started instead.
+    s.transcript.push(LlmMessage { role: Role::Assistant, content: vec![ContentBlock::Text { text: "done".into() }] });
+    inject_steer(&mut s, &QueuedMessage { text: "one more".into(), ..Default::default() }, "turn1", "agent", "", &[]);
+    assert_eq!(s.transcript.len(), 5);
+    assert_eq!(s.transcript.last().unwrap().role, Role::User);
+    assert_eq!(s.transcript.last().unwrap().text(), "one more");
+    assert_eq!(s.messages.len(), 2);
+}
+
+#[tokio::test]
+async fn steer_while_running_buffers_in_order_and_take_drains() {
+    let ws = temp_workspace();
+    let (mgr, h) = new_mgr(ws.path()).await;
+    let sid = h.id();
+    h.running.store(true, std::sync::atomic::Ordering::SeqCst);
+    mgr.steer(SendMessageRequest { session_id: sid.clone(), text: "first".into(), mode: "agent".into(), model_id: Some("gpt-5".into()), ..Default::default() }).await.unwrap();
+    mgr.steer(SendMessageRequest { session_id: sid.clone(), text: "second".into(), mode: "agent".into(), ..Default::default() }).await.unwrap();
+    assert!(h.session.lock().queued.is_empty(), "steer must not touch the queue");
+    assert_eq!(h.steer.lock().len(), 2);
+    assert!(mgr.test_events.lock().iter().any(|e| matches!(e, AgentEvent::Steer { pending, .. } if pending.len() == 2 && pending[0].text == "first")));
+    assert!(mgr.steer_pending(&h));
+    let items = mgr.take_steer(&h);
+    assert_eq!(items.iter().map(|q| q.text.as_str()).collect::<Vec<_>>(), vec!["first", "second"]);
+    assert_eq!(items[0].request.as_ref().and_then(|r| r.model_id.clone()).as_deref(), Some("gpt-5"), "steer keeps the full request");
+    assert!(!mgr.steer_pending(&h));
+    assert!(mgr.test_events.lock().iter().any(|e| matches!(e, AgentEvent::Steer { pending, .. } if pending.is_empty())), "UI told the buffer drained");
+    assert!(mgr.take_steer(&h).is_empty());
+    h.running.store(false, std::sync::atomic::Ordering::SeqCst);
+}
+
+/// Scripted LLM provider for headless turns: records every request, blocks the first call until the test releases
+/// it, and answers `reply <n>` with no tool calls.
+struct ScriptedProvider { requests: parking_lot::Mutex<Vec<crate::ai::llm::LlmRequest>>, started: tokio::sync::mpsc::UnboundedSender<usize>, gate: tokio::sync::Mutex<Option<tokio::sync::oneshot::Receiver<()>>> }
+#[async_trait::async_trait]
+impl crate::ai::llm::LlmProvider for ScriptedProvider {
+    async fn stream(&self, req: &crate::ai::llm::LlmRequest, tx: tokio::sync::mpsc::Sender<crate::ai::llm::LlmEvent>, _cancel: CancellationToken) -> crate::error::Result<()> {
+        use crate::ai::llm::{LlmEvent, StopReason};
+        let n = { let mut r = self.requests.lock(); r.push(req.clone()); r.len() };
+        let _ = self.started.send(n);
+        if n == 1 { if let Some(rx) = self.gate.lock().await.take() { let _ = rx.await; } }
+        let _ = tx.send(LlmEvent::MessageStart { model: req.model.model.clone() }).await;
+        let _ = tx.send(LlmEvent::TextDelta { index: 0, text: format!("reply {n}") }).await;
+        let _ = tx.send(LlmEvent::Stop { reason: StopReason::EndTurn, detail: None }).await;
+        Ok(())
+    }
+    async fn list_models(&self) -> crate::error::Result<Vec<String>> { Ok(vec![]) }
+    async fn embed(&self, _model: &str, _inputs: &[String]) -> crate::error::Result<Vec<Vec<f32>>> { Ok(vec![]) }
+    fn name(&self) -> &'static str { "scripted" }
+}
+
+#[tokio::test]
+async fn steer_mid_turn_is_injected_before_the_next_round_and_extends_the_turn() {
+    use crate::ai::llm::Role;
+    use std::time::Duration;
+    let ws = temp_workspace();
+    let (mgr, h) = new_mgr(ws.path()).await;
+    let sid = h.id();
+    let (started_tx, mut started_rx) = tokio::sync::mpsc::unbounded_channel();
+    let (gate_tx, gate_rx) = tokio::sync::oneshot::channel();
+    let provider = Arc::new(ScriptedProvider { requests: Default::default(), started: started_tx, gate: tokio::sync::Mutex::new(Some(gate_rx)) });
+    const MODEL: &str = "gpt-5-mini"; // a default-catalog model no other test resolves
+    { let mut m = crate::ai::llm::TEST_PROVIDERS.lock(); m.get_or_insert_with(Default::default).insert(MODEL.into(), provider.clone()); }
+    mgr.submit(SendMessageRequest { session_id: sid.clone(), text: "hello".into(), mode: "agent".into(), model_id: Some(MODEL.into()), ..Default::default() }).await.unwrap();
+    // Round 1 is in flight (the provider is parked on the gate): steer now.
+    let n = tokio::time::timeout(Duration::from_secs(15), started_rx.recv()).await.expect("provider called").unwrap();
+    assert_eq!(n, 1);
+    assert!(h.is_running());
+    mgr.steer(SendMessageRequest { session_id: sid.clone(), text: "also rename it".into(), mode: "agent".into(), ..Default::default() }).await.unwrap();
+    assert_eq!(h.steer.lock().len(), 1);
+    assert!(mgr.test_events.lock().iter().any(|e| matches!(e, AgentEvent::Steer { pending, .. } if pending.len() == 1)));
+    gate_tx.send(()).unwrap();
+    // The model answered with no tool calls, but a steer was pending: the turn must run a second round.
+    let n = tokio::time::timeout(Duration::from_secs(15), started_rx.recv()).await.expect("second round").unwrap();
+    assert_eq!(n, 2);
+    for _ in 0..600 { tokio::time::sleep(Duration::from_millis(25)).await; if !h.is_running() { break; } }
+    assert!(!h.is_running());
+    let s = h.session.lock();
+    let ui: Vec<(MessageRole, String)> = s.messages.iter().map(|m| (m.role, m.text())).collect();
+    assert_eq!(ui, vec![(MessageRole::User, "hello".into()), (MessageRole::Assistant, "reply 1".into()), (MessageRole::User, "also rename it".into()), (MessageRole::Assistant, "reply 2".into())]);
+    assert!(s.messages.iter().all(|m| m.turn_id == s.messages[0].turn_id), "the steered message belongs to the same turn");
+    let transcript: Vec<(Role, String)> = s.transcript.iter().map(|m| (m.role, m.text())).collect();
+    assert_eq!(transcript, vec![(Role::User, "hello".into()), (Role::Assistant, "reply 1".into()), (Role::User, "also rename it".into()), (Role::Assistant, "reply 2".into())]);
+    assert_eq!(s.checkpoints.len(), 1, "steer does not open a new checkpoint");
+    drop(s);
+    // Round 2 saw the steered text as the last user message.
+    let reqs = provider.requests.lock();
+    assert_eq!(reqs.len(), 2);
+    let last = reqs[1].messages.last().unwrap();
+    assert_eq!(last.role, Role::User); assert_eq!(last.text(), "also rename it");
+    drop(reqs);
+    assert!(h.steer.lock().is_empty());
+    let ev = mgr.test_events.lock();
+    assert!(ev.iter().any(|e| matches!(e, AgentEvent::Steer { pending, .. } if pending.is_empty())));
+    assert!(ev.iter().any(|e| matches!(e, AgentEvent::MessageStart { message, .. } if message.role == MessageRole::User && message.text() == "also rename it")), "the UI receives the steered user message");
+    assert_eq!(ev.iter().filter(|e| matches!(e, AgentEvent::SessionStatus { status: SessionStatus::Idle, .. })).count(), 1, "one turn, one idle transition");
+}
+
+#[test]
+fn queued_message_request_persists_and_legacy_items_rebuild_from_the_session() {
+    let req = SendMessageRequest { session_id: "s".into(), text: "later".into(), mode: "ask".into(), model_id: Some("gpt-5".into()), thinking: Some("on".into()), agent_id: Some("claude-code".into()), ..Default::default() };
+    let q = QueuedMessage::from_request(req);
+    let back: QueuedMessage = serde_json::from_str(&serde_json::to_string(&q).unwrap()).unwrap();
+    let r = back.request.clone().expect("request is persisted with the item");
+    assert_eq!((r.model_id.as_deref(), r.thinking.as_deref(), r.agent_id.as_deref(), r.mode.as_str()), (Some("gpt-5"), Some("on"), Some("claude-code"), "ask"));
+    // Session files written before `request` existed: rebuilt from the item plus the session's current model/agent.
+    let legacy: QueuedMessage = serde_json::from_str(r#"{"id":"q","text":"old","context":[],"images":[],"mode":"agent"}"#).unwrap();
+    assert!(legacy.request.is_none());
+    let mut s = Session::default(); s.id = "sess".into(); s.model_id = Some("claude-haiku-4-5".into()); s.agent_id = Some("codex".into());
+    let r = legacy.into_request(&s);
+    assert_eq!((r.session_id.as_str(), r.text.as_str(), r.mode.as_str(), r.model_id.as_deref(), r.agent_id.as_deref()), ("sess", "old", "agent", Some("claude-haiku-4-5"), Some("codex")));
+    // An item without a mode falls back to the session mode.
+    let no_mode: QueuedMessage = serde_json::from_str(r#"{"id":"q2","text":"x"}"#).unwrap();
+    s.mode = "plan".into();
+    assert_eq!(no_mode.into_request(&s).mode, "plan");
+}
+
+#[tokio::test]
+async fn queue_update_and_move_edit_items_and_their_requests() {
+    let ws = temp_workspace();
+    let (mgr, h) = new_mgr(ws.path()).await;
+    let sid = h.id();
+    h.running.store(true, std::sync::atomic::Ordering::SeqCst);
+    for t in ["a", "b", "c"] { mgr.submit(SendMessageRequest { session_id: sid.clone(), text: t.into(), mode: "agent".into(), model_id: Some("gpt-5".into()), ..Default::default() }).await.unwrap(); }
+    let ids: Vec<String> = h.session.lock().queued.iter().map(|q| q.id.clone()).collect();
+    let ctx = vec![ContextItem { id: "f".into(), kind: "file".into(), label: "main.rs".into(), path: Some("main.rs".into()), ..Default::default() }];
+    let q = mgr.queue_update(&sid, &ids[1], "b2".into(), Some(ctx)).unwrap();
+    assert_eq!(q[1].text, "b2"); assert_eq!(q[1].context.len(), 1);
+    let r = q[1].request.as_ref().unwrap();
+    assert_eq!(r.text, "b2"); assert_eq!(r.context.len(), 1); assert_eq!(r.model_id.as_deref(), Some("gpt-5"), "editing keeps the submitted model");
+    let q = mgr.queue_move(&sid, &ids[2], 0).unwrap();
+    assert_eq!(q.iter().map(|x| x.text.as_str()).collect::<Vec<_>>(), vec!["c", "a", "b2"]);
+    let q = mgr.queue_move(&sid, &ids[2], 99).unwrap();
+    assert_eq!(q.iter().map(|x| x.text.as_str()).collect::<Vec<_>>(), vec!["a", "b2", "c"], "index is clamped");
+    assert!(mgr.queue_update(&sid, "nope", "x".into(), None).is_err());
+    assert!(mgr.queue_move(&sid, "nope", 0).is_err());
+    assert!(mgr.test_events.lock().iter().filter(|e| matches!(e, AgentEvent::Queue { .. })).count() >= 5);
+    h.running.store(false, std::sync::atomic::Ordering::SeqCst);
+}

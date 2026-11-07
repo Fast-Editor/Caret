@@ -2,7 +2,7 @@
  * Pure reducers that fold AgentEvents into chat state. No Tauri imports so they can be unit-tested.
  */
 import type {
-  AgentEvent, ApprovalRequest, ChatMessage, ChatSession, ChatSessionSummary, FileChangeSummary, MessagePart, ToolCallRecord, AgentQuestion,
+  AgentEvent, ApprovalRequest, ChatMessage, ChatSession, ChatSessionSummary, FileChangeSummary, MessagePart, ToolCallRecord, AgentQuestion, QueuedMessage,
 } from '@/types'
 
 export interface PendingQuestion extends AgentQuestion { sessionId: string; messageId: string }
@@ -16,9 +16,11 @@ export interface ChatCoreState {
   versions: Record<string, number>
   /** sessionId → messageId currently streaming. */
   streaming: Record<string, string>
+  /** sessionId → messages steered into the running turn and not yet injected ("Steering…" rows). */
+  steering: Record<string, QueuedMessage[]>
 }
 
-export const emptyCoreState = (): ChatCoreState => ({ sessions: [], loaded: {}, approvals: {}, questions: {}, versions: {}, streaming: {} })
+export const emptyCoreState = (): ChatCoreState => ({ sessions: [], loaded: {}, approvals: {}, questions: {}, versions: {}, streaming: {}, steering: {} })
 
 function bump(versions: Record<string, number>, id: string): Record<string, number> {
   return { ...versions, [id]: (versions[id] ?? 0) + 1 }
@@ -94,10 +96,20 @@ export function applyAgentEvent(state: ChatCoreState, ev: AgentEvent): ChatCoreS
     case 'session-deleted': {
       const loaded = { ...state.loaded }; delete loaded[ev.sessionId]
       const streaming = { ...state.streaming }; delete streaming[ev.sessionId]
-      return { ...state, loaded, streaming, sessions: state.sessions.filter((s) => s.id !== ev.sessionId) }
+      const steering = { ...state.steering }; delete steering[ev.sessionId]
+      return { ...state, loaded, streaming, steering, sessions: state.sessions.filter((s) => s.id !== ev.sessionId) }
     }
-    case 'session-status':
-      return mapSession(state, ev.sessionId, (s) => ({ ...s, status: ev.status }), { status: ev.status })
+    case 'session-status': {
+      const next = mapSession(state, ev.sessionId, (s) => ({ ...s, status: ev.status }), { status: ev.status })
+      // A turn that ended cannot still be steered: the backend queues leftovers, so drop any stale "Steering…" rows.
+      if (ev.status === 'idle' && next.steering[ev.sessionId]?.length) { const steering = { ...next.steering }; delete steering[ev.sessionId]; return { ...next, steering } }
+      return next
+    }
+    case 'steer': {
+      const steering = { ...state.steering }
+      if (ev.pending.length) steering[ev.sessionId] = ev.pending; else delete steering[ev.sessionId]
+      return { ...state, steering }
+    }
     case 'title':
       return mapSession(state, ev.sessionId, (s) => ({ ...s, title: ev.title }), { title: ev.title })
     case 'message-start': {

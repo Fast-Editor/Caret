@@ -88,6 +88,7 @@ export const DEFAULTS: Settings = {
   acp: { enabled: true, defaultAgentId: 'caret', agents: [], passMcpServers: true, sessionDefaults: {}, terminalSafety: true },
   terminal: { blocks: true, shellIntegration: true, aiEnabled: true, programStatus: true, maxBlocks: 200, suggestions: 'ai' },
   router: { enabled: false, source: 'npm', overrides: {}, excludedModels: [], stickySessions: true, routeSingleShot: true, tpmLimit: undefined, embeddingsProviderId: undefined },
+  notifications: { desktop: true, onlyWhenUnfocused: true, onFinish: true, onError: true, onApproval: true, onQuestion: true, sound: false },
 }
 
 export const SETTINGS_FIELDS: SettingField[] = [
@@ -111,6 +112,13 @@ export const SETTINGS_FIELDS: SettingField[] = [
   { id: 'privacy.privacyMode', page: 'general', type: 'boolean', title: 'Privacy mode', description: 'Never send code to anything other than your configured model provider: disables web tools and remote embeddings.', group: 'Privacy', keywords: ['telemetry'] },
   { id: 'privacy.allowWebTools', page: 'general', type: 'boolean', title: 'Allow web tools', description: 'Let the agent search the web and fetch URLs.', group: 'Privacy' },
   { id: 'privacy.allowRemoteEmbeddings', page: 'general', type: 'boolean', title: 'Allow remote embeddings', description: 'Send code chunks to the embeddings provider for semantic search. Disable to use local BM25 search only.', group: 'Privacy' },
+  { id: 'notifications.desktop', page: 'general', type: 'boolean', title: 'Desktop notifications', description: 'Show an OS notification when an agent thread finishes, fails, needs approval or asks a question. Unsigned dev builds may not display notifications on macOS; the bundled app does.', group: 'Notifications', keywords: ['alert', 'banner', 'agent done'] },
+  { id: 'notifications.onlyWhenUnfocused', page: 'general', type: 'boolean', title: 'Only when Caret is in the background', description: 'Skip notifications while the Caret window has focus.', dependsOn: 'notifications.desktop', group: 'Notifications' },
+  { id: 'notifications.onFinish', page: 'general', type: 'boolean', title: 'Thread finished', dependsOn: 'notifications.desktop', group: 'Notifications' },
+  { id: 'notifications.onError', page: 'general', type: 'boolean', title: 'Thread failed', dependsOn: 'notifications.desktop', group: 'Notifications' },
+  { id: 'notifications.onApproval', page: 'general', type: 'boolean', title: 'Approval needed', description: 'A command, edit or tool call is waiting for your decision.', dependsOn: 'notifications.desktop', group: 'Notifications' },
+  { id: 'notifications.onQuestion', page: 'general', type: 'boolean', title: 'Agent asked a question', dependsOn: 'notifications.desktop', group: 'Notifications' },
+  { id: 'notifications.sound', page: 'general', type: 'boolean', title: 'Sound when a thread finishes', description: 'A short beep, independent of the desktop notification (same as Agent → Play a chime when the agent finishes).', group: 'Notifications', keywords: ['chime', 'beep'] },
 
   // ── Tab ──
   { id: 'tab.enabled', page: 'tab', type: 'boolean', title: 'Enable Tab completions', description: 'Show inline ghost-text suggestions while typing. Press Tab to accept.', keywords: ['autocomplete', 'copilot', 'ghost'] },

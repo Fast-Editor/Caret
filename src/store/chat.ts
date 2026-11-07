@@ -105,6 +105,28 @@ export interface ChatState extends ChatCoreState {
   toggleFavoriteModel: (modelId: string) => void
   focusComposer: () => void
   reset: () => void
+  // queue / steer / background threads
+  /** Inject the draft (or overrides) into the running turn; idle sessions are sent normally. */
+  steer: (sessionId: string, overrides?: Partial<SendMessageRequest>) => Promise<void>
+  /** Create a background session carrying the draft's agent/model/mode, send there, stay on the current thread. Returns the new id. */
+  sendInNewThread: (sessionId: string, overrides?: Partial<SendMessageRequest>) => Promise<string | null>
+  queueUpdate: (sessionId: string, queuedId: string, text: string, context?: ContextItem[]) => Promise<void>
+  queueMove: (sessionId: string, queuedId: string, index: number) => Promise<void>
+}
+
+/** Same request shape `send` builds from a draft (shared by steer / background send). Null when there is nothing to send. */
+function requestFromDraft(sessionId: string, d: ComposerDraft, overrides?: Partial<SendMessageRequest>): SendMessageRequest | null {
+  const text = (overrides?.text ?? d.text).trim()
+  const images = overrides?.images ?? d.images
+  if (!text && images.length === 0 && !(overrides?.context && overrides.context.length)) return null
+  const req: SendMessageRequest = {
+    sessionId, text, context: overrides?.context ?? d.context, images,
+    mode: overrides?.mode ?? d.mode, modelId: (overrides?.modelId ?? d.modelId) === AUTO_MODEL ? undefined : overrides?.modelId ?? d.modelId,
+    thinking: d.thinking, effort: d.effort, useWorktree: d.useWorktree, agentId: d.agentId,
+    ...overrides,
+  }
+  delete (req as Partial<SendMessageRequest>).activeFile
+  return req
 }
 
 const FAV_KEY = 'caret.chat.favoriteModels'
@@ -136,7 +158,7 @@ export const useChat = create<ChatState>((set, get) => ({
   ingest: (events) => {
     if (!events.length) return
     const s = get()
-    const core: ChatCoreState = { sessions: s.sessions, loaded: s.loaded, approvals: s.approvals, questions: s.questions, versions: s.versions, streaming: s.streaming }
+    const core: ChatCoreState = { sessions: s.sessions, loaded: s.loaded, approvals: s.approvals, questions: s.questions, versions: s.versions, streaming: s.streaming, steering: s.steering }
     const next = applyAgentEvents(core, events)
     if (next !== core) set(next)
     // external (ACP) agent status is UI-only state: fan out to the composer's agent picker
@@ -316,6 +338,28 @@ export const useChat = create<ChatState>((set, get) => ({
   toggleFavoriteModel: (modelId) => set((s) => { const f = s.favoriteModels.includes(modelId) ? s.favoriteModels.filter((m) => m !== modelId) : [...s.favoriteModels, modelId]; try { localStorage.setItem(FAV_KEY, JSON.stringify(f)) } catch {} return { favoriteModels: f } }),
   focusComposer: () => set((s) => ({ composerFocusNonce: s.composerFocusNonce + 1 })),
   reset: () => set({ ...emptyCoreState(), activeSessionId: null, drafts: {}, sessionsLoaded: false, changeCache: {}, checkpoints: {} }),
+
+  // ── queue / steer / background threads ──
+  steer: async (sessionId, overrides) => {
+    const d = get().draft(sessionId)
+    const req = requestFromDraft(sessionId, d, overrides)
+    if (!req) return
+    set((s) => ({ drafts: { ...s.drafts, [sessionId]: { ...d, text: '', images: [], context: d.context.filter((c) => c.pinned) } }, editingMessageId: null }))
+    try { await api.chat.steer(req) } catch (e) { set((s) => ({ drafts: { ...s.drafts, [sessionId]: { ...d } } })); throw e }
+  },
+  sendInNewThread: async (sessionId, overrides) => {
+    const d = get().draft(sessionId)
+    const req = requestFromDraft(sessionId, d, overrides)
+    if (!req) return null
+    // The new thread inherits the draft's agent, model, mode and worktree choice; the user stays where they are.
+    const created = await get().createSession({ activate: false, mode: req.mode, modelId: d.modelId, agentId: d.agentId, useWorktree: d.useWorktree })
+    set((s) => ({ drafts: { ...s.drafts, [sessionId]: { ...d, text: '', images: [], context: d.context.filter((c) => c.pinned) }, [created.id]: { ...(s.drafts[created.id] ?? defaultDraft(req.mode)), thinking: d.thinking, effort: d.effort, agentId: d.agentId, modelId: d.modelId, useWorktree: d.useWorktree } } }))
+    try { await api.chat.send({ ...req, sessionId: created.id, queue: false }) }
+    catch (e) { set((s) => ({ drafts: { ...s.drafts, [sessionId]: { ...d } } })); throw e }
+    return created.id
+  },
+  queueUpdate: (sessionId, queuedId, text, context) => api.chat.queueUpdate(sessionId, queuedId, text, context),
+  queueMove: (sessionId, queuedId, index) => api.chat.queueMove(sessionId, queuedId, index),
 }))
 
 export function fallbackModes(): ModeDescriptor[] {

@@ -13,6 +13,8 @@ const apiBase = {
     showInFolder: (path: string) => invoke<void>('app_show_in_folder', { path }),
     openDevtools: () => invoke<void>('app_open_devtools'),
     log: (level: 'debug' | 'info' | 'warn' | 'error', message: string) => invoke<void>('app_log', { level, message }),
+    /** OS desktop notification (tauri-plugin-notification). Gated by settings.notifications in src/lib/desktopNotifications.ts. */
+    notifyDesktop: (title: string, body: string) => invoke<void>('app_notify_desktop', { title, body }),
   },
 
   workspace: {
@@ -154,6 +156,10 @@ const apiBase = {
     contextPreview: (items: T.ContextItem[]) => invoke<{ totalTokens: number; items: { id: string; tokens: number; truncated: boolean }[] }>('chat_context_preview', { items }),
     mentionCandidates: (kind: T.ContextItemKind, query: string, limit = 30) => invoke<T.ContextItem[]>('chat_mention_candidates', { kind, query, limit }),
     toolCatalog: () => invoke<{ name: string; displayName: string; description: string; group: string; readonly: boolean }[]>('chat_tool_catalog'),
+    /** Inject into the running turn (built-in agent) or send-now (ACP agents); idle sessions behave like `send`. */
+    steer: (req: T.SendMessageRequest) => invoke<void>('chat_steer', { req }),
+    queueUpdate: (sessionId: string, queuedId: string, text: string, context?: T.ContextItem[]) => invoke<void>('chat_queue_update', { sessionId, queuedId, text, context }),
+    queueMove: (sessionId: string, queuedId: string, index: number) => invoke<void>('chat_queue_move', { sessionId, queuedId, index }),
   },
 
   ai: {

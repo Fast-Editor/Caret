@@ -81,6 +81,10 @@ export interface CommandArgs {
   'view.problems': undefined
   'settings.open': { page?: string; query?: string } | undefined
   'app.notify': { level: 'info' | 'warn' | 'error' | 'success'; title: string; message?: string; timeoutMs?: number }
+  /** Steer the active (or given) session's running turn with `text`, or the current draft when omitted. */
+  'chat.steer': { text?: string; sessionId?: string } | undefined
+  /** Send `text` (or the current draft) in a new background thread; stays on the current one and toasts an Open action. */
+  'chat.sendInNewThread': { text?: string; sessionId?: string } | undefined
   'editor.openPlan': { path: string }
   'editor.openBrowser': { url?: string; tabId?: string } | undefined
   'git.openDiff': { path: string; staged?: boolean; base?: string }
@@ -92,6 +96,7 @@ export function run<K extends keyof CommandArgs>(id: K, args: CommandArgs[K]): P
 /** Ids registered by the chat module, plus the editor data-query ids it calls when available. */
 export const ChatCmd = {
   cycleMode: 'chat.cycleMode', toggleAgentsLayout: 'chat.toggleAgentsLayout', selectModel: 'chat.selectModel', addTerminalOutput: 'chat.addTerminalOutput', addLints: 'chat.addLints', explain: 'ai.explain',
+  steer: 'chat.steer', sendInNewThread: 'chat.sendInNewThread',
   // expected from the editor module (return data; optional — chat degrades gracefully when absent)
   editorGetActiveFile: 'editor.getActiveFile', editorGetSelection: 'editor.getSelection', editorGetOpenFiles: 'editor.getOpenFiles', editorGetDocumentSymbols: 'editor.getDocumentSymbols', editorInsertAtCursor: 'editor.insertAtCursor',
   // expected from the shell (optional)

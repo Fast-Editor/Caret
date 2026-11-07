@@ -186,6 +186,7 @@ export interface Settings {
   mcp: { enabled: boolean }; customModes: CustomMode[]; beta: BetaSettings
   keybindings: Record<string, string | null>
   verify: VerifySettings; sandbox: SandboxSettings; acp: AcpSettings; terminal: TerminalSettings; router: RouterSettings
+  notifications: NotificationsSettings
 }
 export interface RouterSettings { enabled: boolean; source: 'npm' | 'bundled'; overrides: Record<string, string>; excludedModels: string[]; stickySessions: boolean; routeSingleShot: boolean; tpmLimit?: number; embeddingsProviderId?: string }
 export type RouterTier = 'simple' | 'medium' | 'complex' | 'reasoning'
@@ -260,7 +261,7 @@ export interface ChatMessage {
   routing?: RoutingInfo
 }
 export interface TodoItem { id: string; content: string; status: 'pending' | 'in_progress' | 'completed' | 'cancelled' }
-export interface QueuedMessage { id: string; text: string; context: ContextItem[]; images: ImageAttachment[]; mode?: ModeId }
+export interface QueuedMessage { id: string; text: string; context: ContextItem[]; images: ImageAttachment[]; mode?: ModeId; request?: SendMessageRequest }
 export type SessionStatus = 'idle' | 'running' | 'awaiting-approval' | 'awaiting-input' | 'error' | 'summarizing'
 export interface ChatSession {
   id: string; title: string; workspaceRoot: string; createdAt: number; updatedAt: number; mode: ModeId; modelId?: string
@@ -300,6 +301,7 @@ export type AgentEvent =
   | { type: 'verification'; sessionId: string; report: VerificationReport }
   | { type: 'agent-status'; sessionId: string; agentId: string; status: AcpAgentStatus }
   | { type: 'routed'; sessionId: string; messageId: string; routing: RoutingInfo }
+  | { type: 'steer'; sessionId: string; pending: QueuedMessage[] }
   | { type: 'review-comments'; sessionId: string; comments: ReviewComment[] }
   | { type: 'error'; sessionId: string; message: string }
 export interface PendingChange {
@@ -525,3 +527,17 @@ export interface HistoryEntry {
 }
 export interface HistorySearchHit { entry: HistoryEntry; score: number; why: string }
 export interface HistoryNlResult { hits: HistorySearchHit[]; keywords: string[]; usedModel: boolean }
+
+// ───────────────────────────── desktop notifications (settings.notifications) ─────────────────────────────
+/** Mirrors `NotificationsSettings` in src-tauri/src/core/settings.rs. */
+export interface NotificationsSettings {
+  /** Master switch for OS notifications. */
+  desktop: boolean
+  /** Only notify while the Caret window is not focused. */
+  onlyWhenUnfocused: boolean
+  onFinish: boolean; onError: boolean; onApproval: boolean; onQuestion: boolean
+  /** Short beep when a turn finishes (in addition to `agent.chimeOnFinish`). */
+  sound: boolean
+}
+/** Why a desktop notification fired (one per session transition). */
+export type AgentNotificationKind = 'finished' | 'failed' | 'approval' | 'question'

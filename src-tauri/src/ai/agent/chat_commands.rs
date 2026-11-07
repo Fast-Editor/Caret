@@ -110,7 +110,7 @@ pub async fn chat_queue_send_now(mgr: Mgr<'_>, session_id: String, queued_id: St
     let q = h.session.lock().queued.clone();
     mgr.emit(AgentEvent::Queue { session_id: session_id.clone(), queued: q });
     if h.is_running() { mgr.stop(&session_id); } // current turn cancels; the queue drains next
-    else { let req = item.request.unwrap_or(SendMessageRequest { session_id, text: item.text, context: item.context, images: item.images, mode: item.mode.unwrap_or_default(), ..Default::default() }); { h.session.lock().queued.retain(|q| q.id != queued_id); } mgr.inner().submit(req).await?; }
+    else { let req = { let mut s = h.session.lock(); s.queued.retain(|q| q.id != queued_id); item.into_request(&s) }; mgr.inner().submit(req).await?; }
     Ok(())
 }
 
@@ -241,3 +241,42 @@ pub async fn start_plan_build(app: &AppHandle, plan_path: &str, session_id: Opti
     mgr.submit(SendMessageRequest { session_id: sid.clone(), text: format!("Implement the following plan completely. Work through the steps in order, verify as you go, and report what was done.\n\nPlan file: {plan_path}\n\n{content}"), mode: "agent".into(), context: vec![ContextItem { id: format!("plan:{plan_path}"), kind: "plan".into(), label: title, path: Some(plan_path.to_string()), ..Default::default() }], ..Default::default() }).await?;
     Ok(sid)
 }
+
+// ───────────────────────── steer / editable queue ─────────────────────────
+
+/// Steer: inject a message into the running turn instead of waiting for it to finish.
+/// Built-in agent: buffered on the handle and drained by the runner before its next model round. External (ACP)
+/// agents have no mid-turn injection, so steer falls back to "send now": front of the queue plus cancel the current
+/// turn. Idle sessions behave exactly like `chat_send`.
+#[tauri::command]
+pub async fn chat_steer(app: AppHandle, mgr: Mgr<'_>, req: SendMessageRequest) -> Result<()> {
+    if req.session_id.is_empty() { return Err(CaretError::invalid("sessionId is required")); }
+    let h = mgr.handle(&req.session_id)?;
+    let agent = {
+        let mut s = h.session.lock();
+        if let Some(a) = req.agent_id.as_deref().filter(|a| !a.is_empty()) { let next = if a == "caret" { None } else { Some(a.to_string()) }; if s.agent_id != next { s.agent_id = next; } }
+        s.agent_id.clone()
+    };
+    if agent.filter(|a| a != "caret").is_some() {
+        let st = app.state::<crate::acp::AcpState>();
+        if h.is_running() {
+            let session_id = req.session_id.clone();
+            let queued = { let mut s = h.session.lock(); s.queued.insert(0, QueuedMessage::from_request(req)); s.queued.clone() };
+            mgr.emit(AgentEvent::Queue { session_id: session_id.clone(), queued });
+            mgr.persist(&h);
+            crate::acp::bridge::stop(&st.inner, &session_id); mgr.stop(&session_id); // the queue drains as soon as the turn cancels
+            return Ok(());
+        }
+        return crate::acp::bridge::submit(st.inner.clone(), mgr.inner().clone(), Some(app.clone()), req).await;
+    }
+    mgr.inner().steer(req).await
+}
+
+/// Edit a queued message in place (text and, optionally, its context). The stored request is updated too so the
+/// item still runs with the model/thinking/agent it was submitted with.
+#[tauri::command]
+pub fn chat_queue_update(mgr: Mgr<'_>, session_id: String, queued_id: String, text: String, context: Option<Vec<ContextItem>>) -> Result<()> { mgr.queue_update(&session_id, &queued_id, text, context).map(|_| ()) }
+
+/// Move a queued message to `index` (clamped to the queue bounds); the queue drains in order.
+#[tauri::command]
+pub fn chat_queue_move(mgr: Mgr<'_>, session_id: String, queued_id: String, index: usize) -> Result<()> { mgr.queue_move(&session_id, &queued_id, index).map(|_| ()) }

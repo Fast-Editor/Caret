@@ -29,9 +29,12 @@ pub struct SessionHandle {
     pub cancel: Mutex<CancellationToken>,
     pub running: AtomicBool,
     pub last_used: Mutex<Instant>,
+    /// Messages steered into the running turn; the runner drains them at the top of each round. Transient (a turn
+    /// does not survive a restart, so neither does its steer buffer); anything left when the turn ends is queued.
+    pub steer: Mutex<Vec<QueuedMessage>>,
 }
 impl SessionHandle {
-    pub fn new(s: Session) -> Arc<Self> { Arc::new(Self { session: Mutex::new(s), cancel: Mutex::new(CancellationToken::new()), running: AtomicBool::new(false), last_used: Mutex::new(Instant::now()) }) }
+    pub fn new(s: Session) -> Arc<Self> { Arc::new(Self { session: Mutex::new(s), cancel: Mutex::new(CancellationToken::new()), running: AtomicBool::new(false), last_used: Mutex::new(Instant::now()), steer: Mutex::new(vec![]) }) }
     pub fn id(&self) -> String { self.session.lock().id.clone() }
     pub fn is_running(&self) -> bool { self.running.load(Ordering::SeqCst) }
     pub fn touch(&self) { *self.last_used.lock() = Instant::now(); }
@@ -164,7 +167,7 @@ impl AgentManager {
     pub async fn submit(self: &Arc<Self>, req: SendMessageRequest) -> Result<()> {
         let h = self.handle(&req.session_id)?;
         if h.is_running() {
-            let q = QueuedMessage { id: new_id(), text: req.text.clone(), context: req.context.clone(), images: req.images.clone(), mode: Some(req.mode.clone()), request: Some(req) };
+            let q = QueuedMessage::from_request(req);
             let queued = { let mut s = h.session.lock(); s.queued.push(q); s.queued.clone() };
             self.emit(AgentEvent::Queue { session_id: h.id(), queued });
             self.persist(&h);
@@ -172,6 +175,25 @@ impl AgentManager {
         }
         self.spawn_drive(h, req, None);
         Ok(())
+    }
+    /// Steer: hand a message to the running turn so the runner injects it before its next model round (instead of
+    /// waiting for the turn to finish like `submit`). Not running: identical to `submit`.
+    pub async fn steer(self: &Arc<Self>, req: SendMessageRequest) -> Result<()> {
+        let h = self.handle(&req.session_id)?;
+        if h.is_running() {
+            let pending = { let mut st = h.steer.lock(); st.push(QueuedMessage::from_request(req)); st.clone() };
+            self.emit(AgentEvent::Steer { session_id: h.id(), pending });
+            return Ok(());
+        }
+        self.spawn_drive(h, req, None);
+        Ok(())
+    }
+    pub fn steer_pending(&self, h: &SessionHandle) -> bool { !h.steer.lock().is_empty() }
+    /// Take every pending steer message (oldest first) and tell the UI the buffer is empty.
+    pub fn take_steer(&self, h: &SessionHandle) -> Vec<QueuedMessage> {
+        let items: Vec<QueuedMessage> = std::mem::take(&mut *h.steer.lock());
+        if !items.is_empty() { self.emit(AgentEvent::Steer { session_id: h.id(), pending: vec![] }); }
+        items
     }
     pub fn spawn_drive(self: &Arc<Self>, h: Arc<SessionHandle>, req: SendMessageRequest, mode_override: Option<ModeSpec>) {
         h.running.store(true, Ordering::SeqCst);
@@ -181,11 +203,14 @@ impl AgentManager {
             while let Some(r) = next.take() {
                 let cancel = h.reset_token();
                 if let Err(e) = crate::ai::agent::runner::run_turn(mgr.clone(), h.clone(), r, mode_override.clone(), cancel).await { tracing::warn!(error=%e, "turn failed"); }
+                // Steer messages that arrived after the runner's last drain (or while the turn was failing) run next.
+                let leftover = mgr.take_steer(&h);
+                if !leftover.is_empty() { let mut s = h.session.lock(); for (i, q) in leftover.into_iter().enumerate() { s.queued.insert(i, q); } }
                 // Dequeue next message unless cancelled explicitly with an empty queue.
                 let q = { let mut s = h.session.lock(); if s.queued.is_empty() { None } else { Some(s.queued.remove(0)) } };
                 if let Some(q) = q {
                     mgr.emit(AgentEvent::Queue { session_id: h.id(), queued: h.session.lock().queued.clone() });
-                    next = Some(q.request.unwrap_or(SendMessageRequest { session_id: h.id(), text: q.text, context: q.context, images: q.images, mode: q.mode.unwrap_or_else(|| h.session.lock().mode.clone()), ..Default::default() }));
+                    next = Some({ let s = h.session.lock(); q.into_request(&s) });
                 }
             }
             h.running.store(false, Ordering::SeqCst);
@@ -197,6 +222,35 @@ impl AgentManager {
         if let Some(h) = self.get_loaded(id) { h.token().cancel(); }
         // Drop pending waiters for this session so the turn unblocks.
         self.approvals.retain(|_, _| true);
+    }
+    /// Edit a queued message in place (text and, optionally, context); the stored request is kept in sync so the item
+    /// still runs with the model/thinking/agent it was submitted with.
+    pub fn queue_update(&self, session_id: &str, queued_id: &str, text: String, context: Option<Vec<ContextItem>>) -> Result<Vec<QueuedMessage>> {
+        let h = self.handle(session_id)?;
+        let queued = {
+            let mut s = h.session.lock();
+            let item = s.queued.iter_mut().find(|q| q.id == queued_id).ok_or_else(|| CaretError::not_found("queued message"))?;
+            item.text = text.clone();
+            if let Some(c) = &context { item.context = c.clone(); }
+            if let Some(r) = item.request.as_mut() { r.text = text; if let Some(c) = context { r.context = c; } }
+            s.touch(); s.queued.clone()
+        };
+        self.emit(AgentEvent::Queue { session_id: session_id.to_string(), queued: queued.clone() }); self.persist(&h);
+        Ok(queued)
+    }
+    /// Move a queued message to `index` (clamped); the queue drains in order.
+    pub fn queue_move(&self, session_id: &str, queued_id: &str, index: usize) -> Result<Vec<QueuedMessage>> {
+        let h = self.handle(session_id)?;
+        let queued = {
+            let mut s = h.session.lock();
+            let from = s.queued.iter().position(|q| q.id == queued_id).ok_or_else(|| CaretError::not_found("queued message"))?;
+            let item = s.queued.remove(from);
+            let to = index.min(s.queued.len());
+            s.queued.insert(to, item);
+            s.touch(); s.queued.clone()
+        };
+        self.emit(AgentEvent::Queue { session_id: session_id.to_string(), queued: queued.clone() }); self.persist(&h);
+        Ok(queued)
     }
 
     // ───────── approvals / questions ─────────

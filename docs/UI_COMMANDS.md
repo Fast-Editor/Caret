@@ -47,6 +47,15 @@ into `block-start` / `block-command` / `block-end` / `status` PTY events (`PtyBl
 Bus topics: `terminal.status` and `agents.terminalStatus` carry the same `TerminalStatusSummary` whenever any
 terminal's status changes. `settings.terminal.aiEnabled=false` hides ⌘K, explain and add-to-chat entries.
 
+## Queue, steer and background threads (`src/lib/chatBridge.ts`)
+
+| Id | Args | Notes |
+|---|---|---|
+| `chat.steer` | `{ text?, sessionId? }` | Inject the draft (or `text`) into the running turn before the agent's next step; idle sessions send normally; ACP agents fall back to send now. Composer: `Alt+Enter` (or `Enter` when Steer is the default) |
+| `chat.sendInNewThread` | `{ text?, sessionId? }` | Send the draft in a new background session with the same agent/model/mode, stay on the current thread, toast with **Open**. Composer: `Cmd+Shift+Enter` |
+
+The Queue/Steer default for `Enter` while a turn runs lives in the ui store (`steerByDefault`, persisted). See docs/THREADS.md.
+
 ## Agents (ACP)
 
 - `chat.new` accepts `{ mode?, agentId? }` — `agentId` is `caret` (built-in) or an ACP agent id (`claude-code`, `codex`, `gemini`, `pi`, `glm`, or a custom id). Returns the session id.

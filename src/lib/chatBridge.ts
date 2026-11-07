@@ -2,7 +2,7 @@
  * Chat module bootstrap: subscribes to the agent event stream (batched per animation frame),
  * loads sessions, reacts to workspace changes, and registers the chat-domain UI commands.
  */
-import type { AgentEvent, ContextItem, ReviewRequest } from '@/types'
+import type { AgentEvent, ContextItem, ReviewRequest, SendMessageRequest } from '@/types'
 import { api } from '@/lib/api'
 import { Events, on } from '@/lib/tauri'
 import { registerCommands, runCommand, hasCommand } from '@/lib/commands'
@@ -10,6 +10,8 @@ import { useChat, AUTO_MODEL, isSessionBusy } from '@/store/chat'
 import { emit as busEmit } from '@/lib/bus'
 import { initReviewStore, useReview } from '@/store/review'
 import { useUi } from '@/store/ui'
+import { notify } from '@/store/notifications'
+import { observeAgentEvent } from '@/lib/desktopNotifications'
 import { uid, baseName } from '@/components/chat/util'
 
 let initialized = false
@@ -23,6 +25,7 @@ function flush() {
   useChat.getState().ingest(batch)
 }
 function onAgentEvent(e: AgentEvent) {
+  observeAgentEvent(e) // desktop notifications watch every transition before batching
   if (e.type === 'session-reset') { void useChat.getState().loadSession(e.sessionId); return }
   if (e.type === 'verification' || e.type === 'review-comments') { useReview.getState().ingestAgentEvent(e); return }
   pending.push(e)
@@ -56,6 +59,15 @@ export function openPane(sessionId?: string) {
   if (!ui.chatVisible) ui.set({ chatVisible: true })
   if (sessionId) void useChat.getState().selectSession(sessionId)
   useChat.getState().focusComposer()
+}
+
+/** Send the draft of `sessionId` (or `overrides`) in a new background thread and toast an Open action; the user stays put. */
+export async function startInNewThread(sessionId: string, overrides?: Partial<SendMessageRequest>): Promise<string | null> {
+  const id = await useChat.getState().sendInNewThread(sessionId, overrides)
+  if (!id) return null
+  const title = useChat.getState().sessions.find((s) => s.id === id)?.title
+  notify('info', 'Started in a new thread', title && title !== 'New chat' ? title : undefined, { actions: [{ id: 'open', label: 'Open' }], onAction: (a) => { if (a === 'open') openPane(id) } })
+  return id
 }
 
 function selectionItem(sel: SelectionInfo): ContextItem {
@@ -134,5 +146,7 @@ export function initChatModule(): void {
     } },
     { id: 'chat.toggleAgentsLayout', title: 'View: Toggle Agents Layout', category: 'View', hidden: true, run: () => { if (hasCommand('view.toggleAgentsLayout')) return runCommand('view.toggleAgentsLayout'); const ui = useUi.getState(); ui.set({ layout: ui.layout === 'agents' ? 'editor' : 'agents' }) } },
     { id: 'chat.selectModel', title: 'Chat: Select Model', category: 'Chat', hidden: true, run: (a) => useChat.getState().setModel(null, (a as { modelId?: string } | undefined)?.modelId ?? AUTO_MODEL) },
+    { id: 'chat.steer', title: 'Chat: Steer Running Agent', category: 'Chat', run: async (a) => { const o = (a ?? {}) as { text?: string; sessionId?: string }; const c = useChat.getState(); const id = o.sessionId ?? c.activeSessionId; if (!id) return; await c.steer(id, o.text ? { text: o.text } : undefined) } },
+    { id: 'chat.sendInNewThread', title: 'Chat: Send Draft in New Thread', category: 'Chat', run: async (a) => { const o = (a ?? {}) as { text?: string; sessionId?: string }; const id = o.sessionId ?? useChat.getState().activeSessionId; if (!id) return null; return startInNewThread(id, o.text ? { text: o.text } : undefined) } },
   ])
 }
