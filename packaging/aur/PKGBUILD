@@ -1,0 +1,28 @@
+# Maintainer: Fast Editor <https://github.com/Fast-Editor/Caret/issues>
+# Binary package built from the .deb attached to each GitHub release.
+# scripts/update-packaging.mjs rewrites pkgver, pkgrel and sha256sums on every release; regenerate .SRCINFO
+# with `makepkg --printsrcinfo > .SRCINFO` before pushing to the AUR.
+pkgname=caret-bin
+pkgver=0.1.0
+pkgrel=1
+pkgdesc="Cursor-class AI code editor with a Rust core (Tauri 2 + React/Monaco), binary release"
+arch=('x86_64')
+url="https://github.com/Fast-Editor/Caret"
+license=('MIT')
+depends=('webkit2gtk-4.1' 'gtk3' 'libappindicator-gtk3' 'hicolor-icon-theme')
+optdepends=('bubblewrap: sandbox for agent shell commands'
+            'ollama: local models for chat, Tab and embeddings')
+provides=('caret')
+conflicts=('caret')
+options=('!strip')
+source=("${pkgname}-${pkgver}.deb::${url}/releases/download/v${pkgver}/Caret_${pkgver}_amd64.deb"
+        "${pkgname}-${pkgver}-LICENSE::https://raw.githubusercontent.com/Fast-Editor/Caret/v${pkgver}/LICENSE")
+noextract=("${pkgname}-${pkgver}.deb")
+sha256sums=('5fd4699221279ad53e0474ce50e466d9d63906b828a5770c218c3d5ce04c4a17'
+            '9f3ac3acca6ad40dd524215a0c41b8b70096b033c619678de92850a7c4ad17ea')
+
+package() {
+  bsdtar -xf "${pkgname}-${pkgver}.deb" data.tar.gz
+  bsdtar -xf data.tar.gz -C "${pkgdir}"
+  install -Dm644 "${pkgname}-${pkgver}-LICENSE" "${pkgdir}/usr/share/licenses/${pkgname}/LICENSE"
+}

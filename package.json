@@ -14,7 +14,8 @@
     "build:web": "tsc --noEmit -p tsconfig.json && vite build",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "test": "vitest run",
-    "release:bump": "node scripts/bump-version.mjs"
+    "release:bump": "node scripts/bump-version.mjs",
+    "release:packaging": "node scripts/update-packaging.mjs"
   },
   "dependencies": {
     "@tauri-apps/api": "^2.12.4",

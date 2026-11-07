@@ -1,0 +1,36 @@
+# yaml-language-server: $schema=https://aka.ms/winget-manifest.defaultLocale.1.6.0.schema.json
+# Default locale manifest for winget. scripts/update-packaging.mjs rewrites PackageVersion and ReleaseNotesUrl.
+PackageIdentifier: FastEditor.Caret
+PackageVersion: 0.1.0
+PackageLocale: en-US
+Publisher: Fast Editor
+PublisherUrl: https://github.com/Fast-Editor
+PublisherSupportUrl: https://github.com/Fast-Editor/Caret/issues
+PackageName: Caret
+PackageUrl: https://github.com/Fast-Editor/Caret
+License: MIT
+LicenseUrl: https://github.com/Fast-Editor/Caret/blob/main/LICENSE
+Copyright: Copyright (c) 2026 Caret contributors
+ShortDescription: A Cursor-class AI code editor with a Rust core.
+Description: |-
+  Caret is a memory-efficient, Rust-powered AI code editor built on Tauri 2 and Monaco. It ships Tab completions,
+  inline edits with a streaming diff, an agent with real tools, a local codebase index, MCP, a Debug Adapter Protocol
+  client, a semantic terminal and a command safety layer, and it runs Claude Code, Codex, Cursor, Grok Build,
+  Gemini CLI, OpenCode, Pi or any Agent Client Protocol agent with your own subscriptions and API keys. No bundled
+  Chromium, no Node at run time.
+Moniker: caret
+Tags:
+  - ai
+  - agent
+  - code-editor
+  - developer-tools
+  - editor
+  - ide
+  - rust
+  - tauri
+ReleaseNotesUrl: https://github.com/Fast-Editor/Caret/releases/tag/v0.1.0
+Documentations:
+  - DocumentLabel: Install guide
+    DocumentUrl: https://github.com/Fast-Editor/Caret/blob/main/docs/INSTALL.md
+ManifestType: defaultLocale
+ManifestVersion: 1.6.0
