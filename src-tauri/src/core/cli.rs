@@ -93,8 +93,10 @@ fn resolve_spec(arg: &str, cwd: &Path, goto: bool) -> OpenRequest {
     OpenRequest { path: absolutize(arg, cwd).to_string_lossy().to_string(), line: None, col: None }
 }
 
-/// Parse launcher-style argv (without the program name) relative to `cwd`.
+/// Parse launcher-style argv (without the program name) relative to `cwd`. A leading `serve` and its options
+/// (`--host`, `--port`, `--no-window`, `--print-url`) belong to `remote::init` and are skipped here.
 pub fn parse_open_args_in(args: &[String], cwd: &Path) -> Vec<OpenRequest> {
+    let (_, args) = crate::remote::strip_serve_args(args);
     let mut out = Vec::new();
     let mut it = args.iter();
     while let Some(a) = it.next() {
@@ -393,6 +395,20 @@ mod tests {
     }
 
     #[test]
+    fn parse_args_skips_serve_and_its_options() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = std::fs::canonicalize(dir.path()).unwrap();
+        // `serve` and its options never become paths; a folder after them still opens
+        let r = parse_open_args_in(&s(&["serve", "--host", "0.0.0.0", "--port", "17431", "--no-window", "--print-url", "."]), &root);
+        assert_eq!(r, vec![OpenRequest { path: root.to_string_lossy().to_string(), line: None, col: None }]);
+        assert!(parse_open_args_in(&s(&["serve"]), &root).is_empty());
+        assert!(parse_open_args_in(&s(&["serve", "--host=127.0.0.1", "--port=1"]), &root).is_empty());
+        // only a leading `serve` is special
+        let r = parse_open_args_in(&s(&["serve.ts"]), &root);
+        assert_eq!(r[0].path, root.join("serve.ts").to_string_lossy().to_string());
+    }
+
+    #[test]
     fn parse_urls_handles_file_and_caret_schemes() {
         let dir = tempfile::tempdir().unwrap();
         let root = std::fs::canonicalize(dir.path()).unwrap();
@@ -440,6 +456,14 @@ mod tests {
         let missing = std::process::Command::new("sh").arg(&script).arg("missing.ts").current_dir(&root).env("CARET_CLI_DRY_RUN", "1").output().unwrap();
         assert_eq!(missing.status.code(), Some(1));
         assert!(String::from_utf8_lossy(&missing.stderr).contains("no such file"));
+        // `caret serve …` execs the app binary directly (no LaunchServices), forwarding its options verbatim
+        let serve = std::process::Command::new("sh").arg(&script).args(["serve", "--host", "0.0.0.0", "--port", "17431", "--no-window"]).env("CARET_CLI_DRY_RUN", "1").output().unwrap();
+        assert!(serve.status.success(), "stderr: {}", String::from_utf8_lossy(&serve.stderr));
+        assert_eq!(String::from_utf8_lossy(&serve.stdout).trim(), "exec /Applications/Caret.app/Contents/MacOS/caret serve --host 0.0.0.0 --port 17431 --no-window");
+        let help = std::process::Command::new("sh").arg(&script).args(["serve", "--help"]).output().unwrap();
+        assert!(help.status.success());
+        assert!(String::from_utf8_lossy(&help.stdout).contains("caret serve"));
+        assert!(String::from_utf8_lossy(&std::process::Command::new("sh").arg(&script).arg("-h").output().unwrap().stdout).contains("--no-window"));
     }
 
     #[test]

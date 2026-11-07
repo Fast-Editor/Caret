@@ -195,6 +195,7 @@ export interface Settings {
   usage: UsageSettings
   worktrees: WorktreeSettings
   orchestrator: OrchestratorSettings
+  remote: RemoteSettings
 }
 export interface RouterSettings { enabled: boolean; source: 'npm' | 'bundled'; overrides: Record<string, string>; excludedModels: string[]; stickySessions: boolean; routeSingleShot: boolean; tpmLimit?: number; embeddingsProviderId?: string }
 export type RouterTier = 'simple' | 'medium' | 'complex' | 'reasoning'
@@ -623,3 +624,12 @@ export interface OrchestratorSettings { enabled: boolean; port: number }
 export interface OrchestratorStatus { enabled: boolean; running: boolean; url?: string; port?: number; tokenPath: string; token: string; endpointPath: string; error?: string }
 /** Ready-to-paste client configuration for the orchestrator endpoint. */
 export interface OrchestratorSnippets { claudeCode: string; codexToml: string; cursorJson: string; caretJson: string }
+// ───────────────────────────── remote access (`caret serve`) ─────────────────────────────
+/** Mirrors `RemoteSettings` in src-tauri/src/core/settings.rs. */
+export interface RemoteSettings { enabled: boolean; host: string; port: number }
+export interface RemoteDevice { id: string; name: string; createdAt: number; lastSeen: number; userAgent: string }
+export interface RemoteStatus {
+  enabled: boolean; running: boolean; serving: boolean; host: string; port: number; urls: string[]
+  devices: RemoteDevice[]; executorConnected: boolean; clients: number; error?: string
+}
+export interface RemotePairingCode { code: string; expiresAt: number }

@@ -5,7 +5,7 @@
 import type { Settings, DeepPartial } from '@/types'
 
 export type SettingsPageId =
-  | 'general' | 'models' | 'tab' | 'agent' | 'agents' | 'rules' | 'memories' | 'indexing' | 'mcp' | 'hooks' | 'appearance' | 'beta' | 'keybindings' | 'about' | 'usage'
+  | 'general' | 'models' | 'tab' | 'agent' | 'agents' | 'rules' | 'memories' | 'indexing' | 'mcp' | 'hooks' | 'appearance' | 'beta' | 'keybindings' | 'about' | 'usage' | 'remote'
 
 export interface SettingsPageMeta { id: SettingsPageId; title: string; icon: string; description: string }
 
@@ -22,6 +22,7 @@ export const SETTINGS_PAGES: SettingsPageMeta[] = [
   { id: 'hooks', title: 'Hooks & Automation', icon: 'webhook', description: 'Hooks, slash commands, skills, subagents, plans' },
   { id: 'usage', title: 'Usage', icon: 'chart', description: 'Tokens, cost and subscription windows across Caret and your external agents' },
   { id: 'appearance', title: 'Appearance & Editor', icon: 'palette', description: 'Theme, fonts and editor behaviour' },
+  { id: 'remote', title: 'Remote', icon: 'radio', description: 'Use Caret from a browser on your LAN or over Tailscale' },
   { id: 'beta', title: 'Beta', icon: 'flask', description: 'Experimental features' },
   { id: 'keybindings', title: 'Keybindings', icon: 'keyboard', description: 'Keyboard shortcuts' },
   { id: 'about', title: 'About', icon: 'info', description: 'Version, diagnostics and config folder' },
@@ -95,6 +96,7 @@ export const DEFAULTS: Settings = {
   usage: { track: true, includeExternal: true, customPrices: {} },
   worktrees: { perThreadDefault: false, location: '.caret/worktrees', branchTemplate: 'caret/{slug}', cleanupInactiveDays: 14, cleanupSettled: true, cleanupMerged: true, cleanupNoCommits: true, onLocalChanges: 'keep', deleteBranchWithWorktree: true, autoCleanup: false },
   orchestrator: { enabled: false, port: 17431 },
+  remote: { enabled: false, host: '127.0.0.1', port: 17430 },
 }
 
 const PERMISSION_MODE_OPTIONS: SelectOption[] = [
@@ -265,6 +267,9 @@ export const SETTINGS_FIELDS: SettingField[] = [
   { id: 'orchestrator.port', page: 'mcp', type: 'number', title: 'Orchestrator port', description: 'Preferred 127.0.0.1 port; the next ten are tried when it is busy.', min: 1024, max: 65535, step: 1, group: 'Orchestrator', dependsOn: 'orchestrator.enabled', keywords: ['orchestrator'] },
   { id: 'lsp.enabled', page: 'appearance', type: 'boolean', title: 'Language servers', description: 'Start installed language servers for diagnostics, hover, go to definition.', group: 'Editor', keywords: ['lsp', 'intellisense'] },
   { id: 'chat.autoSettleDays', page: 'agent', type: 'number', title: 'Auto-settle idle threads', description: 'Move threads with no activity for this many days to the Settled section (0 = off). Pinned, snoozed and archived threads are never auto-settled.', unit: 'days', min: 0, max: 365, step: 1, group: 'Threads', keywords: ['settle', 'thread', 'lifecycle', 'history', 'snooze'] },
+  // remote access (`caret serve`)
+  { id: 'remote.host', page: 'remote', type: 'select', title: 'Bind address', description: '127.0.0.1 serves this Mac only (pair through an SSH tunnel); 0.0.0.0 serves every interface: LAN and Tailscale.', group: 'Server', keywords: ['serve', 'lan', 'tailscale', 'host', 'bind', 'browser'], options: [{ value: '127.0.0.1', label: '127.0.0.1 (this Mac only)' }, { value: '0.0.0.0', label: '0.0.0.0 (LAN and Tailscale)' }] },
+  { id: 'remote.port', page: 'remote', type: 'number', title: 'Port', description: 'TCP port for the HTTP and WebSocket server. Restart the server after changing it.', group: 'Server', min: 1024, max: 65535, step: 1, keywords: ['serve', 'remote', 'port'] },
 ]
 
 export function getPath(obj: unknown, path: string): unknown {

@@ -390,9 +390,27 @@ export const apiWave1 = {
   },
 }
 export type ApiWave1 = typeof apiWave1
+
+// ═══════════════════════════ remote access (`caret serve`) ═══════════════════════════
+export const apiRemote = {
+  /** Browser access to this Caret over the LAN / Tailscale, relayed through the desktop webview (docs/REMOTE.md). */
+  remote: {
+    status: () => invoke<T.RemoteStatus>('remote_status'),
+    /** Issue a fresh six digit pairing code (valid five minutes, one use). */
+    pairingCode: () => invoke<T.RemotePairingCode>('remote_pairing_code'),
+    revokeDevice: (id: string) => invoke<T.RemoteStatus>('remote_revoke_device', { id }),
+    /** Per-process executor secret for the desktop webview; refused when asked from a remote session. */
+    executorSecret: () => invoke<string>('remote_executor_secret'),
+    isServing: () => invoke<boolean>('remote_is_serving'),
+    /** Persist `remote.enabled` and start or stop the server. */
+    setEnabled: (enabled: boolean) => invoke<T.RemoteStatus>('remote_set_enabled', { enabled }),
+    /** Restart on the current host/port settings. */
+    restart: () => invoke<T.RemoteStatus>('remote_restart'),
+  },
+}
 /** Full command surface: base domains plus wave-1 additions. */
 export const api = {
-  ...apiBase, ...apiWave1, pty: { ...apiBase.pty, ...apiWave1.pty },
+  ...apiBase, ...apiWave1, ...apiRemote, pty: { ...apiBase.pty, ...apiWave1.pty },
   /** Usage ledger (`~/.caret/usage/YYYY-MM.jsonl`) and external agent histories; see docs/USAGE.md. */
   usage: {
     summary: (range: T.UsageRange, groupBy: T.UsageGroupBy) => invoke<T.UsageSummary>('usage_summary', { range, groupBy }),

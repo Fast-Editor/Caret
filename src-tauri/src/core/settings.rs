@@ -453,6 +453,19 @@ pub struct OrchestratorSettings {
     pub port: u16,
 }
 impl Default for OrchestratorSettings { fn default() -> Self { Self { enabled: false, port: 17431 } } }
+/// Remote access (`caret serve`, see `remote`): a browser on the LAN or over Tailscale gets the full Caret UI,
+/// relayed through the desktop webview. Off by default; loopback only unless `host` is `0.0.0.0`.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase", default)]
+pub struct RemoteSettings {
+    pub enabled: bool,
+    /// Bind address: `127.0.0.1` (this machine only, e.g. behind an SSH tunnel) or `0.0.0.0` (LAN / Tailscale).
+    pub host: String,
+    pub port: u16,
+}
+impl Default for RemoteSettings {
+    fn default() -> Self { Self { enabled: false, host: "127.0.0.1".into(), port: 17430 } }
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
@@ -481,10 +494,11 @@ pub struct Settings {
     pub usage: UsageSettings,
     pub worktrees: WorktreeSettings,
     pub orchestrator: OrchestratorSettings,
+    pub remote: RemoteSettings,
 }
 impl Default for Settings {
     fn default() -> Self {
-        Self { providers: default_providers(), models: default_models(), tab: Default::default(), agent: Default::default(), indexing: Default::default(), ui: Default::default(), privacy: Default::default(), general: Default::default(), user_rules: String::new(), lsp: Default::default(), mcp: Default::default(), custom_modes: vec![], beta: Default::default(), keybindings: BTreeMap::new(), verify: Default::default(), sandbox: Default::default(), acp: Default::default(), terminal: Default::default(), router: Default::default(), notifications: Default::default(), chat: Default::default(), usage: Default::default(), worktrees: Default::default(), orchestrator: Default::default() }
+        Self { providers: default_providers(), models: default_models(), tab: Default::default(), agent: Default::default(), indexing: Default::default(), ui: Default::default(), privacy: Default::default(), general: Default::default(), user_rules: String::new(), lsp: Default::default(), mcp: Default::default(), custom_modes: vec![], beta: Default::default(), keybindings: BTreeMap::new(), verify: Default::default(), sandbox: Default::default(), acp: Default::default(), terminal: Default::default(), router: Default::default(), notifications: Default::default(), chat: Default::default(), usage: Default::default(), worktrees: Default::default(), orchestrator: Default::default(), remote: Default::default() }
     }
 }
 

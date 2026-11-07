@@ -18,6 +18,7 @@ pub mod mcp;
 pub mod browser;
 pub mod debug;
 pub mod orchestrator;
+pub mod remote;
 // REGISTER:modules (index, mcp, browser)
 
 #[global_allocator]
@@ -42,6 +43,8 @@ fn init_tracing() {
 pub fn run() {
     init_tracing();
     tracing::info!(version = env!("CARGO_PKG_VERSION"), "starting Caret");
+    // `caret serve [--host H] [--port N] [--no-window] [--print-url]`: remember the overrides for `remote::init`.
+    if let (Some(serve), _) = remote::strip_serve_args(&std::env::args().skip(1).collect::<Vec<_>>()) { tracing::info!(?serve, "cli: serve mode"); remote::set_serve_args(serve); }
 
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
@@ -66,6 +69,7 @@ pub fn run() {
         .manage(core::watcher::WatcherState::default())
         .manage(std::sync::Arc::new(ai::agent::manager::AgentManager::new()))
         // REGISTER:state (each domain adds `.manage(...)` lines here)
+        .manage(remote::RemoteState::default())
         .manage(core::terminal_history::TerminalHistoryState::default())
         .manage(std::sync::Arc::new(debug::DebugState::default()))
         .manage(ai::router::RouterState::default())
@@ -91,6 +95,7 @@ pub fn run() {
             { let m = mcp::McpManager::new(handle.clone()); app.manage(m.clone()); m.install(); }
             { let b = browser::BrowserManager::new(handle.clone()); b.install(); app.manage(b); }
             orchestrator::init(&handle);
+            remote::init(&handle);
             if let Some(w) = app.get_webview_window("main") {
                 #[cfg(debug_assertions)]
                 if std::env::var("CARET_DEVTOOLS").ok().as_deref() == Some("1") { w.open_devtools(); }
@@ -157,11 +162,13 @@ pub fn run() {
             browser::commands::browser_open, browser::commands::browser_list, browser::commands::browser_navigate, browser::commands::browser_snapshot, browser::commands::browser_click, browser::commands::browser_type, browser::commands::browser_eval, browser::commands::browser_back, browser::commands::browser_forward, browser::commands::browser_close,
             // REGISTER:commands:orchestrator
             orchestrator::orchestrator_status, orchestrator::orchestrator_rotate_token, orchestrator::orchestrator_snippets,
+            // REGISTER:commands:remote
+            remote::remote_status, remote::remote_pairing_code, remote::remote_revoke_device, remote::remote_executor_secret, remote::remote_is_serving, remote::remote_set_enabled, remote::remote_restart,
         ])
         .build(tauri::generate_context!())
         .expect("error while building Caret")
         .run(|app, event| {
-            if matches!(event, tauri::RunEvent::ExitRequested { .. } | tauri::RunEvent::Exit) { ai::router::shutdown(app); orchestrator::shutdown(app); }
+            if matches!(event, tauri::RunEvent::ExitRequested { .. } | tauri::RunEvent::Exit) { ai::router::shutdown(app); orchestrator::shutdown(app); remote::shutdown(app); }
             // `caret <path>` / Finder "Open with" / `caret://open?…` arrive here on macOS (also on cold start).
             #[cfg(any(target_os = "macos", target_os = "ios"))]
             if let tauri::RunEvent::Opened { urls } = &event { core::cli::on_opened(app, urls); }

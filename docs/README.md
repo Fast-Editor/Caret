@@ -32,7 +32,8 @@ top-level [README](../README.md) has the overview, install instructions and the 
 | [SANDBOX.md](SANDBOX.md) | Shell command classification, macOS Seatbelt / Linux bubblewrap sandboxing, MCP tool pins |
 | [TERMINAL.md](TERMINAL.md) | Semantic terminal blocks (OSC 133 / 7501), shell integration, program status, customisation (colours, suggestions, fix-it, clickable paths, history search) |
 | [DEBUGGING.md](DEBUGGING.md) | Run and Debug: the Debug Adapter Protocol client, js-debug and debugpy adapters, launch.json compatibility, limitations |
-| [CLI.md](CLI.md) | The `caret` command-line launcher (`caret .`, `caret file:line:col`), how it is installed and how it talks to the app |
+| [CLI.md](CLI.md) | The `caret` command-line launcher (`caret .`, `caret file:line:col`, `caret serve`), how it is installed and how it talks to the app |
+| [REMOTE.md](REMOTE.md) | Remote access (`caret serve`): the full Caret UI in a browser on your LAN or over Tailscale, relayed through the desktop; pairing, tokens, limitations |
 | [RELEASING.md](RELEASING.md) | Cutting releases: version bump, GitHub Actions matrix, secrets, code signing, updater, package managers (Homebrew, winget, scoop, AUR, Nix) |
 | [PERFORMANCE.md](PERFORMANCE.md) | Measured memory and latency numbers and the rules that keep them low |
 | [USAGE.md](USAGE.md) | Settings → Usage: the local token and cost ledger, how requests are priced, external agent histories (Claude Code, Codex, OpenCode) and their limits, CSV export |
@@ -41,7 +42,8 @@ top-level [README](../README.md) has the overview, install instructions and the 
 
 - User configuration: `~/.caret/` — `settings.json`, `secrets.json` (API keys), `keybindings.json`, `mcp.json`, rules, memories,
   sessions, checkpoints, the search index, `bin/caret` (launcher), `acp/` (external agent adapters), `lynkr/` (Auto routing sidecar),
-  `orchestrator/` (`token` and `endpoint.json` for the MCP server that lets other agents drive Caret).
+  `orchestrator/` (`token` and `endpoint.json` for the MCP server that lets other agents drive Caret),
+  `remote/devices.json` (hashed tokens of browsers paired through `caret serve`, mode 0600).
 - Usage ledger: `~/.caret/usage/YYYY-MM.jsonl`, one line per priced request (agent chat, external agents, inline edits, Tab, review,
   commit messages); read by Settings → Usage and the status bar spend item. External agent histories under `~/.claude`, `~/.codex`
   and `~/.local/share/opencode` are only ever read.
