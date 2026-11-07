@@ -67,6 +67,7 @@ frontend rendered by the OS WebView. No bundled Chromium, no Node runtime at run
 | Bugbot-style review, commit message generation, blame | `ai/review.rs`, `ai/commit.rs`, `core/git.rs` |
 | Auto-run with allow/deny lists, file-delete protection, sandboxed shell | `ai/agent/policy.rs` |
 | Privacy mode, usage/cost tracking, model picker, thinking/effort | settings + runner usage accounting |
+| Usage page: local token/cost ledger, breakdowns, external agent histories (Claude Code, Codex, OpenCode) and subscription windows (Caret-only) | `ai/usage.rs` (ledger, pricing, aggregation, parsers) → `settings/pages/Usage.tsx`, status bar spend item; see docs/USAGE.md |
 | Integrated terminal, git, search, LSP intelligence, themes, keybindings, settings UI | `core/*` + shell UI |
 
 ## UI motion rules

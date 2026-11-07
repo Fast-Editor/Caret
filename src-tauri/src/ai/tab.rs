@@ -240,6 +240,7 @@ pub async fn complete(app: &AppHandle, req: CompletionRequest) -> Result<Complet
     let guard = cancel::Guard::new(&req.request_id);
     let (raw, usage, resolved) = complete_with_fallback(&st, resolved, fallback, llm_req, guard.token(), "tab").await?;
     tracing::debug!(model = %resolved.model.id, input = usage.input_tokens, output = usage.output_tokens, ms = started.elapsed().as_millis() as u64, "tab completion");
+    crate::ai::usage::record(&settings, crate::ai::usage::UsageEntry::new("tab", &usage, Some(usage.cost_usd(&resolved.model))).model(&resolved.model).duration(started.elapsed().as_millis() as u64));
     let text = clean_completion(&raw, &req.prefix, &req.suffix, max_lines).unwrap_or_default();
     if text.is_empty() {
         // Usually the model echoed the file or answered in prose; keep the head of the raw answer so the pattern can be diagnosed from the log.

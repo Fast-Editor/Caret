@@ -5,7 +5,7 @@
 import type { Settings, DeepPartial } from '@/types'
 
 export type SettingsPageId =
-  | 'general' | 'models' | 'tab' | 'agent' | 'agents' | 'rules' | 'memories' | 'indexing' | 'mcp' | 'hooks' | 'appearance' | 'beta' | 'keybindings' | 'about'
+  | 'general' | 'models' | 'tab' | 'agent' | 'agents' | 'rules' | 'memories' | 'indexing' | 'mcp' | 'hooks' | 'appearance' | 'beta' | 'keybindings' | 'about' | 'usage'
 
 export interface SettingsPageMeta { id: SettingsPageId; title: string; icon: string; description: string }
 
@@ -20,6 +20,7 @@ export const SETTINGS_PAGES: SettingsPageMeta[] = [
   { id: 'agents', title: 'Agents', icon: 'bot', description: 'External coding agents (Claude Code, Codex, Gemini…) via the Agent Client Protocol' },
   { id: 'mcp', title: 'MCP', icon: 'server', description: 'Model Context Protocol servers and tools' },
   { id: 'hooks', title: 'Hooks & Automation', icon: 'webhook', description: 'Hooks, slash commands, skills, subagents, plans' },
+  { id: 'usage', title: 'Usage', icon: 'chart', description: 'Tokens, cost and subscription windows across Caret and your external agents' },
   { id: 'appearance', title: 'Appearance & Editor', icon: 'palette', description: 'Theme, fonts and editor behaviour' },
   { id: 'beta', title: 'Beta', icon: 'flask', description: 'Experimental features' },
   { id: 'keybindings', title: 'Keybindings', icon: 'keyboard', description: 'Keyboard shortcuts' },
@@ -88,9 +89,13 @@ export const DEFAULTS: Settings = {
   acp: { enabled: true, defaultAgentId: 'caret', agents: [], passMcpServers: true, sessionDefaults: {}, terminalSafety: true },
   terminal: { blocks: true, shellIntegration: true, aiEnabled: true, programStatus: true, maxBlocks: 200, suggestions: 'ai' },
   router: { enabled: false, source: 'npm', overrides: {}, excludedModels: [], stickySessions: true, routeSingleShot: true, tpmLimit: undefined, embeddingsProviderId: undefined },
+  usage: { track: true, includeExternal: true, customPrices: {} },
 }
 
 export const SETTINGS_FIELDS: SettingField[] = [
+  // ── Usage (rendered by settings/pages/Usage.tsx; custom prices are edited on the page itself) ──
+  { id: 'usage.track', page: 'usage', type: 'boolean', title: 'Record usage', description: 'Append every priced request (chat, external agents, inline edits, Tab, review, commit messages) to the local ledger in ~/.caret/usage. Nothing leaves your machine.', group: 'Tracking', keywords: ['cost', 'tokens', 'ledger', 'spend'] },
+  { id: 'usage.includeExternal', page: 'usage', type: 'boolean', title: 'Include external agents', description: 'Read the local histories of Claude Code, Codex and OpenCode (read-only) and show their tokens, estimated cost and subscription windows.', group: 'Tracking', keywords: ['claude code', 'codex', 'opencode', 'cost', 'tokens'] },
   // ── Auto routing (rendered inside Settings → Models by AutoRoutingSection) ──
   { id: 'router.stickySessions', page: 'models', type: 'boolean', title: 'Sticky sessions', description: 'Keep a chat on the model the router first picked unless the conversation drifts or a tool exchange needs more.', group: 'Auto routing', keywords: ['lynkr', 'pin', 'auto'] },
   { id: 'router.routeSingleShot', page: 'models', type: 'boolean', title: 'Route review and inline edits too', description: 'Bugbot reviews and ⌘K edits made with Auto go through the router. Tab, commit messages and apply always use the fast model.', group: 'Auto routing', keywords: ['lynkr', 'auto'] },

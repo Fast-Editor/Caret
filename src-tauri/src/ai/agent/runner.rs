@@ -323,6 +323,7 @@ pub async fn run_turn(mgr: Arc<AgentManager>, h: Arc<SessionHandle>, mut req: Se
         let usage = Usage::from_delta(&turn.usage, cost);
         let (session_usage, ctx_tokens) = { let mut s = h.session.lock(); s.usage.add(&usage); if let Some(m) = s.message_mut(&message_id) { m.usage = Some(usage.clone()); if let Some(sm) = &served { m.model_id = Some(sm.id.clone()); if m.routing.is_none() { m.routing = Some(routing_info_from(None, None, None, None, &sm.id, &assignment)); } } } s.context_tokens = turn.usage.input_tokens + turn.usage.cache_read_tokens + turn.usage.cache_write_tokens + turn.usage.output_tokens; (s.usage.clone(), s.context_tokens) };
         mgr.emit(AgentEvent::Usage { session_id: session_id.clone(), message_id: message_id.clone(), usage, context_tokens: ctx_tokens, session_usage });
+        crate::ai::usage::record(&settings, crate::ai::usage::UsageEntry::new("agent", &turn.usage, Some(cost)).model(served.as_ref().unwrap_or(&resolved.model)).agent("caret").session(&session_id).workspace(root.as_deref()).duration(started.elapsed().as_millis() as u64));
 
         let tool_uses = turn.tool_uses();
         for (id, _, input) in &tool_uses { update_tool(&mgr, &h, &message_id, id, |r| { r.input = input.clone(); r.summary = tool_map.get(&r.name).and_then(|t| t.label(input)); }); }

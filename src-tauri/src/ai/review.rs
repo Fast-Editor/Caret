@@ -183,9 +183,10 @@ async fn run_review(app: &AppHandle, root: PathBuf, req: ReviewRequest, resolved
     let _ = ch.send(ReviewStreamEvent::Status { message: format!("Reviewing {} file batch(es) with {}…", batches.len(), resolved.model.display_name) });
     let sem = Arc::new(tokio::sync::Semaphore::new(3));
     let focus = req.focus.clone().map(|f| format!("\nReview focus requested by the user: {f}\n")).unwrap_or_default();
+    let settings = Arc::new(app.state::<SettingsState>().effective());
     let mut handles = vec![];
     for batch in batches {
-        let sem = sem.clone(); let resolved = resolved.clone(); let ch = ch.clone(); let token = token.clone(); let focus = focus.clone();
+        let sem = sem.clone(); let resolved = resolved.clone(); let ch = ch.clone(); let token = token.clone(); let focus = focus.clone(); let settings = settings.clone();
         handles.push(tokio::spawn(async move {
             let _permit = sem.acquire().await.ok()?;
             let mut body = String::new();
@@ -195,7 +196,8 @@ async fn run_review(app: &AppHandle, root: PathBuf, req: ReviewRequest, resolved
             r.messages = vec![Message::user_text(format!("{focus}\n{body}"))];
             r.max_tokens = r.max_tokens.min(8_000);
             r.thinking.effort = crate::ai::llm::Effort::Medium;
-            let (raw, _) = match llm::complete_text(&resolved, r, token).await { Ok(x) => x, Err(e) => { tracing::warn!(error = %e, "review batch failed"); return Some((String::new(), vec![], Some(e))); } };
+            let (raw, usage) = match llm::complete_text(&resolved, r, token).await { Ok(x) => x, Err(e) => { tracing::warn!(error = %e, "review batch failed"); return Some((String::new(), vec![], Some(e))); } };
+            crate::ai::usage::record(&settings, crate::ai::usage::UsageEntry::new("review", &usage, Some(usage.cost_usd(&resolved.model))).model(&resolved.model));
             let v = extract_json(&raw)?;
             let summary = v["summary"].as_str().unwrap_or("").to_string();
             let paths: Vec<String> = batch.iter().map(|f| f.path.clone()).collect();

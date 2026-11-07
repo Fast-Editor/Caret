@@ -356,6 +356,30 @@ impl Default for RouterSettings {
     fn default() -> Self { Self { enabled: false, source: "npm".into(), overrides: BTreeMap::new(), excluded_models: vec![], sticky_sessions: true, route_single_shot: true, tpm_limit: None, embeddings_provider_id: None } }
 }
 
+/// Per-million-token prices for a model id that is not in the catalog (external agents, custom ids).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase", default)]
+pub struct ModelPrice {
+    pub input: f64,
+    pub output: f64,
+    #[serde(skip_serializing_if = "Option::is_none")] pub cache_read: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")] pub cache_write: Option<f64>,
+}
+impl Default for ModelPrice { fn default() -> Self { Self { input: 0.0, output: 0.0, cache_read: None, cache_write: None } } }
+
+/// Usage ledger (see `ai::usage`): what is recorded and how external histories are priced.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase", default)]
+pub struct UsageSettings {
+    /// Append every priced request to `~/.caret/usage/YYYY-MM.jsonl`.
+    pub track: bool,
+    /// Show Claude Code / Codex / OpenCode local histories on the Usage page.
+    pub include_external: bool,
+    /// model id (or prefix) -> prices per million tokens; checked before the catalog and the built-in table.
+    pub custom_prices: BTreeMap<String, ModelPrice>,
+}
+impl Default for UsageSettings { fn default() -> Self { Self { track: true, include_external: true, custom_prices: BTreeMap::new() } } }
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
 pub struct Settings {
@@ -378,10 +402,11 @@ pub struct Settings {
     pub acp: AcpSettings,
     pub terminal: TerminalSettings,
     pub router: RouterSettings,
+    pub usage: UsageSettings,
 }
 impl Default for Settings {
     fn default() -> Self {
-        Self { providers: default_providers(), models: default_models(), tab: Default::default(), agent: Default::default(), indexing: Default::default(), ui: Default::default(), privacy: Default::default(), general: Default::default(), user_rules: String::new(), lsp: Default::default(), mcp: Default::default(), custom_modes: vec![], beta: Default::default(), keybindings: BTreeMap::new(), verify: Default::default(), sandbox: Default::default(), acp: Default::default(), terminal: Default::default(), router: Default::default() }
+        Self { providers: default_providers(), models: default_models(), tab: Default::default(), agent: Default::default(), indexing: Default::default(), ui: Default::default(), privacy: Default::default(), general: Default::default(), user_rules: String::new(), lsp: Default::default(), mcp: Default::default(), custom_modes: vec![], beta: Default::default(), keybindings: BTreeMap::new(), verify: Default::default(), sandbox: Default::default(), acp: Default::default(), terminal: Default::default(), router: Default::default(), usage: Default::default() }
     }
 }
 

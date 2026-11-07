@@ -732,6 +732,7 @@ impl IncomingHandler for Bridge {
             }
             "session_info_update" => { if let Some(t) = update.get("title").and_then(|t| t.as_str()) { let changed = { let mut s = h.session.lock(); if !s.title_generated || s.title != t { s.title = t.to_string(); s.title_generated = true; true } else { false } }; if changed { self.mgr.emit(AgentEvent::Title { session_id: link.caret_id.clone(), title: t.to_string() }); } } }
             "usage_update" => {
+                crate::ai::usage::record_acp(&self.mgr.settings(), &h, &link.agent_id, update);
                 let used = update.get("used").and_then(|u| u.as_u64()).or_else(|| update.get("inputTokens").and_then(|u| u.as_u64()));
                 let cost = update.pointer("/cost/amount").and_then(|c| c.as_f64());
                 let (usage, ctx, session_usage) = { let mut s = h.session.lock(); if let Some(u) = used { s.context_tokens = u; } if let Some(c) = cost { s.usage.cost_usd = Some(c); } let mut u = Usage::default(); u.cost_usd = cost; (u, s.context_tokens, s.usage.clone()) };

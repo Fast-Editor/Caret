@@ -186,6 +186,7 @@ export interface Settings {
   mcp: { enabled: boolean }; customModes: CustomMode[]; beta: BetaSettings
   keybindings: Record<string, string | null>
   verify: VerifySettings; sandbox: SandboxSettings; acp: AcpSettings; terminal: TerminalSettings; router: RouterSettings
+  usage: UsageSettings
 }
 export interface RouterSettings { enabled: boolean; source: 'npm' | 'bundled'; overrides: Record<string, string>; excludedModels: string[]; stickySessions: boolean; routeSingleShot: boolean; tpmLimit?: number; embeddingsProviderId?: string }
 export type RouterTier = 'simple' | 'medium' | 'complex' | 'reasoning'
@@ -525,3 +526,23 @@ export interface HistoryEntry {
 }
 export interface HistorySearchHit { entry: HistoryEntry; score: number; why: string }
 export interface HistoryNlResult { hits: HistorySearchHit[]; keywords: string[]; usedModel: boolean }
+
+// ───────────────────────────── usage ledger (Settings → Usage; `~/.caret/usage/YYYY-MM.jsonl`) ─────────────────────────────
+/** Per-million-token prices for a model id (or id prefix) that is not in the catalog. */
+export interface ModelPrice { input: number; output: number; cacheRead?: number; cacheWrite?: number }
+export interface UsageSettings { track: boolean; includeExternal: boolean; customPrices: Record<string, ModelPrice> }
+export type UsageRange = 'today' | '7d' | '30d' | 'all'
+export type UsageGroupBy = 'model' | 'provider' | 'agent' | 'source' | 'day' | 'workspace'
+export type UsageSource = 'agent' | 'acp' | 'inline' | 'tab' | 'review' | 'commit' | 'other'
+export interface UsageEntry {
+  ts: number; source: UsageSource | string; providerId?: string; modelId?: string; agentId?: string; sessionId?: string; workspace?: string
+  input: number; output: number; cacheRead: number; cacheWrite: number; thinking: number; costUsd?: number; durationMs?: number
+}
+/** `costUsd` is null when no request in the group could be priced; `unpriced` counts those requests. */
+export interface UsageTotals { input: number; output: number; cacheRead: number; cacheWrite: number; thinking: number; costUsd: number | null; requests: number; unpriced: number; cacheHitRate: number }
+export interface UsageRow extends UsageTotals { key: string; label: string }
+export interface UsageSummary { totals: UsageTotals; rows: UsageRow[]; from: number; to: number }
+export interface UsageDailyPoint { day: string; costUsd: number; tokens: number }
+export interface UsageWindow { label: string; usedPercent: number; windowMinutes: number; resetsAt?: number }
+export interface UsageExternalAgent { id: string; name: string; available: boolean; sourcePathPattern: string; totals: UsageTotals; byModel: UsageRow[]; windows: UsageWindow[]; note?: string }
+export interface UsageExternalReport { agents: UsageExternalAgent[]; from: number; to: number }
