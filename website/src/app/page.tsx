@@ -36,6 +36,9 @@ export default async function Home() {
           </Button>
         </div>
         <InstallCommand command={site.installCommand} className="w-full max-w-2xl text-left" />
+        <p className="text-sm text-muted-foreground">
+          Coming from T3 Code or Cursor? <Link href="/compare" className="underline underline-offset-4 hover:text-foreground">See the feature comparison</Link>.
+        </p>
         <a href={site.productHunt} target="_blank" rel="noopener noreferrer" className="mt-2 opacity-90 transition-opacity hover:opacity-100">
           {/* eslint-disable-next-line @next/next/no-img-element */}
           <img alt="Caret on Product Hunt" width={250} height={54} src={site.productHuntBadge} />
@@ -107,7 +110,7 @@ export default async function Home() {
             <div>
               <h2 className="text-2xl font-semibold tracking-tight">Bring the agent you already pay for</h2>
               <p className="mt-3 text-muted-foreground">
-                Pick Claude Code, Codex, Gemini CLI, OpenCode, Pi or any Agent Client Protocol agent per chat. The agent runs locally with its own login; its streaming text, tool calls, permission prompts, checkpointed diffs and terminals all flow through Caret&apos;s review bar and approval cards.
+                Pick Claude Code, Codex, Cursor, Grok Build, Gemini CLI, OpenCode, Pi or any Agent Client Protocol agent per chat. The agent runs locally with its own login; its streaming text, tool calls, permission prompts, checkpointed diffs and terminals all flow through Caret&apos;s review bar and approval cards.
               </p>
               <Button variant="link" className="mt-2 px-0" render={<Link href="/docs/acp" />}>How external agents work <ArrowRight className="size-4" /></Button>
             </div>
