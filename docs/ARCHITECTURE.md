@@ -17,6 +17,7 @@ frontend rendered by the OS WebView. No bundled Chromium, no Node runtime at run
 │         tab(FIM + next-edit) · inline_edit(Cmd+K) · commit · review(Bugbot) · apply           │
 │ index/  walker · chunker · tantivy BM25 · embeddings · hybrid search · docs crawler           │
 │ mcp/    MCP client manager (stdio / streamable-http / sse)                                    │
+│ orchestrator/ Caret as an MCP server (loopback Streamable HTTP, bearer token): threads as tools │
 │ browser/ agent-driven browser windows (navigate, DOM snapshot, click, type, eval)             │
 └───────────────────────────────────────────────────────────────────────────────────────────────┘
 ```
@@ -60,6 +61,7 @@ frontend rendered by the OS WebView. No bundled Chromium, no Node runtime at run
 | Commands (`/slash`), Skills (SKILL.md), Subagents | `ai/agent/{commands,skills,subagents}.rs` |
 | Codebase indexing (ignore files, incremental, embeddings) + @Docs | `index/*` |
 | MCP (stdio, streamable-http, sse; tools/resources/prompts) | `mcp/*` |
+| Orchestrator: Caret as an MCP server so Claude Code, Codex, Cursor or another Caret can spawn, steer, read and approve threads on any provider or ACP agent (T3 Code parity) | `orchestrator/*` (server, tools, lifecycle) over `AgentManager::subscribe_events()`, `settings/pages/OrchestratorSection.tsx` (docs/ORCHESTRATOR.md) |
 | External agents via the Agent Client Protocol (Claude Code, Codex, Gemini CLI, Pi, GLM, custom) driving the same chat/review/approval UI (Caret-only; Cursor has no ACP client) | `acp/*` (protocol, process, client, bridge, registry, commands) → `chat_commands.rs` routing, `components/chat/composer/AgentPicker.tsx`, `settings/pages/Agents.tsx` — docs/ACP.md |
 | Command safety: shell AST + deterministic risk classifier, Seatbelt/bwrap sandbox, MCP tool pinning (Caret-only; Cursor has allow/deny lists) | `sandbox/*` → `ai/agent/policy.rs`, `tools/shell_tools.rs`, `components/chat/messages/ToolCallCard.tsx`, `settings/pages/SandboxSection.tsx` — docs/SANDBOX.md |
 | Background / parallel agents, worktrees, Agents layout | `AgentManager` in runner + `components/agents` |

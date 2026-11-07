@@ -17,6 +17,7 @@ pub mod index;
 pub mod mcp;
 pub mod browser;
 pub mod debug;
+pub mod orchestrator;
 // REGISTER:modules (index, mcp, browser)
 
 #[global_allocator]
@@ -71,6 +72,7 @@ pub fn run() {
         .manage(core::cli::OpenQueue::default())
         .manage(ai::tab::TabState::default())
         .manage(ai::review::ReviewState::default())
+        .manage(orchestrator::OrchestratorState::default())
         .menu(|app| menu::build(app))
         .on_menu_event(|app, ev| menu::on_menu_event(app, ev.id().0.as_str()))
         .setup(|app| {
@@ -88,6 +90,7 @@ pub fn run() {
             { let idx = index::IndexManager::new(handle.clone()); idx.install(); app.manage(idx); app.manage(index::DocsManager::new(handle.clone())); }
             { let m = mcp::McpManager::new(handle.clone()); app.manage(m.clone()); m.install(); }
             { let b = browser::BrowserManager::new(handle.clone()); b.install(); app.manage(b); }
+            orchestrator::init(&handle);
             if let Some(w) = app.get_webview_window("main") {
                 #[cfg(debug_assertions)]
                 if std::env::var("CARET_DEVTOOLS").ok().as_deref() == Some("1") { w.open_devtools(); }
@@ -152,11 +155,13 @@ pub fn run() {
             mcp::commands::mcp_list_servers, mcp::commands::mcp_list_configs, mcp::commands::mcp_add_server, mcp::commands::mcp_update_server, mcp::commands::mcp_remove_server, mcp::commands::mcp_toggle_server, mcp::commands::mcp_restart_server, mcp::commands::mcp_tools, mcp::commands::mcp_toggle_tool, mcp::commands::mcp_resources, mcp::commands::mcp_read_resource, mcp::commands::mcp_prompts, mcp::commands::mcp_get_prompt, mcp::commands::mcp_call_tool, mcp::commands::mcp_logs,
             // REGISTER:commands:browser
             browser::commands::browser_open, browser::commands::browser_list, browser::commands::browser_navigate, browser::commands::browser_snapshot, browser::commands::browser_click, browser::commands::browser_type, browser::commands::browser_eval, browser::commands::browser_back, browser::commands::browser_forward, browser::commands::browser_close,
+            // REGISTER:commands:orchestrator
+            orchestrator::orchestrator_status, orchestrator::orchestrator_rotate_token, orchestrator::orchestrator_snippets,
         ])
         .build(tauri::generate_context!())
         .expect("error while building Caret")
         .run(|app, event| {
-            if matches!(event, tauri::RunEvent::ExitRequested { .. } | tauri::RunEvent::Exit) { ai::router::shutdown(app); }
+            if matches!(event, tauri::RunEvent::ExitRequested { .. } | tauri::RunEvent::Exit) { ai::router::shutdown(app); orchestrator::shutdown(app); }
             // `caret <path>` / Finder "Open with" / `caret://open?…` arrive here on macOS (also on cold start).
             #[cfg(any(target_os = "macos", target_os = "ios"))]
             if let tauri::RunEvent::Opened { urls } = &event { core::cli::on_opened(app, urls); }

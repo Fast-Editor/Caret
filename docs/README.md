@@ -27,6 +27,7 @@ top-level [README](../README.md) has the overview, install instructions and the 
 | [AUTO_ROUTING.md](AUTO_ROUTING.md) | "Auto" model routing through the managed Lynkr sidecar: tiers, overrides, security model, troubleshooting |
 | [THREADS.md](THREADS.md) | Chat thread lifecycle: pin, snooze, settle, archive with undo, the Working section, group by project, auto-settle, title regeneration, message search and the next/previous thread commands |
 | [ACP.md](ACP.md) | External agents over the Agent Client Protocol (Claude Code, Codex, Cursor, Grok Build, Gemini CLI, OpenCode, Pi…), per-agent model/effort/mode, sign-in and extra accounts |
+| [ORCHESTRATOR.md](ORCHESTRATOR.md) | Caret as an MCP server: let Claude Code, Codex, Cursor or another Caret spawn, steer, read and approve Caret threads on any provider or external agent (loopback, bearer token) |
 | [VERIFIED_DIFF.md](VERIFIED_DIFF.md) | The verification engine that runs after agent turns: checks, risk tiers, proof panel, build-before-test |
 | [SANDBOX.md](SANDBOX.md) | Shell command classification, macOS Seatbelt / Linux bubblewrap sandboxing, MCP tool pins |
 | [TERMINAL.md](TERMINAL.md) | Semantic terminal blocks (OSC 133 / 7501), shell integration, program status, customisation (colours, suggestions, fix-it, clickable paths, history search) |
@@ -39,7 +40,8 @@ top-level [README](../README.md) has the overview, install instructions and the 
 ## Where things live on disk
 
 - User configuration: `~/.caret/` — `settings.json`, `secrets.json` (API keys), `keybindings.json`, `mcp.json`, rules, memories,
-  sessions, checkpoints, the search index, `bin/caret` (launcher), `acp/` (external agent adapters), `lynkr/` (Auto routing sidecar).
+  sessions, checkpoints, the search index, `bin/caret` (launcher), `acp/` (external agent adapters), `lynkr/` (Auto routing sidecar),
+  `orchestrator/` (`token` and `endpoint.json` for the MCP server that lets other agents drive Caret).
 - Usage ledger: `~/.caret/usage/YYYY-MM.jsonl`, one line per priced request (agent chat, external agents, inline edits, Tab, review,
   commit messages); read by Settings → Usage and the status bar spend item. External agent histories under `~/.claude`, `~/.codex`
   and `~/.local/share/opencode` are only ever read.

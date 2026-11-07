@@ -382,6 +382,12 @@ export const apiWave1 = {
     nlSearch: (query: string, limit = 50) => invoke<T.HistoryNlResult>('terminal_history_nl_search', { query, limit }),
     clear: () => invoke<void>('terminal_history_clear'),
   },
+  /** Caret as an MCP server for other agents (loopback, bearer token). */
+  orchestrator: {
+    status: () => invoke<T.OrchestratorStatus>('orchestrator_status'),
+    rotateToken: () => invoke<T.OrchestratorStatus>('orchestrator_rotate_token'),
+    snippets: () => invoke<T.OrchestratorSnippets>('orchestrator_snippets'),
+  },
 }
 export type ApiWave1 = typeof apiWave1
 /** Full command surface: base domains plus wave-1 additions. */

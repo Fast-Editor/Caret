@@ -94,6 +94,7 @@ export const DEFAULTS: Settings = {
   chat: { autoSettleDays: 0, handoffBudgetTokens: 12000 },
   usage: { track: true, includeExternal: true, customPrices: {} },
   worktrees: { perThreadDefault: false, location: '.caret/worktrees', branchTemplate: 'caret/{slug}', cleanupInactiveDays: 14, cleanupSettled: true, cleanupMerged: true, cleanupNoCommits: true, onLocalChanges: 'keep', deleteBranchWithWorktree: true, autoCleanup: false },
+  orchestrator: { enabled: false, port: 17431 },
 }
 
 const PERMISSION_MODE_OPTIONS: SelectOption[] = [
@@ -260,6 +261,8 @@ export const SETTINGS_FIELDS: SettingField[] = [
 
   // ── MCP / LSP toggles ──
   { id: 'mcp.enabled', page: 'mcp', type: 'boolean', title: 'Enable MCP', description: 'Connect to configured MCP servers and expose their tools to the agent.' },
+  { id: 'orchestrator.enabled', page: 'mcp', type: 'boolean', title: 'Caret as an MCP server', description: 'Serve Caret itself as a loopback MCP server so Claude Code, Codex, Cursor or another Caret can create and drive threads here (bearer token required).', group: 'Orchestrator', keywords: ['orchestrator', 'mcp server', 'claude code', 'codex', 'cursor', 't3'] },
+  { id: 'orchestrator.port', page: 'mcp', type: 'number', title: 'Orchestrator port', description: 'Preferred 127.0.0.1 port; the next ten are tried when it is busy.', min: 1024, max: 65535, step: 1, group: 'Orchestrator', dependsOn: 'orchestrator.enabled', keywords: ['orchestrator'] },
   { id: 'lsp.enabled', page: 'appearance', type: 'boolean', title: 'Language servers', description: 'Start installed language servers for diagnostics, hover, go to definition.', group: 'Editor', keywords: ['lsp', 'intellisense'] },
   { id: 'chat.autoSettleDays', page: 'agent', type: 'number', title: 'Auto-settle idle threads', description: 'Move threads with no activity for this many days to the Settled section (0 = off). Pinned, snoozed and archived threads are never auto-settled.', unit: 'days', min: 0, max: 365, step: 1, group: 'Threads', keywords: ['settle', 'thread', 'lifecycle', 'history', 'snooze'] },
 ]
