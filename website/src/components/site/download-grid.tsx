@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { Apple, Download, ExternalLink, MonitorSmartphone, Terminal } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -58,9 +59,16 @@ export function DownloadGrid({ release }: { release: Release }) {
             <CardTitle>Windows 10 or later, x64</CardTitle>
             <CardDescription>Built by the same release workflow as macOS but with far less runtime testing. The installer is unsigned, so SmartScreen shows <em>More info → Run anyway</em> once.</CardDescription>
           </CardHeader>
-          <CardContent className="flex flex-wrap gap-2">
-            <AssetButton asset={d.winExe} label="Setup .exe" primary />
-            <AssetButton asset={d.winMsi} label=".msi" />
+          <CardContent className="flex flex-col gap-4">
+            <InstallCommand command={site.wingetCommand} />
+            <InstallCommand command={site.scoopCommand} />
+            <div className="flex flex-wrap gap-2">
+              <AssetButton asset={d.winExe} label="Setup .exe" primary />
+              <AssetButton asset={d.winMsi} label=".msi" />
+            </div>
+            <p className="text-xs text-muted-foreground">
+              The winget manifest is awaiting its first winget-pkgs submission; scoop installs from the manifest in this repository. Every channel is described in <Link href="/docs/install" className="underline underline-offset-4">Install</Link>.
+            </p>
           </CardContent>
         </Card>
       </TabsContent>
@@ -71,10 +79,17 @@ export function DownloadGrid({ release }: { release: Release }) {
             <CardTitle>Linux, x86_64</CardTitle>
             <CardDescription>Needs WebKitGTK 4.1. Sandboxing uses bubblewrap when it is installed. Report rough edges on GitHub.</CardDescription>
           </CardHeader>
-          <CardContent className="flex flex-wrap gap-2">
-            <AssetButton asset={d.deb} label=".deb" primary />
-            <AssetButton asset={d.rpm} label=".rpm" />
-            <AssetButton asset={d.appImage} label=".AppImage" />
+          <CardContent className="flex flex-col gap-4">
+            <InstallCommand command={site.aurCommand} />
+            <InstallCommand command={site.nixCommand} />
+            <div className="flex flex-wrap gap-2">
+              <AssetButton asset={d.deb} label=".deb" primary />
+              <AssetButton asset={d.rpm} label=".rpm" />
+              <AssetButton asset={d.appImage} label=".AppImage" />
+            </div>
+            <p className="text-xs text-muted-foreground">
+              The AUR package is awaiting its first publication; the Nix flake runs straight from this repository. Every channel is described in <Link href="/docs/install" className="underline underline-offset-4">Install</Link>.
+            </p>
           </CardContent>
         </Card>
       </TabsContent>
