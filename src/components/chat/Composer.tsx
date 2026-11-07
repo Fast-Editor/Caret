@@ -13,6 +13,7 @@ import { ContextRing, ModeSelector, ModelPicker, ThinkingControls } from './comp
 import { AgentPicker, CARET_AGENT } from './composer/AgentPicker'
 import { AgentOptions } from './composer/AgentOptions'
 import { SendModeControl, type SendMode } from './composer/SendMode'
+import { PermissionPicker } from './composer/PermissionPicker'
 import { ImageThumb } from './messages/Parts'
 import { detectTrigger, parseSlashCommand, replaceTrigger, type Trigger } from './mentions'
 import { baseName, fmtTokens, uid, MOD } from './util'
@@ -198,6 +199,7 @@ export function Composer({ sessionId, autoFocusNonce }: { sessionId: string; aut
         className="chat-composer-ta w-full resize-none bg-transparent px-2.5 py-2 outline-none text-[13px] leading-[1.5] placeholder:text-faint min-h-[40px]" />
       <div className="flex items-center gap-0.5 px-1.5 pb-1.5">
         <AgentPicker sessionId={sessionId} />
+        <PermissionPicker sessionId={sessionId} />
         {(draft.agentId ?? CARET_AGENT) === CARET_AGENT ? (
           <>
             <ModeSelector sessionId={sessionId} />

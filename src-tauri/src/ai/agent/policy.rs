@@ -1,6 +1,7 @@
 //! Tool execution policy: auto-run modes, command allow/deny lists, dotfile / delete / outside-workspace protection.
 use crate::ai::agent::session::{ApprovalKind, Session};
 use crate::core::settings::Settings;
+use serde::{Deserialize, Serialize};
 use std::path::{Component, Path, PathBuf};
 
 #[derive(Debug, Clone, PartialEq)]
@@ -30,6 +31,48 @@ pub enum Decision {
     Allow,
     NeedsApproval { kind: ApprovalKind, title: String, detail: String, allow_always_pattern: Option<String>, classification: Option<crate::sandbox::CommandClassification> },
     Deny(String),
+}
+
+/// How much the agent may do without asking. Declared from most to least restrictive so the cap
+/// (`agent.maxPermissionMode`) can be applied with `min`.
+///
+/// | mode | shell | file edits | MCP tools |
+/// |---|---|---|---|
+/// | supervised | asks | asks | asks |
+/// | auto-accept-edits | allowlisted and not destructive run | inside the workspace auto-apply | per `mcpAutoRun` / allow list |
+/// | auto | safe and caution run, destructive asks | auto | auto (changed pinned tools still ask) |
+/// | full-access | everything runs, blocked/denylisted still denied | auto | auto (changed pinned tools still ask) |
+///
+/// Session-allow memory ("allow for this session") and the dotfile / delete / outside-workspace protections keep
+/// working in every mode except full-access, which skips the protections.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum PermissionMode { Supervised, AutoAcceptEdits, Auto, FullAccess }
+
+impl PermissionMode {
+    pub const ALL: [PermissionMode; 4] = [Self::Supervised, Self::AutoAcceptEdits, Self::Auto, Self::FullAccess];
+    /// Legacy `agent.autoRun` ("off" | "allowlist" | "all") to a mode.
+    pub fn from_legacy_auto_run(auto_run: &str) -> Self { match auto_run { "off" => Self::Supervised, "all" => Self::Auto, _ => Self::AutoAcceptEdits } }
+    pub fn id(self) -> &'static str { match self { Self::Supervised => "supervised", Self::AutoAcceptEdits => "auto-accept-edits", Self::Auto => "auto", Self::FullAccess => "full-access" } }
+    pub fn label(self) -> &'static str { match self { Self::Supervised => "Supervised", Self::AutoAcceptEdits => "Auto-accept edits", Self::Auto => "Auto", Self::FullAccess => "Full access" } }
+    pub fn parse(s: &str) -> Option<Self> { Self::ALL.iter().copied().find(|m| m.id() == s.trim()) }
+}
+
+/// `requested` clamped by the cap (None = no cap).
+pub fn clamp_permission_mode(requested: PermissionMode, cap: Option<PermissionMode>) -> PermissionMode { match cap { Some(c) => requested.min(c), None => requested } }
+
+/// Thread override, else the settings default, else the legacy `autoRun` derivation; then clamped by
+/// `agent.maxPermissionMode`. Because workspace settings layer over user settings, a project's
+/// `.caret/settings.json` can lower the cap (or the default) for that project.
+pub fn effective_permission_mode(settings: &Settings, session: &Session) -> PermissionMode {
+    let requested = session.permission_mode.or(settings.agent.permission_mode).unwrap_or_else(|| PermissionMode::from_legacy_auto_run(&settings.agent.auto_run));
+    clamp_permission_mode(requested, settings.agent.max_permission_mode)
+}
+
+/// Mode for one tool run: a custom chat mode with `autoRun: false` forces Supervised for its tools.
+pub fn mode_for(input: &PolicyInput) -> PermissionMode {
+    if input.mode_auto_run == Some(false) { return PermissionMode::Supervised; }
+    effective_permission_mode(input.settings, input.session)
 }
 
 /// Split a shell command into top-level segments on `&&`, `||`, `;`, `|`, newlines (quote-aware, best effort).
@@ -133,7 +176,7 @@ pub fn resolve_path(session: &Session, p: &str) -> PathBuf { crate::paths::resol
 
 pub fn decide(input: &PolicyInput, effect: &ToolEffect) -> Decision {
     let s = input.settings;
-    let auto_run = match input.mode_auto_run { Some(false) => "off", Some(true) => s.agent.auto_run.as_str(), None => s.agent.auto_run.as_str() };
+    let mode = mode_for(input);
     let session_allows = |pat: &str| input.session.session_allow.iter().any(|a| a == pat);
     match effect {
         ToolEffect::ReadOnly | ToolEffect::Benign => Decision::Allow,
@@ -153,10 +196,15 @@ pub fn decide(input: &PolicyInput, effect: &ToolEffect) -> Decision {
                 return Decision::Deny(format!("Command blocked by safety policy [{}]: {why}", class.labels.join(", ")));
             }
             let destructive = class.is_destructive();
-            // Destructive commands are never auto-run; "allow for session/always" scopes to the exact command, not the prefix.
+            // Destructive commands only auto-run in full-access; "allow for session/always" scopes to the exact command, not the prefix.
             let pattern = if destructive { cmd.trim().to_string() } else { command_prefix(cmd) };
             if session_allows(&format!("cmd:{pattern}")) { return Decision::Allow; }
-            let ok = !destructive && match auto_run { "all" => true, "allowlist" => class.allowlisted, _ => false };
+            let ok = match mode {
+                PermissionMode::Supervised => false,
+                PermissionMode::AutoAcceptEdits => !destructive && class.allowlisted,
+                PermissionMode::Auto => !destructive,
+                PermissionMode::FullAccess => true,
+            };
             if ok { Decision::Allow } else {
                 let title = match class.overall_risk.as_str() { "destructive" => "Run destructive command", "caution" => "Run command (review)", _ => "Run command" };
                 Decision::NeedsApproval { kind: ApprovalKind::Command, title: title.into(), detail: cmd.clone(), allow_always_pattern: Some(pattern), classification: Some(class) }
@@ -164,6 +212,8 @@ pub fn decide(input: &PolicyInput, effect: &ToolEffect) -> Decision {
         }
         ToolEffect::FileEdit(paths) | ToolEffect::FileDelete(paths) => {
             let is_delete = matches!(effect, ToolEffect::FileDelete(_));
+            // Full access runs everything without asking: the protections below are skipped.
+            if mode == PermissionMode::FullAccess { return Decision::Allow; }
             let root = input.session.root();
             let cwd = input.session.cwd_path();
             for p in paths {
@@ -184,7 +234,7 @@ pub fn decide(input: &PolicyInput, effect: &ToolEffect) -> Decision {
             if is_delete && s.agent.protect_delete && !session_allows("delete") {
                 return Decision::NeedsApproval { kind: ApprovalKind::FileDelete, title: "Delete files".into(), detail: paths.join(", "), allow_always_pattern: None, classification: None };
             }
-            if auto_run == "off" && !session_allows("edits") {
+            if mode == PermissionMode::Supervised && !session_allows("edits") {
                 return Decision::NeedsApproval { kind: ApprovalKind::FileEdit, title: if is_delete { "Delete files" } else { "Edit files" }.into(), detail: paths.join(", "), allow_always_pattern: None, classification: None };
             }
             Decision::Allow
@@ -198,13 +248,19 @@ pub fn decide(input: &PolicyInput, effect: &ToolEffect) -> Decision {
                     return Decision::NeedsApproval { kind: ApprovalKind::Mcp, title: format!("MCP tool changed: {tool}"), detail: format!("The description or schema of `{tool}` on server `{server_id}` changed since you last approved it (possible prompt injection).\n\nBefore:\n{}\n\nNow:\n{}", before.chars().take(600).collect::<String>(), ch.current_description.chars().take(600).collect::<String>()), allow_always_pattern: Some(q), classification: None };
                 }
             }
-            if s.agent.mcp_auto_run || s.agent.auto_run_mcp_tools.iter().any(|t| t == &q || t == tool) || session_allows(&format!("mcp:{q}")) { Decision::Allow } else {
+            let remembered = s.agent.auto_run_mcp_tools.iter().any(|t| t == &q || t == tool) || session_allows(&format!("mcp:{q}"));
+            let ok = match mode {
+                PermissionMode::Supervised => remembered,
+                PermissionMode::AutoAcceptEdits => s.agent.mcp_auto_run || remembered,
+                PermissionMode::Auto | PermissionMode::FullAccess => true,
+            };
+            if ok { Decision::Allow } else {
                 Decision::NeedsApproval { kind: ApprovalKind::Mcp, title: format!("Run MCP tool {tool}"), detail: format!("Server: {server_id}"), allow_always_pattern: Some(q), classification: None }
             }
         }
         ToolEffect::Browser { dangerous } => {
             if !s.beta.browser_tools { return Decision::Deny("Browser tools are disabled (Settings → Beta)".into()); }
-            if *dangerous && auto_run != "all" && !session_allows("browser-eval") { Decision::NeedsApproval { kind: ApprovalKind::Browser, title: "Run JavaScript in browser".into(), detail: "The agent wants to execute a script in the browser page".into(), allow_always_pattern: None, classification: None } } else { Decision::Allow }
+            if *dangerous && mode < PermissionMode::Auto && !session_allows("browser-eval") { Decision::NeedsApproval { kind: ApprovalKind::Browser, title: "Run JavaScript in browser".into(), detail: "The agent wants to execute a script in the browser page".into(), allow_always_pattern: None, classification: None } } else { Decision::Allow }
         }
         ToolEffect::Subagent => Decision::Allow,
     }
@@ -298,5 +354,147 @@ mod tests {
         // auto-run off: even safe commands ask, and the card carries the classification
         let input5 = PolicyInput { settings: &st, session: &sess, tool_name: "run_terminal_cmd", mode_auto_run: Some(false) };
         match decide(&input5, &ToolEffect::Shell("ls".into())) { Decision::NeedsApproval { classification, allow_always_pattern, .. } => { assert_eq!(classification.unwrap().overall_risk, "safe"); assert_eq!(allow_always_pattern.as_deref(), Some("ls")); } d => panic!("{d:?}") }
+    }
+
+    // ───────── permission modes ─────────
+    fn ws_session() -> Session { let mut sess = Session::default(); sess.workspace_root = "/work/repo".into(); sess.cwd = "/work/repo".into(); sess }
+    fn settings_with(mode: Option<PermissionMode>, cap: Option<PermissionMode>) -> Settings {
+        let mut st = Settings::default();
+        st.agent.permission_mode = mode; st.agent.max_permission_mode = cap;
+        st.agent.command_allowlist = vec!["npm".into(), "ls".into()];
+        st
+    }
+    fn is_ask(d: &Decision) -> bool { matches!(d, Decision::NeedsApproval { .. }) }
+    fn is_deny(d: &Decision) -> bool { matches!(d, Decision::Deny(_)) }
+    fn shell(st: &Settings, sess: &Session, cmd: &str) -> Decision { decide(&PolicyInput { settings: st, session: sess, tool_name: "run_terminal_cmd", mode_auto_run: None }, &ToolEffect::Shell(cmd.into())) }
+    fn edit(st: &Settings, sess: &Session, p: &str) -> Decision { decide(&PolicyInput { settings: st, session: sess, tool_name: "edit_file", mode_auto_run: None }, &ToolEffect::FileEdit(vec![p.into()])) }
+    fn del(st: &Settings, sess: &Session, p: &str) -> Decision { decide(&PolicyInput { settings: st, session: sess, tool_name: "delete_file", mode_auto_run: None }, &ToolEffect::FileDelete(vec![p.into()])) }
+    fn mcp(st: &Settings, sess: &Session) -> Decision { decide(&PolicyInput { settings: st, session: sess, tool_name: "mcp", mode_auto_run: None }, &ToolEffect::Mcp { server_id: "srv".into(), tool: "do_thing".into() }) }
+
+    #[test]
+    fn permission_mode_serde_and_ordering() {
+        assert_eq!(serde_json::to_string(&PermissionMode::AutoAcceptEdits).unwrap(), "\"auto-accept-edits\"");
+        assert_eq!(serde_json::from_str::<PermissionMode>("\"full-access\"").unwrap(), PermissionMode::FullAccess);
+        assert!(PermissionMode::Supervised < PermissionMode::AutoAcceptEdits && PermissionMode::AutoAcceptEdits < PermissionMode::Auto && PermissionMode::Auto < PermissionMode::FullAccess);
+        for m in PermissionMode::ALL { assert_eq!(PermissionMode::parse(m.id()), Some(m)); }
+        assert_eq!(PermissionMode::parse("nope"), None);
+    }
+
+    #[test]
+    fn legacy_auto_run_derivation_and_cap_clamping() {
+        let sess = ws_session();
+        for (legacy, expect) in [("off", PermissionMode::Supervised), ("allowlist", PermissionMode::AutoAcceptEdits), ("all", PermissionMode::Auto), ("weird", PermissionMode::AutoAcceptEdits)] {
+            let mut st = Settings::default(); st.agent.auto_run = legacy.into();
+            assert_eq!(effective_permission_mode(&st, &sess), expect, "{legacy}");
+        }
+        // explicit default beats legacy
+        let mut st = Settings::default(); st.agent.auto_run = "off".into(); st.agent.permission_mode = Some(PermissionMode::Auto);
+        assert_eq!(effective_permission_mode(&st, &sess), PermissionMode::Auto);
+        // thread override beats the default
+        let mut s2 = ws_session(); s2.permission_mode = Some(PermissionMode::FullAccess);
+        assert_eq!(effective_permission_mode(&st, &s2), PermissionMode::FullAccess);
+        // the cap clamps both
+        st.agent.max_permission_mode = Some(PermissionMode::AutoAcceptEdits);
+        assert_eq!(effective_permission_mode(&st, &sess), PermissionMode::AutoAcceptEdits);
+        assert_eq!(effective_permission_mode(&st, &s2), PermissionMode::AutoAcceptEdits);
+        // a cap above the request is a no-op
+        assert_eq!(clamp_permission_mode(PermissionMode::Supervised, Some(PermissionMode::FullAccess)), PermissionMode::Supervised);
+        assert_eq!(clamp_permission_mode(PermissionMode::FullAccess, None), PermissionMode::FullAccess);
+        // custom mode with autoRun=false forces supervised even in full access
+        let input = PolicyInput { settings: &Settings::default(), session: &s2, tool_name: "x", mode_auto_run: Some(false) };
+        assert_eq!(mode_for(&input), PermissionMode::Supervised);
+        let input = PolicyInput { settings: &Settings::default(), session: &s2, tool_name: "x", mode_auto_run: Some(true) };
+        assert_eq!(mode_for(&input), PermissionMode::FullAccess);
+    }
+
+    #[test]
+    fn supervised_asks_for_everything_but_honours_memory() {
+        let st = settings_with(Some(PermissionMode::Supervised), None);
+        let sess = ws_session();
+        assert!(is_ask(&shell(&st, &sess, "ls")), "safe asks");
+        assert!(is_ask(&shell(&st, &sess, "npm test")), "allowlisted asks");
+        assert!(is_ask(&shell(&st, &sess, "rm -rf dist")), "destructive asks");
+        assert!(is_deny(&shell(&st, &sess, "rm -rf /")), "blocked denied");
+        assert!(is_ask(&edit(&st, &sess, "src/main.rs")));
+        assert!(is_ask(&edit(&st, &sess, "/elsewhere/x.rs")));
+        assert!(is_ask(&del(&st, &sess, "src/main.rs")));
+        assert!(is_ask(&mcp(&st, &sess)));
+        // session memory
+        let mut s2 = ws_session(); s2.session_allow = vec!["cmd:ls".into(), "edits".into(), "mcp:srv:do_thing".into()];
+        assert_eq!(shell(&st, &s2, "ls -la"), Decision::Allow);
+        assert_eq!(edit(&st, &s2, "src/main.rs"), Decision::Allow);
+        assert_eq!(mcp(&st, &s2), Decision::Allow);
+        // "always allow" memory for MCP tools is honoured, the global mcp toggle is not
+        let mut st2 = st.clone(); st2.agent.mcp_auto_run = true;
+        assert!(is_ask(&mcp(&st2, &sess)));
+        st2.agent.auto_run_mcp_tools = vec!["srv:do_thing".into()];
+        assert_eq!(mcp(&st2, &sess), Decision::Allow);
+    }
+
+    #[test]
+    fn auto_accept_edits_mode() {
+        let st = settings_with(Some(PermissionMode::AutoAcceptEdits), None);
+        let sess = ws_session();
+        assert_eq!(shell(&st, &sess, "npm test && ls"), Decision::Allow, "allowlisted runs");
+        assert!(is_ask(&shell(&st, &sess, "cat x")), "safe but not allowlisted asks");
+        assert!(is_ask(&shell(&st, &sess, "npm test && rm -rf dist")), "destructive asks even when a segment is allowlisted");
+        assert!(is_deny(&shell(&st, &sess, "sudo shutdown -h now")));
+        assert_eq!(edit(&st, &sess, "src/main.rs"), Decision::Allow, "edits inside the workspace auto-apply");
+        assert!(is_ask(&edit(&st, &sess, "/elsewhere/x.rs")), "outside workspace still protected");
+        assert!(is_ask(&edit(&st, &sess, ".env")), "dotfiles still protected");
+        assert!(is_ask(&del(&st, &sess, "src/main.rs")), "delete still protected");
+        assert!(is_ask(&mcp(&st, &sess)));
+        let mut st2 = st.clone(); st2.agent.mcp_auto_run = true;
+        assert_eq!(mcp(&st2, &sess), Decision::Allow, "MCP follows the existing mcp settings");
+    }
+
+    #[test]
+    fn auto_mode() {
+        let st = settings_with(Some(PermissionMode::Auto), None);
+        let sess = ws_session();
+        assert_eq!(shell(&st, &sess, "cat x"), Decision::Allow, "safe runs");
+        assert_eq!(shell(&st, &sess, "npm install left-pad"), Decision::Allow, "caution runs");
+        assert!(is_ask(&shell(&st, &sess, "rm -rf dist")), "destructive asks");
+        assert!(is_deny(&shell(&st, &sess, "rm -rf /")), "blocked denied");
+        assert_eq!(edit(&st, &sess, "src/main.rs"), Decision::Allow);
+        assert!(is_ask(&edit(&st, &sess, "/elsewhere/x.rs")), "outside workspace still protected");
+        assert!(is_ask(&del(&st, &sess, "src/main.rs")), "delete still protected");
+        assert_eq!(mcp(&st, &sess), Decision::Allow, "MCP auto");
+        // browser eval no longer asks from auto upwards
+        let b = decide(&PolicyInput { settings: &st, session: &sess, tool_name: "browser_eval", mode_auto_run: None }, &ToolEffect::Browser { dangerous: true });
+        assert_eq!(b, Decision::Allow);
+    }
+
+    #[test]
+    fn full_access_mode() {
+        let st = settings_with(Some(PermissionMode::FullAccess), None);
+        let sess = ws_session();
+        assert_eq!(shell(&st, &sess, "cat x"), Decision::Allow);
+        assert_eq!(shell(&st, &sess, "rm -rf dist"), Decision::Allow, "destructive runs");
+        assert!(is_deny(&shell(&st, &sess, "rm -rf /")), "blocked still denied");
+        assert!(is_deny(&shell(&st, &sess, "sudo ls")), "denylisted still denied");
+        assert_eq!(edit(&st, &sess, "src/main.rs"), Decision::Allow);
+        assert_eq!(edit(&st, &sess, "/elsewhere/x.rs"), Decision::Allow, "no prompts in full access");
+        assert_eq!(del(&st, &sess, "src/main.rs"), Decision::Allow);
+        assert_eq!(mcp(&st, &sess), Decision::Allow);
+    }
+
+    #[test]
+    fn cap_lowers_full_access_request() {
+        let st = settings_with(Some(PermissionMode::FullAccess), Some(PermissionMode::Auto));
+        let sess = ws_session();
+        assert!(is_ask(&shell(&st, &sess, "rm -rf dist")), "cap at auto: destructive asks again");
+        let st = settings_with(Some(PermissionMode::FullAccess), Some(PermissionMode::Supervised));
+        assert!(is_ask(&shell(&st, &sess, "ls")));
+        assert!(is_ask(&edit(&st, &sess, "src/main.rs")));
+    }
+
+    #[test]
+    fn custom_mode_auto_run_off_forces_supervised() {
+        let st = settings_with(Some(PermissionMode::FullAccess), None);
+        let sess = ws_session();
+        let input = PolicyInput { settings: &st, session: &sess, tool_name: "run_terminal_cmd", mode_auto_run: Some(false) };
+        assert!(is_ask(&decide(&input, &ToolEffect::Shell("ls".into()))));
+        assert!(is_ask(&decide(&input, &ToolEffect::FileEdit(vec!["src/main.rs".into()]))));
     }
 }

@@ -118,7 +118,11 @@ export function initChatModule(): void {
   const chat = useChat.getState()
   void chat.loadSessions()
   void chat.loadMeta()
-  on(Events.workspaceChanged, () => { useChat.getState().reset(); void useChat.getState().loadSessions(); void useChat.getState().loadMeta(); void useReview.getState().load() })
+  on(Events.workspaceChanged, () => {
+    const c = useChat.getState(); const pending = c.pendingSelect
+    c.reset(); useChat.setState({ pendingSelect: null })
+    void c.loadSessions().then(() => { if (pending) void useChat.getState().selectSession(pending) }); void c.loadMeta(); void useReview.getState().load()
+  })
   on(Events.rulesChanged, () => { void useChat.getState().loadMeta() })
 
   registerCommands([
@@ -146,6 +150,7 @@ export function initChatModule(): void {
     { id: 'chat.stop', title: 'Chat: Stop Generation', category: 'Chat', run: () => { const id = useChat.getState().activeSessionId; if (id) void useChat.getState().stop(id) } },
     { id: 'chat.acceptAll', title: 'Chat: Accept All Changes', category: 'Chat', run: () => { const id = useChat.getState().activeSessionId; if (id) void useChat.getState().acceptChanges(id, 'all') } },
     { id: 'chat.rejectAll', title: 'Chat: Reject All Changes', category: 'Chat', run: () => { const id = useChat.getState().activeSessionId; if (id) void useChat.getState().rejectChanges(id, 'all') } },
+    { id: 'chat.newScratch', title: 'Chat: New Scratch Thread', category: 'Chat', run: async (a) => { const o = a as { mode?: string; agentId?: string; title?: string } | undefined; const s = await useChat.getState().createScratchSession({ mode: o?.mode, agentId: o?.agentId, title: o?.title }); openPane(s.id); void runCommand('app.notify', { level: 'info', title: 'Scratch thread', message: 'A throwaway repository was created for this thread. Use the banner to turn it into a project later.' }); return s.id } },
     { id: 'chat.newBackground', title: 'Chat: New Background Agent (worktree)', category: 'Chat', keybinding: 'mod+e', run: async () => { const s = await useChat.getState().createSession({ useWorktree: true }); openPane(s.id); void runCommand('app.notify', { level: 'info', title: 'Background agent', message: 'This agent runs in an isolated git worktree. Send a task to start.' }) } },
     { id: 'chat.addTerminalOutput', title: 'Chat: Add Terminal Output to Chat', category: 'Chat', run: async (a) => { const { terminalId, title } = (a ?? {}) as { terminalId?: string; title?: string }; const c = useChat.getState(); const id = await c.ensureActiveSession(); let tid = terminalId; let label = title; if (!tid) { const list = await api.pty.list().catch(() => []); tid = list[0]?.id; label = list[0]?.title } if (!tid) { void runCommand('app.notify', { level: 'warn', title: 'No terminal open' }); return } c.addContext(id, { id: uid('term'), kind: 'terminal', label: label ?? 'Terminal', terminalId: tid }); openPane(id) } },
     { id: 'chat.addLints', title: 'Chat: Add Lint Errors to Chat', category: 'Chat', run: async () => { const c = useChat.getState(); const id = await c.ensureActiveSession(); const f = await getActiveFile(); c.addContext(id, { id: uid('lint'), kind: 'lint', label: 'Lint errors', path: f?.path }); openPane(id) } },

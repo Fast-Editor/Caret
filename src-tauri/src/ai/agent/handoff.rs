@@ -243,7 +243,6 @@ pub fn fork_into(source: &Session, message_id: Option<&str>, budget_tokens: usiz
 pub fn fork_session(mgr: &AgentManager, source: &SessionHandle, message_id: Option<&str>, budget_tokens: usize) -> Result<Arc<SessionHandle>> {
     let s = { let src = source.session.lock(); fork_into(&src, message_id, budget_tokens)? };
     let h = mgr.adopt(SessionHandle::new(s));
-    mgr.emit(AgentEvent::SessionCreated { session: h.session.lock().summary_view() });
     Ok(h)
 }
 
@@ -375,12 +374,11 @@ pub async fn fan_out(mgr: &Arc<AgentManager>, settings: &Settings, req: FanOutRe
         s.title = title.clone(); s.title_generated = true; s.mode = mode.clone(); s.model_id = Some(m.clone()); s.agent_id = None; s.fan_out_group = Some(group.clone());
         if req.use_worktree {
             let root = root.clone().ok_or_else(CaretError::no_workspace)?;
-            let (path, branch) = create_worktree(&root, &title, &s.id).await?;
-            s.worktree_path = Some(path.to_string_lossy().to_string()); s.branch = Some(branch); s.cwd = path.to_string_lossy().to_string();
+            let (path, branch, base) = create_worktree(&root, &settings.worktrees, &title, &s.id, Some(m.as_str())).await?;
+            s.worktree_path = Some(path.to_string_lossy().to_string()); s.branch = Some(branch); s.cwd = path.to_string_lossy().to_string(); s.worktree_base = base;
         }
         let h = mgr.adopt(SessionHandle::new(s));
-        mgr.emit(AgentEvent::SessionCreated { session: h.session.lock().summary_view() });
-        handles.push((h, m.clone()));
+            handles.push((h, m.clone()));
     }
     let mut ids = vec![];
     for (h, m) in handles {

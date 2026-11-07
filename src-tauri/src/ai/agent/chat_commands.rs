@@ -345,6 +345,29 @@ pub async fn chat_handoff_session(app: AppHandle, mgr: Mgr<'_>, session_id: Stri
     let v = h.session.lock().view(); Ok(v)
 }
 
+// ───────────────────────── permission modes ─────────────────────────
+
+/// Per-thread permission mode override (`None` = back to the settings default). Live external-agent sessions get
+/// the mapped mode pushed immediately.
+#[tauri::command]
+pub async fn chat_set_permission_mode(app: AppHandle, mgr: Mgr<'_>, session_id: String, mode: Option<crate::ai::agent::policy::PermissionMode>) -> Result<ChatSessionView> {
+    let h = mgr.handle(&session_id)?;
+    { let mut s = h.session.lock(); s.permission_mode = mode; s.touch(); }
+    mgr.persist_now(&h);
+    let settings = mgr.settings();
+    let eff = { let s = h.session.lock(); crate::ai::agent::policy::effective_permission_mode(&settings, &s) };
+    let st = app.state::<crate::acp::AcpState>();
+    if let Some(link) = st.inner.links.get(&session_id).map(|l| l.clone()) {
+        if let Some(conn) = st.inner.conns.get(&link.conn_key).map(|c| c.clone()).filter(|c| c.alive()) {
+            if crate::acp::bridge::apply_permission_mode(&st.inner, &link, &conn, eff).await {
+                let status = crate::acp::bridge::status_for_link(&conn, &link);
+                mgr.emit(AgentEvent::AgentStatus { session_id: session_id.clone(), agent_id: link.agent_id.clone(), status });
+            }
+        }
+    }
+    let v = h.session.lock().view(); Ok(v)
+}
+
 /// Send one prompt to several models at once: one session per model (forks of `session_id` when it has messages),
 /// all sharing a `fan_out_group`. Returns the session ids in `model_ids` order.
 #[tauri::command]
@@ -352,4 +375,29 @@ pub async fn chat_fan_out(mgr: Mgr<'_>, session_id: Option<String>, text: String
     let settings = mgr.settings();
     let req = crate::ai::agent::handoff::FanOutRequest { session_id: session_id.filter(|s| !s.is_empty()), text, model_ids, use_worktree: use_worktree.unwrap_or(false), mode, context: context.unwrap_or_default(), images: images.unwrap_or_default(), thinking, effort };
     crate::ai::agent::handoff::fan_out(mgr.inner(), &settings, req).await
+}
+
+// ───────────────────────── worktree policies ─────────────────────────
+
+#[tauri::command]
+pub async fn chat_worktree_status(mgr: Mgr<'_>, session_id: String) -> Result<crate::ai::agent::worktrees::WorktreeStatus> { crate::ai::agent::worktrees::status_for_session(mgr.inner(), &session_id).await }
+
+#[tauri::command]
+pub async fn chat_worktree_cleanup_preview(mgr: Mgr<'_>) -> Result<Vec<crate::ai::agent::worktrees::WorktreeCleanupCandidate>> { crate::ai::agent::worktrees::cleanup_preview(mgr.inner()).await }
+
+#[tauri::command]
+pub async fn chat_worktree_cleanup(mgr: Mgr<'_>, session_ids: Vec<String>) -> Result<crate::ai::agent::worktrees::WorktreeCleanupReport> { crate::ai::agent::worktrees::cleanup(mgr.inner(), session_ids).await }
+
+// ───────────────────────── scratch threads ─────────────────────────
+
+#[tauri::command]
+pub async fn chat_create_scratch_session(mgr: Mgr<'_>, mode: Option<String>, model_id: Option<String>, title: Option<String>, agent_id: Option<String>) -> Result<ChatSessionView> {
+    let h = crate::ai::agent::scratch::create_scratch_session(mgr.inner(), mode, model_id, title, agent_id).await?;
+    let v = h.session.lock().view(); Ok(v)
+}
+
+#[tauri::command]
+pub async fn chat_promote_scratch(mgr: Mgr<'_>, session_id: String, target_dir: String) -> Result<ChatSessionView> {
+    let h = crate::ai::agent::scratch::promote_scratch(mgr.inner(), &session_id, &target_dir).await?;
+    let v = h.session.lock().view(); Ok(v)
 }

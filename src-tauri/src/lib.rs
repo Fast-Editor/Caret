@@ -83,6 +83,7 @@ pub fn run() {
             core::cli::init(&handle);
             app.state::<std::sync::Arc<ai::agent::manager::AgentManager>>().attach(handle.clone());
             // REGISTER:setup (domain initialisation, e.g. watchers, lsp manager, index manager)
+            ai::agent::worktrees::init(&handle);
             ai::router::init(&handle);
             { let idx = index::IndexManager::new(handle.clone()); idx.install(); app.manage(idx); app.manage(index::DocsManager::new(handle.clone())); }
             { let m = mcp::McpManager::new(handle.clone()); app.manage(m.clone()); m.install(); }
@@ -136,6 +137,7 @@ pub fn run() {
             ai::agent::chat_commands::chat_fork_session, ai::agent::chat_commands::chat_handoff_session, ai::agent::chat_commands::chat_fan_out,
             // REGISTER:commands:usage
             ai::usage::usage_summary, ai::usage::usage_daily, ai::usage::usage_recent, ai::usage::usage_export_csv, ai::usage::usage_external, ai::usage::usage_dir,
+            ai::agent::chat_commands::chat_set_permission_mode, ai::agent::chat_commands::chat_worktree_status, ai::agent::chat_commands::chat_worktree_cleanup_preview, ai::agent::chat_commands::chat_worktree_cleanup, ai::agent::chat_commands::chat_create_scratch_session, ai::agent::chat_commands::chat_promote_scratch,
             // REGISTER:commands:ai
             ai::single_shot_commands::ai_complete, ai::single_shot_commands::ai_next_edit, ai::single_shot_commands::ai_inline_edit, ai::single_shot_commands::ai_cancel, ai::single_shot_commands::ai_terminal_command, ai::single_shot_commands::ai_terminal_fix, ai::single_shot_commands::ai_terminal_suggest, ai::single_shot_commands::ai_apply, ai::single_shot_commands::ai_commit_message, ai::single_shot_commands::ai_review, ai::single_shot_commands::ai_review_list, ai::single_shot_commands::ai_review_dismiss, ai::single_shot_commands::ai_review_dismiss_finding, ai::single_shot_commands::models_list_remote, ai::single_shot_commands::models_test,
             // REGISTER:commands:rules

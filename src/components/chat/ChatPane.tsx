@@ -12,6 +12,7 @@ import { TodoList } from './TodoList'
 import { QueuedMessages } from './QueuedMessages'
 import { EmptyState } from './EmptyState'
 import { HistoryPopover } from './HistoryPopover'
+import { ScratchBanner } from './ScratchBanner'
 import { fmtCost, fmtTokens } from './util'
 import './chat.css'
 
@@ -79,6 +80,7 @@ export function ChatPane({ embedded }: { embedded?: boolean } = {}) {
         )}
         {activeId ? (
           <>
+            {session?.scratch && <ScratchBanner sessionId={activeId} />}
             {session && session.messages.length > 0 ? <MessageList sessionId={activeId} messages={session.messages} /> : <div key={activeId} className="flex-1 min-h-0 overflow-y-auto animate-fade"><EmptyState sessionId={activeId} /></div>}
             {session && <TodoList sessionId={activeId} todos={session.todos} />}
             {session && <ProofPanel sessionId={activeId} compact />}

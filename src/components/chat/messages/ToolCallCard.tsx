@@ -1,6 +1,7 @@
 import { memo, useState } from 'react'
 import { BookOpen, Bot, Brain, Check, CircleX, FileDiff, Globe, ListChecks, LoaderCircle, Pencil, Search, Server, ShieldCheck, ShieldAlert, ShieldOff, SquareTerminal, Ban, Globe as Browser, FileText } from 'lucide-react'
-import type { ApprovalOption, CommandClassification, CommandRisk, ToolCallRecord } from '@/types'
+import type { ApprovalOption, CommandClassification, CommandRisk, PermissionMode, ToolCallRecord } from '@/types'
+import { permissionModeLabel } from '@/lib/permissionModes'
 import { toolGroup, toolTitle, fmtDuration } from '../util'
 import { DiffView } from '../DiffView'
 import { useChat } from '@/store/chat'
@@ -36,14 +37,21 @@ function SandboxChip({ sandboxed }: { sandboxed?: boolean }) {
     : <span className="inline-flex items-center gap-0.5 h-[16px] px-1 rounded bg-input text-faint text-[9.5px] uppercase tracking-wide" title="No OS sandbox for this command (Settings → Agent → Sandbox)"><ShieldOff size={9} />unsandboxed</span>
 }
 
+/** Which permission mode the policy applied when it asked (context for why this prompt appeared). */
+function ModeChip({ mode }: { mode?: PermissionMode }) {
+  if (!mode) return null
+  return <span className="inline-flex items-center h-[16px] px-1 rounded bg-input text-muted text-[9.5px] uppercase tracking-wide" title="Permission mode of this thread when the policy asked (composer shield icon)" data-testid="approval-mode">Mode: {permissionModeLabel(mode)}</span>
+}
+
 /** Deterministic risk breakdown of a shell command: overall pill, labels, per-segment risks and reasons. */
-function RiskPanel({ c, sandboxed, compact }: { c: CommandClassification; sandboxed?: boolean; compact?: boolean }) {
+function RiskPanel({ c, sandboxed, compact, mode }: { c: CommandClassification; sandboxed?: boolean; compact?: boolean; mode?: PermissionMode }) {
   const multi = c.segments.length > 1
   return (
     <div className="mt-1.5 text-[11px]">
       <div className="flex flex-wrap items-center gap-1">
         <RiskPill risk={c.overallRisk} />
         <SandboxChip sandboxed={sandboxed} />
+        <ModeChip mode={mode} />
         {c.allowlisted && <span className="px-1 h-[16px] inline-flex items-center rounded bg-success/10 text-success text-[9.5px] uppercase">allowlisted</span>}
         {c.denylisted && <span className="px-1 h-[16px] inline-flex items-center rounded bg-danger/10 text-danger text-[9.5px] uppercase">denylisted</span>}
         {c.labels.map((l) => <span key={l} className="px-1 h-[16px] inline-flex items-center rounded bg-input text-muted mono text-[10px]">{l}</span>)}
@@ -74,7 +82,7 @@ function ApprovalBox({ call }: { call: ToolCallRecord }) {
       <div className={`flex items-center gap-1.5 font-medium ${tone === 'danger' ? 'text-danger' : 'text-warning'}`}><Icon size={13} /> {a.title}{a.agentId && <span className="ml-1 px-1 rounded bg-input text-[10px] text-muted font-normal">{a.agentId}</span>}</div>
       {a.detail && a.detail !== a.command && <div className="text-muted mt-0.5 whitespace-pre-wrap break-words">{a.detail}</div>}
       {a.command && <pre className="mono mt-1.5 p-1.5 rounded bg-editor border border-border overflow-x-auto selectable">{a.cwd ? <span className="text-faint">{a.cwd.split('/').pop()} $ </span> : null}{a.command}</pre>}
-      {c ? <RiskPanel c={c} sandboxed={a.sandboxed} /> : a.sandboxed !== undefined ? <div className="mt-1.5"><SandboxChip sandboxed={a.sandboxed} /></div> : null}
+      {c ? <RiskPanel c={c} sandboxed={a.sandboxed} mode={a.permissionMode} /> : (a.sandboxed !== undefined || a.permissionMode) ? <div className="mt-1.5 flex flex-wrap items-center gap-1"><SandboxChip sandboxed={a.sandboxed} /><ModeChip mode={a.permissionMode} /></div> : null}
       {blocked && <div className="mt-1.5 text-danger text-[11px]">This command is blocked by the safety policy and cannot be approved. Edit the denylist in Settings → Agent if this is a mistake.</div>}
       {danger && !blocked && a.allowAlwaysPattern && <div className="mt-1 text-faint text-[10.5px]">“Allow for session / Always allow” apply to this exact command only.</div>}
       <div className="flex flex-wrap gap-1.5 mt-2">

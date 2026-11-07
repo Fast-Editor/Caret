@@ -174,6 +174,15 @@ const apiBase = {
     handoffSession: (sessionId: string, target: { agentId?: string; modelId?: string }) => invoke<T.ChatSession>('chat_handoff_session', { sessionId, agentId: target.agentId, modelId: target.modelId }),
     /** Send one prompt to several models at once (one session per model, same `fanOutGroup`). Returns the session ids. */
     fanOut: (req: T.FanOutRequest) => invoke<string[]>('chat_fan_out', { ...req }),
+    /** Per-thread permission mode; `null` returns the thread to the settings default. Live ACP sessions get the mapped mode. */
+    setPermissionMode: (sessionId: string, mode: T.PermissionMode | null) => invoke<T.ChatSession>('chat_set_permission_mode', { sessionId, mode }),
+    worktreeStatus: (sessionId: string) => invoke<T.WorktreeStatus>('chat_worktree_status', { sessionId }),
+    worktreeCleanupPreview: () => invoke<T.WorktreeCleanupCandidate[]>('chat_worktree_cleanup_preview'),
+    worktreeCleanup: (sessionIds: string[]) => invoke<T.WorktreeCleanupReport>('chat_worktree_cleanup', { sessionIds }),
+    /** Scratch thread: its own git repo under ~/.caret/scratch/<id>; works with no folder open. */
+    createScratchSession: (opts?: { mode?: T.ModeId; modelId?: string; title?: string; agentId?: string }) => invoke<T.ChatSession>('chat_create_scratch_session', { ...opts }),
+    /** Move a scratch thread's folder to `targetDir` (new or empty) and re-home the session there. */
+    promoteScratch: (sessionId: string, targetDir: string) => invoke<T.ChatSession>('chat_promote_scratch', { sessionId, targetDir }),
   },
 
   ai: {

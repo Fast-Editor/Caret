@@ -743,3 +743,69 @@ async fn read_thread_tool_pages_earlier_messages() {
     let (_, out) = execute_one(mgr.clone(), h.clone(), c, ToolRun { id: "r1".into(), name: "read_thread".into(), input: json!({"offset": 9}), tool: Some(tool) }).await;
     assert!(out.text.contains("No messages at offset 9"), "{}", out.text);
 }
+
+// ───────── scratch threads / worktree templates (need git on PATH; skipped otherwise) ─────────
+
+#[tokio::test]
+async fn scratch_session_create_and_promote() {
+    if !crate::ai::agent::scratch::git_available() { eprintln!("git not available; skipping"); return; }
+    test_home();
+    let mgr = Arc::new(AgentManager::new());
+    mgr.set_fallback_root(None);
+    let h = crate::ai::agent::scratch::create_scratch_session(&mgr, None, None, Some("Scratch me".into()), None).await.unwrap();
+    let (id, root) = { let s = h.session.lock(); assert!(s.scratch); (s.id.clone(), std::path::PathBuf::from(&s.workspace_root)) };
+    assert!(root.join(".git").exists(), "scratch dir is a git repo");
+    assert!(root.starts_with(crate::ai::agent::scratch::scratch_root()));
+    // persisted under the global key and listed with no folder open
+    let store = SessionStore::default();
+    assert!(store.exists("global", &id));
+    assert!(mgr.list_sessions(true).iter().any(|s| s.id == id && s.scratch == Some(true)));
+    assert_eq!(h.session.lock().view().scratch, Some(true));
+    // a checkpoint under the global key moves along with the session
+    let f = root.join("note.txt"); std::fs::write(&f, "hi").unwrap();
+    crate::ai::agent::checkpoints::snapshot("global", &id, "t1", &f, None).unwrap();
+    let target = tempfile::tempdir().unwrap(); let target_dir = target.path().join("promoted");
+    let h2 = crate::ai::agent::scratch::promote_scratch(&mgr, &id, &target_dir.to_string_lossy()).await.unwrap();
+    { let s = h2.session.lock(); assert!(!s.scratch); assert_eq!(std::path::PathBuf::from(&s.workspace_root), target_dir); assert_eq!(s.cwd, s.workspace_root); }
+    assert!(target_dir.join(".git").exists() && target_dir.join("note.txt").exists(), "repo moved");
+    assert!(!root.exists(), "scratch dir gone");
+    let key = workspace_key(Some(&target_dir));
+    assert!(store.exists(&key, &id)); assert!(!store.exists("global", &id));
+    assert!(crate::ai::agent::checkpoints::turn_dir(&key, &id, "t1").join("manifest.json").exists(), "checkpoints re-homed");
+    // non-empty targets and non-scratch sessions are refused
+    let busy = tempfile::tempdir().unwrap(); std::fs::write(busy.path().join("x"), "y").unwrap();
+    let h3 = crate::ai::agent::scratch::create_scratch_session(&mgr, None, None, None, None).await.unwrap();
+    assert!(crate::ai::agent::scratch::promote_scratch(&mgr, &h3.id(), &busy.path().to_string_lossy()).await.is_err());
+    assert!(crate::ai::agent::scratch::promote_scratch(&mgr, &id, &busy.path().join("z").to_string_lossy()).await.is_err(), "already promoted");
+    // deleting a scratch thread removes its repository
+    let dir3 = std::path::PathBuf::from(h3.session.lock().workspace_root.clone());
+    mgr.delete_session(&h3.id()).await.unwrap();
+    assert!(!dir3.exists());
+}
+
+#[tokio::test]
+async fn worktree_uses_location_and_branch_template() {
+    if !crate::ai::agent::scratch::git_available() { eprintln!("git not available; skipping"); return; }
+    let ws = temp_workspace();
+    crate::ai::agent::scratch::init_repo(ws.path()).await.unwrap();
+    let wt_root = tempfile::tempdir().unwrap();
+    let mut cfg = crate::core::settings::WorktreeSettings::default();
+    cfg.location = wt_root.path().to_string_lossy().to_string();
+    cfg.branch_template = "agents/{model}/{slug}".into();
+    let id = "0123456789abcdef";
+    let (path, branch, base) = crate::ai::agent::manager::create_worktree(ws.path(), &cfg, "Fix login", id, Some("claude-opus-5-5")).await.unwrap();
+    assert!(path.starts_with(wt_root.path()) && path.ends_with("fix-login-0123"), "{}", path.display());
+    assert_eq!(branch, "agents/claude-opus-5-5/fix-login-0123");
+    assert!(base.as_deref().map(|b| b.len() == 40).unwrap_or(false), "base commit recorded");
+    // a template without a unique placeholder gets disambiguated on collision
+    cfg.branch_template = "fixed-name".into();
+    let (_, b1, _) = crate::ai::agent::manager::create_worktree(ws.path(), &cfg, "One", "aaaa1111bbbb", None).await.unwrap();
+    let (_, b2, _) = crate::ai::agent::manager::create_worktree(ws.path(), &cfg, "Two", "cccc2222dddd", None).await.unwrap();
+    assert_eq!(b1, "fixed-name"); assert_eq!(b2, "fixed-name-cccc");
+    // fresh worktree: no commits beyond base, not merged, clean
+    let p = crate::ai::agent::worktrees::probe(ws.path(), &path, base.as_deref()).await;
+    assert!(!p.has_commits_beyond_base && !p.merged_into_default && !p.dirty);
+    std::fs::write(path.join("extra.txt"), "x").unwrap();
+    let p = crate::ai::agent::worktrees::probe(ws.path(), &path, base.as_deref()).await;
+    assert!(p.dirty);
+}

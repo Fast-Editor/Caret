@@ -120,6 +120,8 @@ pub struct ApprovalRequest {
     #[serde(default, skip_serializing_if = "Option::is_none")] pub risk_tier: Option<u8>,
     #[serde(default, skip_serializing_if = "Option::is_none")] pub sandboxed: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")] pub agent_id: Option<String>,
+    /// Effective permission mode the policy applied when it asked (shown on the card as context).
+    #[serde(default, skip_serializing_if = "Option::is_none")] pub permission_mode: Option<crate::ai::agent::policy::PermissionMode>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -384,6 +386,7 @@ pub struct SessionSummary {
     #[serde(default, skip_serializing_if = "Option::is_none")] pub pinned_at: Option<u64>,
     /// Shared id of a multi-model fan-out batch (sessions created together by `chat_fan_out`).
     #[serde(default, skip_serializing_if = "Option::is_none")] pub fan_out_group: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")] pub scratch: Option<bool>,
 }
 
 /// One hit from `chat_search_messages` (= TS `MessageSearchHit`).
@@ -423,6 +426,10 @@ pub struct ChatSessionView {
     /// Message of the parent thread this fork was cut after (`chat_fork_session` with a message id).
     #[serde(default, skip_serializing_if = "Option::is_none")] pub fork_of_message_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")] pub fan_out_group: Option<String>,
+    /// Per-thread permission mode override (None = settings default).
+    #[serde(default, skip_serializing_if = "Option::is_none")] pub permission_mode: Option<crate::ai::agent::policy::PermissionMode>,
+    /// Scratch thread living in `~/.caret/scratch/<id>` until promoted to a project.
+    #[serde(default, skip_serializing_if = "Option::is_none")] pub scratch: Option<bool>,
 }
 
 /// Full in-memory + on-disk session (transcript included).
@@ -475,10 +482,16 @@ pub struct Session {
     #[serde(default)] pub fork_of_message_id: Option<String>,
     /// Shared id of a multi-model fan-out batch.
     #[serde(default)] pub fan_out_group: Option<String>,
+    /// Per-thread permission mode override (None = settings default, see `policy::effective_permission_mode`).
+    #[serde(default)] pub permission_mode: Option<crate::ai::agent::policy::PermissionMode>,
+    /// Scratch thread: its own throwaway repo under `~/.caret/scratch/<id>`, persisted under the "global" key.
+    #[serde(default)] pub scratch: bool,
+    /// Commit the agent worktree was created from (lets cleanup tell "no commits" from "merged").
+    #[serde(default)] pub worktree_base: Option<String>,
 }
 impl Default for Session {
     fn default() -> Self {
-        Self { id: new_id(), title: "New chat".into(), workspace_root: String::new(), cwd: String::new(), created_at: now_ms(), updated_at: now_ms(), mode: "agent".into(), model_id: None, messages: vec![], transcript: vec![], transcript_model: None, todos: vec![], usage: Usage::default(), changes: vec![], checkpoints: vec![], worktree_path: None, branch: None, status: SessionStatus::Idle, queued: vec![], summary: None, parent_session_id: None, is_subagent: false, pinned: false, archived: false, title_generated: false, session_allow: vec![], transcript_marks: vec![], current_turn: None, context_tokens: 0, agent_id: None, last_verification_id: None, review_comments: vec![], snoozed_until: None, settled: false, archived_at: None, pinned_at: None, fork_of_message_id: None, fan_out_group: None }
+        Self { id: new_id(), title: "New chat".into(), workspace_root: String::new(), cwd: String::new(), created_at: now_ms(), updated_at: now_ms(), mode: "agent".into(), model_id: None, messages: vec![], transcript: vec![], transcript_model: None, todos: vec![], usage: Usage::default(), changes: vec![], checkpoints: vec![], worktree_path: None, branch: None, status: SessionStatus::Idle, queued: vec![], summary: None, parent_session_id: None, is_subagent: false, pinned: false, archived: false, title_generated: false, session_allow: vec![], transcript_marks: vec![], current_turn: None, context_tokens: 0, agent_id: None, last_verification_id: None, review_comments: vec![], snoozed_until: None, settled: false, archived_at: None, pinned_at: None, fork_of_message_id: None, fan_out_group: None, permission_mode: None, scratch: false, worktree_base: None }
     }
 }
 impl Session {
@@ -487,11 +500,11 @@ impl Session {
     pub fn pending_summaries(&self) -> Vec<FileChangeSummary> { self.changes.iter().filter(|c| c.status == ChangeStatus::Pending).map(|c| c.summary()).collect() }
     pub fn touch(&mut self) { self.updated_at = now_ms(); }
     pub fn view(&self) -> ChatSessionView {
-        ChatSessionView { id: self.id.clone(), title: self.title.clone(), workspace_root: self.workspace_root.clone(), created_at: self.created_at, updated_at: self.updated_at, mode: self.mode.clone(), model_id: self.model_id.clone(), messages: self.messages.clone(), todos: self.todos.clone(), usage: self.usage.clone(), pending_changes: self.pending_summaries(), worktree_path: self.worktree_path.clone(), branch: self.branch.clone(), status: self.status, queued_messages: self.queued.clone(), summary: self.summary.clone(), parent_session_id: self.parent_session_id.clone(), is_subagent: if self.is_subagent { Some(true) } else { None }, context_tokens: self.context_tokens, pinned: if self.pinned { Some(true) } else { None }, archived: if self.archived { Some(true) } else { None }, checkpoints: self.checkpoints.clone(), agent_id: self.agent_id.clone(), agent_kind: self.agent_id.as_deref().map(|a| if a == "caret" { "caret".to_string() } else { "acp".to_string() }), last_verification_id: self.last_verification_id.clone(), review_comments: if self.review_comments.is_empty() { None } else { Some(self.review_comments.clone()) }, snoozed_until: self.snoozed_until, settled: self.settled, archived_at: self.archived_at, pinned_at: self.pinned_at, fork_of_message_id: self.fork_of_message_id.clone(), fan_out_group: self.fan_out_group.clone() }
+        ChatSessionView { id: self.id.clone(), title: self.title.clone(), workspace_root: self.workspace_root.clone(), created_at: self.created_at, updated_at: self.updated_at, mode: self.mode.clone(), model_id: self.model_id.clone(), messages: self.messages.clone(), todos: self.todos.clone(), usage: self.usage.clone(), pending_changes: self.pending_summaries(), worktree_path: self.worktree_path.clone(), branch: self.branch.clone(), status: self.status, queued_messages: self.queued.clone(), summary: self.summary.clone(), parent_session_id: self.parent_session_id.clone(), is_subagent: if self.is_subagent { Some(true) } else { None }, context_tokens: self.context_tokens, pinned: if self.pinned { Some(true) } else { None }, archived: if self.archived { Some(true) } else { None }, checkpoints: self.checkpoints.clone(), agent_id: self.agent_id.clone(), agent_kind: self.agent_id.as_deref().map(|a| if a == "caret" { "caret".to_string() } else { "acp".to_string() }), last_verification_id: self.last_verification_id.clone(), review_comments: if self.review_comments.is_empty() { None } else { Some(self.review_comments.clone()) }, snoozed_until: self.snoozed_until, settled: self.settled, archived_at: self.archived_at, pinned_at: self.pinned_at, fork_of_message_id: self.fork_of_message_id.clone(), fan_out_group: self.fan_out_group.clone(), permission_mode: self.permission_mode, scratch: if self.scratch { Some(true) } else { None } }
     }
     pub fn summary_view(&self) -> SessionSummary {
         let last = self.messages.iter().rev().find(|m| matches!(m.role, MessageRole::User | MessageRole::Assistant)).map(|m| m.preview(120)).unwrap_or_default();
-        SessionSummary { id: self.id.clone(), title: self.title.clone(), workspace_root: self.workspace_root.clone(), created_at: self.created_at, updated_at: self.updated_at, mode: self.mode.clone(), status: self.status, message_count: self.messages.len(), last_message_preview: last, worktree_path: self.worktree_path.clone(), is_subagent: if self.is_subagent { Some(true) } else { None }, pending_change_count: self.changes.iter().filter(|c| c.status == ChangeStatus::Pending).count(), pinned: if self.pinned { Some(true) } else { None }, archived: if self.archived { Some(true) } else { None }, model_id: self.model_id.clone(), parent_session_id: self.parent_session_id.clone(), agent_id: self.agent_id.clone(), risk_tier: None, snoozed_until: self.snoozed_until, settled: self.settled, archived_at: self.archived_at, pinned_at: self.pinned_at, fan_out_group: self.fan_out_group.clone() }
+        SessionSummary { id: self.id.clone(), title: self.title.clone(), workspace_root: self.workspace_root.clone(), created_at: self.created_at, updated_at: self.updated_at, mode: self.mode.clone(), status: self.status, message_count: self.messages.len(), last_message_preview: last, worktree_path: self.worktree_path.clone(), is_subagent: if self.is_subagent { Some(true) } else { None }, pending_change_count: self.changes.iter().filter(|c| c.status == ChangeStatus::Pending).count(), pinned: if self.pinned { Some(true) } else { None }, archived: if self.archived { Some(true) } else { None }, model_id: self.model_id.clone(), parent_session_id: self.parent_session_id.clone(), agent_id: self.agent_id.clone(), risk_tier: None, snoozed_until: self.snoozed_until, settled: self.settled, archived_at: self.archived_at, pinned_at: self.pinned_at, fan_out_group: self.fan_out_group.clone(), scratch: if self.scratch { Some(true) } else { None } }
     }
     /// Rough token estimate of the transcript (text + ~1500 per image).
     pub fn estimate_context_tokens(&self) -> u64 {
