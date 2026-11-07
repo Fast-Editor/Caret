@@ -5,7 +5,7 @@
 import type { Settings, DeepPartial } from '@/types'
 
 export type SettingsPageId =
-  | 'general' | 'models' | 'tab' | 'agent' | 'agents' | 'rules' | 'memories' | 'indexing' | 'mcp' | 'hooks' | 'appearance' | 'beta' | 'keybindings' | 'about'
+  | 'general' | 'models' | 'tab' | 'agent' | 'agents' | 'rules' | 'memories' | 'indexing' | 'mcp' | 'hooks' | 'appearance' | 'remote' | 'beta' | 'keybindings' | 'about'
 
 export interface SettingsPageMeta { id: SettingsPageId; title: string; icon: string; description: string }
 
@@ -21,6 +21,7 @@ export const SETTINGS_PAGES: SettingsPageMeta[] = [
   { id: 'mcp', title: 'MCP', icon: 'server', description: 'Model Context Protocol servers and tools' },
   { id: 'hooks', title: 'Hooks & Automation', icon: 'webhook', description: 'Hooks, slash commands, skills, subagents, plans' },
   { id: 'appearance', title: 'Appearance & Editor', icon: 'palette', description: 'Theme, fonts and editor behaviour' },
+  { id: 'remote', title: 'Remote', icon: 'radio', description: 'Use Caret from a browser on your LAN or over Tailscale' },
   { id: 'beta', title: 'Beta', icon: 'flask', description: 'Experimental features' },
   { id: 'keybindings', title: 'Keybindings', icon: 'keyboard', description: 'Keyboard shortcuts' },
   { id: 'about', title: 'About', icon: 'info', description: 'Version, diagnostics and config folder' },
@@ -88,6 +89,7 @@ export const DEFAULTS: Settings = {
   acp: { enabled: true, defaultAgentId: 'caret', agents: [], passMcpServers: true, sessionDefaults: {}, terminalSafety: true },
   terminal: { blocks: true, shellIntegration: true, aiEnabled: true, programStatus: true, maxBlocks: 200, suggestions: 'ai' },
   router: { enabled: false, source: 'npm', overrides: {}, excludedModels: [], stickySessions: true, routeSingleShot: true, tpmLimit: undefined, embeddingsProviderId: undefined },
+  remote: { enabled: false, host: '127.0.0.1', port: 17430 },
 }
 
 export const SETTINGS_FIELDS: SettingField[] = [
@@ -225,6 +227,9 @@ export const SETTINGS_FIELDS: SettingField[] = [
   // ── MCP / LSP toggles ──
   { id: 'mcp.enabled', page: 'mcp', type: 'boolean', title: 'Enable MCP', description: 'Connect to configured MCP servers and expose their tools to the agent.' },
   { id: 'lsp.enabled', page: 'appearance', type: 'boolean', title: 'Language servers', description: 'Start installed language servers for diagnostics, hover, go to definition.', group: 'Editor', keywords: ['lsp', 'intellisense'] },
+  // remote access (`caret serve`)
+  { id: 'remote.host', page: 'remote', type: 'select', title: 'Bind address', description: '127.0.0.1 serves this Mac only (pair through an SSH tunnel); 0.0.0.0 serves every interface: LAN and Tailscale.', group: 'Server', keywords: ['serve', 'lan', 'tailscale', 'host', 'bind', 'browser'], options: [{ value: '127.0.0.1', label: '127.0.0.1 (this Mac only)' }, { value: '0.0.0.0', label: '0.0.0.0 (LAN and Tailscale)' }] },
+  { id: 'remote.port', page: 'remote', type: 'number', title: 'Port', description: 'TCP port for the HTTP and WebSocket server. Restart the server after changing it.', group: 'Server', min: 1024, max: 65535, step: 1, keywords: ['serve', 'remote', 'port'] },
 ]
 
 export function getPath(obj: unknown, path: string): unknown {

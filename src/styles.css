@@ -147,6 +147,13 @@ input, textarea { user-select: text; }
 button[aria-haspopup], [role=menuitem], [role=menuitemcheckbox], [role=menuitemradio], [role=option], [role=tab], [data-radix-collection-item] { cursor: pointer; }
 [data-tauri-drag-region] { -webkit-app-region: drag; }
 [data-tauri-drag-region] button, [data-tauri-drag-region] input { -webkit-app-region: no-drag; }
+/* Remote session (`caret serve`, body[data-remote] is set by the shim): no native drag regions in a browser, and a
+   22px strip at the top shows the session URL (src/components/remote). */
+body[data-remote] [data-tauri-drag-region], body[data-remote] [data-tauri-drag-region] * { -webkit-app-region: no-drag; }
+body[data-remote] #root { padding-top: 22px; }
+.remote-banner { position: fixed; top: 0; left: 0; right: 0; height: 22px; z-index: 1000; display: flex; align-items: center; gap: 8px; padding: 0 10px; font-size: 11px; background: var(--bg-titlebar, #1c1c1f); color: var(--fg-muted, #9a9aa3); border-bottom: 1px solid var(--border, #2a2a2e); user-select: text; }
+.remote-banner .dot { width: 7px; height: 7px; border-radius: 50%; background: #3fb950; flex-shrink: 0; }
+.remote-banner[data-connected="false"] .dot { background: #d29922; }
 .mono { font-family: var(--font-mono); }
 .truncate-1 { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 @keyframes caret-pulse { 0%,100% { opacity: .35 } 50% { opacity: 1 } }

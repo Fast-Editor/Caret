@@ -186,6 +186,7 @@ export interface Settings {
   mcp: { enabled: boolean }; customModes: CustomMode[]; beta: BetaSettings
   keybindings: Record<string, string | null>
   verify: VerifySettings; sandbox: SandboxSettings; acp: AcpSettings; terminal: TerminalSettings; router: RouterSettings
+  remote: RemoteSettings
 }
 export interface RouterSettings { enabled: boolean; source: 'npm' | 'bundled'; overrides: Record<string, string>; excludedModels: string[]; stickySessions: boolean; routeSingleShot: boolean; tpmLimit?: number; embeddingsProviderId?: string }
 export type RouterTier = 'simple' | 'medium' | 'complex' | 'reasoning'
@@ -525,3 +526,13 @@ export interface HistoryEntry {
 }
 export interface HistorySearchHit { entry: HistoryEntry; score: number; why: string }
 export interface HistoryNlResult { hits: HistorySearchHit[]; keywords: string[]; usedModel: boolean }
+
+// ───────────────────────────── remote access (`caret serve`) ─────────────────────────────
+/** Mirrors `RemoteSettings` in src-tauri/src/core/settings.rs. */
+export interface RemoteSettings { enabled: boolean; host: string; port: number }
+export interface RemoteDevice { id: string; name: string; createdAt: number; lastSeen: number; userAgent: string }
+export interface RemoteStatus {
+  enabled: boolean; running: boolean; serving: boolean; host: string; port: number; urls: string[]
+  devices: RemoteDevice[]; executorConnected: boolean; clients: number; error?: string
+}
+export interface RemotePairingCode { code: string; expiresAt: number }

@@ -18,6 +18,7 @@ frontend rendered by the OS WebView. No bundled Chromium, no Node runtime at run
 │ index/  walker · chunker · tantivy BM25 · embeddings · hybrid search · docs crawler           │
 │ mcp/    MCP client manager (stdio / streamable-http / sse)                                    │
 │ browser/ agent-driven browser windows (navigate, DOM snapshot, click, type, eval)             │
+│ remote/ `caret serve`: hyper + WebSocket relay serving the UI to LAN/Tailscale browsers       │
 └───────────────────────────────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -64,6 +65,7 @@ frontend rendered by the OS WebView. No bundled Chromium, no Node runtime at run
 | Command safety: shell AST + deterministic risk classifier, Seatbelt/bwrap sandbox, MCP tool pinning (Caret-only; Cursor has allow/deny lists) | `sandbox/*` → `ai/agent/policy.rs`, `tools/shell_tools.rs`, `components/chat/messages/ToolCallCard.tsx`, `settings/pages/SandboxSection.tsx` — docs/SANDBOX.md |
 | Background / parallel agents, worktrees, Agents layout | `AgentManager` in runner + `components/agents` |
 | Browser automation | `browser/*` |
+| Remote access from a browser (`caret serve`, Tailscale), relayed through the desktop webview (Caret-only) | `remote/*` + `remote/shim.js` → `lib/remoteExecutor.ts`, `settings/pages/Remote.tsx`; docs/REMOTE.md |
 | Bugbot-style review, commit message generation, blame | `ai/review.rs`, `ai/commit.rs`, `core/git.rs` |
 | Auto-run with allow/deny lists, file-delete protection, sandboxed shell | `ai/agent/policy.rs` |
 | Privacy mode, usage/cost tracking, model picker, thinking/effort | settings + runner usage accounting |
