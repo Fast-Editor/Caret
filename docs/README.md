@@ -25,7 +25,7 @@ top-level [README](../README.md) has the overview, install instructions and the 
 | [UI_COMMANDS.md](UI_COMMANDS.md) | The UI command registry (`runCommand` ids) and bus topics |
 | [PROVIDERS.md](PROVIDERS.md) | Configuring AI providers and models: Anthropic, OpenAI, Azure, OpenAI-compatible servers, Ollama, OpenRouter, Gemini; keys; embeddings |
 | [AUTO_ROUTING.md](AUTO_ROUTING.md) | "Auto" model routing through the managed Lynkr sidecar: tiers, overrides, security model, troubleshooting |
-| [THREADS.md](THREADS.md) | Chat thread lifecycle: pin, snooze, settle, archive with undo, the Working section, group by project, auto-settle, title regeneration, message search and the next/previous thread commands |
+| [THREADS.md](THREADS.md) | Chat threads: pin, snooze, settle, archive with undo, grouped list and group by project, message search, queue vs steer, background send, notifications, forks, provider handoff, multi-model fan-out, worktree policies and scratch threads |
 | [ACP.md](ACP.md) | External agents over the Agent Client Protocol (Claude Code, Codex, Cursor, Grok Build, Gemini CLI, OpenCode, Pi…), per-agent model/effort/mode, sign-in and extra accounts |
 | [ORCHESTRATOR.md](ORCHESTRATOR.md) | Caret as an MCP server: let Claude Code, Codex, Cursor or another Caret spawn, steer, read and approve Caret threads on any provider or external agent (loopback, bearer token) |
 | [VERIFIED_DIFF.md](VERIFIED_DIFF.md) | The verification engine that runs after agent turns: checks, risk tiers, proof panel, build-before-test |
