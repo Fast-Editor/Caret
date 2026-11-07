@@ -10,9 +10,9 @@ export interface PermissionModeInfo { id: PermissionMode; label: string; short: 
 
 export const PERMISSION_MODES: PermissionModeInfo[] = [
   { id: 'supervised', label: 'Supervised', short: 'Supervised', description: 'Every command, file edit and MCP tool asks first. Session allows are remembered.' },
-  { id: 'auto-accept-edits', label: 'Auto-accept edits', short: 'Edits', description: 'Edits inside the workspace apply automatically; only allowlisted, non-destructive commands run on their own.' },
+  { id: 'auto-accept-edits', label: 'Auto-accept edits', short: 'Auto-edits', description: 'Edits inside the workspace apply automatically; only allowlisted, non-destructive commands run on their own.' },
   { id: 'auto', label: 'Auto', short: 'Auto', description: 'Edits and safe or cautious commands run; destructive commands ask, blocked ones never run.' },
-  { id: 'full-access', label: 'Full access', short: 'Full', description: 'Everything runs without asking, destructive commands included. Blocked and denylisted commands stay denied; the sandbox still applies.' },
+  { id: 'full-access', label: 'Full access', short: 'Full access', description: 'Everything runs without asking, destructive commands included. Blocked and denylisted commands stay denied; the sandbox still applies.' },
 ]
 
 export function permissionModeInfo(mode: PermissionMode): PermissionModeInfo { return PERMISSION_MODES.find((m) => m.id === mode) ?? PERMISSION_MODES[0] }

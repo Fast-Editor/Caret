@@ -4,7 +4,7 @@ import type { PermissionMode } from '@/types'
 import { useChat } from '@/store/chat'
 import { useSettings } from '@/store/settings'
 import { runCommand } from '@/lib/commands'
-import { PERMISSION_MODES, effectivePermissionMode, isWithinCap, permissionModeLabel, settingsPermissionMode } from '@/lib/permissionModes'
+import { PERMISSION_MODES, effectivePermissionMode, isWithinCap, permissionModeLabel, permissionModeInfo, settingsPermissionMode } from '@/lib/permissionModes'
 
 const ICON: Record<PermissionMode, typeof Shield> = { supervised: Shield, 'auto-accept-edits': ShieldCheck, auto: ShieldHalf, 'full-access': ShieldAlert }
 const TONE: Record<PermissionMode, string> = { supervised: 'text-muted', 'auto-accept-edits': 'text-accent', auto: 'text-accent', 'full-access': 'text-warning' }
@@ -26,7 +26,7 @@ export function PermissionPicker({ sessionId }: { sessionId: string }) {
     <DropdownMenu.Root>
       <DropdownMenu.Trigger asChild>
         <button type="button" data-testid="permission-picker" title={`Permissions: ${permissionModeLabel(effective)}${override ? ' (this thread)' : ' (default)'}${capped ? ` (capped at ${permissionModeLabel(cap!)})` : ''}`} className="flex items-center gap-1 h-6 px-1.5 rounded hover:bg-hover text-[11.5px] cursor-pointer">
-          <Icon size={13} className={TONE[effective]} /><span>{permissionModeLabel(effective)}</span><ChevronDown size={11} className="text-faint" />
+          <Icon size={13} className={TONE[effective]} /><span className="whitespace-nowrap">{permissionModeInfo(effective).short}</span><ChevronDown size={11} className="text-faint" />
         </button>
       </DropdownMenu.Trigger>
       <DropdownMenu.Portal>

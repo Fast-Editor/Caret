@@ -177,7 +177,6 @@ export function Composer({ sessionId, autoFocusNonce }: { sessionId: string; aut
   }
   const insertAt = () => { const ta = taRef.current; if (!ta) return; const pos = ta.selectionStart ?? draft.text.length; const before = draft.text.slice(0, pos); const needsSpace = before && !/\s$/.test(before); const text = `${before}${needsSpace ? ' ' : ''}@${draft.text.slice(pos)}`; update(sessionId, { text }); requestAnimationFrame(() => { ta.focus(); const c = pos + (needsSpace ? 2 : 1); ta.setSelectionRange(c, c); setTrigger(detectTrigger(text, c)) }) }
 
-  const autoRun = settings?.agent.autoRun ?? 'allowlist'
   const ctxWindow = model?.contextWindow ?? 128_000
   const used = session?.contextTokens ?? 0
   const placeholder = useMemo(() => (draft.mode === 'ask' ? 'Ask anything about your code…' : draft.mode === 'plan' ? 'Describe what to plan…' : 'Plan, search, build anything… (@ for context, / for commands)'), [draft.mode])
@@ -210,7 +209,6 @@ export function Composer({ sessionId, autoFocusNonce }: { sessionId: string; aut
           <AgentOptions sessionId={sessionId} />
         )}
         <span className="flex-1" />
-        <button type="button" onClick={() => void runCommand('settings.open', { page: 'agent' })} title={`Auto-run: ${autoRun}. Click to configure.`} className={`h-6 px-1.5 rounded hover:bg-hover text-[10.5px] ${autoRun === 'all' ? 'text-warning' : autoRun === 'off' ? 'text-faint' : 'text-muted'}`}>{autoRun === 'all' ? 'auto-run: all' : autoRun === 'off' ? 'auto-run: off' : 'auto-run'}</button>
         {tokens !== null && <span className="text-[10.5px] text-faint px-1" title="Estimated prompt tokens">~{fmtTokens(tokens)}</span>}
         <ContextRing used={used} total={ctxWindow} onClick={() => void api.chat.summarize(sessionId)} />
         <button type="button" onClick={() => void attachImage()} title="Attach image" className="flex items-center justify-center w-6 h-6 rounded hover:bg-hover text-muted press">{draft.images.length ? <ImageIcon size={13} /> : <Paperclip size={13} />}</button>
