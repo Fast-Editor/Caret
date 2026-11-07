@@ -34,11 +34,15 @@ top-level [README](../README.md) has the overview, install instructions and the 
 | [CLI.md](CLI.md) | The `caret` command-line launcher (`caret .`, `caret file:line:col`), how it is installed and how it talks to the app |
 | [RELEASING.md](RELEASING.md) | Cutting releases: version bump, GitHub Actions matrix, secrets, code signing, updater, package managers (Homebrew, winget, scoop, AUR, Nix) |
 | [PERFORMANCE.md](PERFORMANCE.md) | Measured memory and latency numbers and the rules that keep them low |
+| [USAGE.md](USAGE.md) | Settings → Usage: the local token and cost ledger, how requests are priced, external agent histories (Claude Code, Codex, OpenCode) and their limits, CSV export |
 
 ## Where things live on disk
 
 - User configuration: `~/.caret/` — `settings.json`, `secrets.json` (API keys), `keybindings.json`, `mcp.json`, rules, memories,
   sessions, checkpoints, the search index, `bin/caret` (launcher), `acp/` (external agent adapters), `lynkr/` (Auto routing sidecar).
+- Usage ledger: `~/.caret/usage/YYYY-MM.jsonl`, one line per priced request (agent chat, external agents, inline edits, Tab, review,
+  commit messages); read by Settings → Usage and the status bar spend item. External agent histories under `~/.claude`, `~/.codex`
+  and `~/.local/share/opencode` are only ever read.
 - Project configuration: `<repo>/.caret/` (rules and project settings); `.cursor/rules` and `AGENTS.md` are read when present.
 
 ## Contributing to the docs

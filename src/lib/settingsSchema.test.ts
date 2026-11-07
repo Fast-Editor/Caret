@@ -27,6 +27,19 @@ describe('settings schema registry', () => {
   })
 })
 
+describe('usage settings mirror', () => {
+  it('DEFAULTS.usage mirrors UsageSettings::default() in settings.rs', () => {
+    expect(DEFAULTS.usage).toEqual({ track: true, includeExternal: true, customPrices: {} })
+  })
+  it('the Usage page is registered with its tracking fields', () => {
+    const page = SETTINGS_PAGES.find((p) => p.id === 'usage')
+    expect(page?.title).toBe('Usage')
+    expect(page?.icon).toBe('chart')
+    expect(fieldsForPage('usage').map((f) => f.id)).toEqual(['usage.track', 'usage.includeExternal'])
+    expect(searchFields('codex').some((f) => f.id === 'usage.includeExternal')).toBe(true)
+  })
+})
+
 describe('patchFor / getPath', () => {
   it('builds nested patches and encodes undefined as null', () => {
     expect(patchFor('ui.fontSize', 14)).toEqual({ ui: { fontSize: 14 } })

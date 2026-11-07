@@ -61,7 +61,8 @@ pub async fn commit_message(app: &AppHandle, req: CommitMessageRequest) -> Resul
     r.system = vec![SystemBlock { text: SYSTEM.into(), cache: true }];
     r.messages = vec![Message::user_text(format!("{style} {body_req}\nBranch: {}\nScope: {scope_note}\n\n<diff>\n{trimmed}\n</diff>", branch.trim()))];
     r.temperature = Some(0.2);
-    let (raw, _) = llm::complete_text(&resolved, r, CancellationToken::new()).await?;
+    let (raw, usage) = llm::complete_text(&resolved, r, CancellationToken::new()).await?;
+    crate::ai::usage::record(&settings, crate::ai::usage::UsageEntry::new("commit", &usage, Some(usage.cost_usd(&resolved.model))).model(&resolved.model).workspace(Some(&root)));
     let v = match extract_json(&raw) {
         Some(v) => v,
         None => {

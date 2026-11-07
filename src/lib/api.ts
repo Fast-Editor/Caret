@@ -376,5 +376,16 @@ export const apiWave1 = {
 }
 export type ApiWave1 = typeof apiWave1
 /** Full command surface: base domains plus wave-1 additions. */
-export const api = { ...apiBase, ...apiWave1, pty: { ...apiBase.pty, ...apiWave1.pty } }
+export const api = {
+  ...apiBase, ...apiWave1, pty: { ...apiBase.pty, ...apiWave1.pty },
+  /** Usage ledger (`~/.caret/usage/YYYY-MM.jsonl`) and external agent histories; see docs/USAGE.md. */
+  usage: {
+    summary: (range: T.UsageRange, groupBy: T.UsageGroupBy) => invoke<T.UsageSummary>('usage_summary', { range, groupBy }),
+    daily: (range: T.UsageRange) => invoke<T.UsageDailyPoint[]>('usage_daily', { range }),
+    recent: (limit = 50) => invoke<T.UsageEntry[]>('usage_recent', { limit }),
+    exportCsv: (range: T.UsageRange) => invoke<string>('usage_export_csv', { range }),
+    external: (range: T.UsageRange = '30d') => invoke<T.UsageExternalReport>('usage_external', { range }),
+    dir: () => invoke<string>('usage_dir'),
+  },
+}
 export type Api = typeof api

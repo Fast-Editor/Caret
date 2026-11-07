@@ -3,7 +3,7 @@
  * Rendered by the shell inside an editor tab: <SettingsPage page="models" query="font" />
  */
 import { useEffect, useMemo, useState } from 'react'
-import { Search, Settings as SettingsIcon, Brain, Zap, Bot, FileText, Database, Layers, Server, Webhook, Palette, FlaskConical, Keyboard, Info, ExternalLink } from 'lucide-react'
+import { Search, Settings as SettingsIcon, Brain, Zap, Bot, FileText, Database, Layers, Server, Webhook, Palette, FlaskConical, Keyboard, Info, ExternalLink, ChartColumn } from 'lucide-react'
 import { SETTINGS_PAGES, searchFields, type SettingsPageId } from '@/lib/settingsSchema'
 import { initSettingsStore, useSettings } from '@/store/settings'
 import { initWorkspaceStore, useWorkspace } from '@/store/workspace'
@@ -26,12 +26,13 @@ import { AppearancePage } from './pages/Appearance'
 import { BetaPage } from './pages/Beta'
 import { KeybindingsPage } from './pages/Keybindings'
 import { AboutPage } from './pages/About'
+import { UsagePage } from './pages/Usage'
 
 const ICONS: Record<string, React.ComponentType<{ size?: number; className?: string }>> = {
-  settings: SettingsIcon, brain: Brain, zap: Zap, bot: Bot, 'file-text': FileText, database: Database, layers: Layers, server: Server, webhook: Webhook, palette: Palette, flask: FlaskConical, keyboard: Keyboard, info: Info,
+  settings: SettingsIcon, brain: Brain, zap: Zap, bot: Bot, 'file-text': FileText, database: Database, layers: Layers, server: Server, webhook: Webhook, palette: Palette, flask: FlaskConical, keyboard: Keyboard, info: Info, chart: ChartColumn,
 }
 
-const PAGE_ALIASES: Record<string, SettingsPageId> = { model: 'models', providers: 'models', apikeys: 'models', autocomplete: 'tab', agents: 'agent', mcp: 'mcp', index: 'indexing', docs: 'indexing', theme: 'appearance', editor: 'appearance', shortcuts: 'keybindings', keyboard: 'keybindings' }
+const PAGE_ALIASES: Record<string, SettingsPageId> = { model: 'models', providers: 'models', apikeys: 'models', autocomplete: 'tab', agents: 'agent', mcp: 'mcp', index: 'indexing', docs: 'indexing', theme: 'appearance', editor: 'appearance', shortcuts: 'keybindings', keyboard: 'keybindings', cost: 'usage', costs: 'usage', tokens: 'usage', billing: 'usage' }
 
 export function SettingsPage({ page, query }: { page?: string; query?: string }) {
   const [active, setActive] = useState<SettingsPageId>(() => resolvePage(page))
@@ -147,6 +148,7 @@ function PageBody({ page }: { page: SettingsPageId }) {
     case 'beta': return <BetaPage />
     case 'keybindings': return <KeybindingsPage />
     case 'about': return <AboutPage />
+    case 'usage': return <UsagePage />
   }
 }
 

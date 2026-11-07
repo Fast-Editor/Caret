@@ -134,6 +134,8 @@ pub fn run() {
             ai::agent::chat_commands::chat_steer, ai::agent::chat_commands::chat_queue_update, ai::agent::chat_commands::chat_queue_move,
             ai::agent::chat_commands::chat_snooze_session, ai::agent::chat_commands::chat_settle_session, ai::agent::chat_commands::chat_list_sessions_all, ai::agent::chat_commands::chat_regenerate_title, ai::agent::chat_commands::chat_search_messages,
             ai::agent::chat_commands::chat_fork_session, ai::agent::chat_commands::chat_handoff_session, ai::agent::chat_commands::chat_fan_out,
+            // REGISTER:commands:usage
+            ai::usage::usage_summary, ai::usage::usage_daily, ai::usage::usage_recent, ai::usage::usage_export_csv, ai::usage::usage_external, ai::usage::usage_dir,
             // REGISTER:commands:ai
             ai::single_shot_commands::ai_complete, ai::single_shot_commands::ai_next_edit, ai::single_shot_commands::ai_inline_edit, ai::single_shot_commands::ai_cancel, ai::single_shot_commands::ai_terminal_command, ai::single_shot_commands::ai_terminal_fix, ai::single_shot_commands::ai_terminal_suggest, ai::single_shot_commands::ai_apply, ai::single_shot_commands::ai_commit_message, ai::single_shot_commands::ai_review, ai::single_shot_commands::ai_review_list, ai::single_shot_commands::ai_review_dismiss, ai::single_shot_commands::ai_review_dismiss_finding, ai::single_shot_commands::models_list_remote, ai::single_shot_commands::models_test,
             // REGISTER:commands:rules

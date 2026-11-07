@@ -163,6 +163,7 @@ pub async fn inline_edit(app: &AppHandle, req: InlineEditRequest, ch: Channel<In
             let text = if is_question { emitted } else { emitted.trim_end_matches('\n').to_string() };
             tracing::debug!(model = %resolved.model.id, input = turn.usage.input_tokens, output = turn.usage.output_tokens, "inline edit done");
             let _ = ch.send(InlineEditEvent::Done { text, usage: Some(UsagePublic::from(&turn.usage, &resolved.model)) });
+            crate::ai::usage::record(&settings, crate::ai::usage::UsageEntry::new("inline", &turn.usage, Some(turn.usage.cost_usd(&resolved.model))).model(&resolved.model));
             Ok(())
         }
         Err(e) => { if e.code != "cancelled" { let _ = ch.send(InlineEditEvent::Error { message: e.message.clone() }); } Err(e) }
