@@ -12,7 +12,7 @@ use tokio_util::sync::CancellationToken;
 fn fixture() -> PathBuf { PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/fake_acp_agent.mjs") }
 
 fn cfg(id: &str, enabled: bool, env: Option<(&str, &str)>) -> crate::acp::AcpAgentConfig {
-    crate::acp::AcpAgentConfig { id: id.into(), name: format!("Fake {id}"), command: "node".into(), args: vec![fixture().to_string_lossy().to_string()], env: env.map(|(k, v)| std::collections::BTreeMap::from([(k.to_string(), v.to_string())])), enabled, source: "user".into(), description: None, icon: None, install_hint: None, website: None }
+    crate::acp::AcpAgentConfig { id: id.into(), name: format!("Fake {id}"), command: "node".into(), args: vec![fixture().to_string_lossy().to_string()], env: env.map(|(k, v)| std::collections::BTreeMap::from([(k.to_string(), v.to_string())])), enabled, source: "user".into(), description: None, icon: None, install_hint: None, website: None, based_on: None }
 }
 
 /// Isolated config home (sessions/checkpoints land in temp, not `~/.caret`) and agent configs injected through

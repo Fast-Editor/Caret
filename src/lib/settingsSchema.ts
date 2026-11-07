@@ -85,7 +85,7 @@ export const DEFAULTS: Settings = {
   keybindings: {},
   verify: { autoRunAfterTurn: true, runTests: true, mutationTesting: true, mutationMaxMutants: 12, dependencyGrounding: true, securityRules: true, projectCheckCommand: undefined, testCommand: undefined, preTestCommand: undefined, timeoutSecs: 300, blockMergeOnFail: false, useSemgrepIfAvailable: true },
   sandbox: { mode: 'auto', allowNetwork: true, extraWritablePaths: [], allowReadHome: true, pinMcpToolDescriptions: true },
-  acp: { enabled: true, defaultAgentId: 'caret', agents: [], passMcpServers: true, sessionDefaults: {} },
+  acp: { enabled: true, defaultAgentId: 'caret', agents: [], passMcpServers: true, sessionDefaults: {}, terminalSafety: true },
   terminal: { blocks: true, shellIntegration: true, aiEnabled: true, programStatus: true, maxBlocks: 200, suggestions: 'ai' },
   router: { enabled: false, source: 'npm', overrides: {}, excludedModels: [], stickySessions: true, routeSingleShot: true, tpmLimit: undefined, embeddingsProviderId: undefined },
 }
@@ -97,6 +97,7 @@ export const SETTINGS_FIELDS: SettingField[] = [
   { id: 'router.embeddingsProviderId', page: 'models', type: 'provider', title: 'Embeddings for routing', description: 'An Ollama provider the router may use for intent scoring and kNN hints. Empty = lexical scoring only.', optional: true, group: 'Auto routing', keywords: ['lynkr', 'auto'] },
   // ── General ──
   { id: 'acp.enabled', page: 'agents', type: 'boolean', title: 'Enable external agents', description: 'Run Claude Code, Codex, Gemini CLI, OpenCode and other ACP agents inside Caret chat.', group: 'Agent Client Protocol', keywords: ['acp', 'claude code', 'codex', 'gemini'] },
+  { id: 'acp.terminalSafety', page: 'agents', type: 'boolean', title: 'Classify and sandbox agent terminals', description: 'Commands that external agents run through Caret terminals go through the same shell classifier as the built-in agent: blocked commands never run, destructive ones ask you first, and approved ones run under the sandbox when it is available.', group: 'Agent Client Protocol' },
   { id: 'acp.passMcpServers', page: 'agents', type: 'boolean', title: 'Share MCP servers with agents', description: 'Pass your enabled MCP servers to external agents when a session starts.', group: 'Agent Client Protocol', dependsOn: 'acp.enabled' },
   { id: 'acp.defaultAgentId', page: 'agents', type: 'string', title: 'Default agent for new chats', description: "'caret' for the built-in agent, or an agent id such as claude-code.", group: 'Agent Client Protocol', placeholder: 'caret', dependsOn: 'acp.enabled' },
   { id: 'general.openLastWorkspace', page: 'general', type: 'boolean', title: 'Open last workspace on startup', group: 'Startup' },

@@ -53,6 +53,49 @@ Your pick is sent to the agent immediately and remembered per agent in
 re-applied to every new session with that agent. Caret's own model / mode / thinking pickers are
 hidden while an external agent drives the chat — they only affect Caret's built-in agent.
 
+## Subscriptions, sign-in and accounts
+
+Every builtin agent runs the vendor's own CLI, so it uses the plan you already pay for and never needs an API key in
+Caret: Claude Code (Claude Pro/Max or API), **Codex (ChatGPT Plus/Pro/Team)**, **Cursor (paid Cursor plan)**, Gemini CLI,
+OpenCode, Pi, GLM and **Grok Build** (`grok agent stdio`, native ACP with image prompts, session resume and MCP
+passthrough). Caret drives the official
+CLI or ACP adapter and never replays subscription OAuth tokens against vendor APIs; that is what keeps use inside each
+vendor's terms.
+
+Settings → Agents shows, per agent, the sign-in state read from the vendor CLI (`codex login status`, `claude auth
+status`, `cursor-agent status`, `opencode auth list`) or from its credentials file when there is no status command.
+**Sign in** runs the vendor's login (`codex login`, `cursor-agent login`, `claude auth login`, `grok login`,
+`opencode auth login`) in a Caret terminal, because those flows are interactive (browser hand-off, device codes); press
+**Check** afterwards. Agents that handle their own auth over ACP (`authenticate`) still show their ACP auth methods.
+
+**Extra accounts.** Codex, Claude Code and Grok read an environment variable for an alternate config home (`CODEX_HOME`,
+`CLAUDE_CONFIG_DIR`, `GROK_HOME`). *Add account* on such an agent creates a second entry (`codex-work`, "Codex (Work)")
+with that variable set to its own directory; Sign in and Check run with the same environment, so a work plan and a
+personal plan can coexist. Entries record `basedOn` so the builtin's login and status commands apply.
+
+| Agent | Command | Sign in | Status | Extra accounts |
+| --- | --- | --- | --- | --- |
+| Claude Code | `claude-agent-acp` | `claude auth login` | `claude auth status` (JSON) | `CLAUDE_CONFIG_DIR` |
+| Codex | `codex-acp` | `codex login` | `codex login status` | `CODEX_HOME` |
+| Cursor | `cursor-agent acp` | `cursor-agent login` | `cursor-agent status` | — |
+| Grok Build | `grok agent stdio` (native ACP) | Sign in with Grok (ACP) or `grok login` | `~/.grok/auth.json` | `GROK_HOME` |
+| Gemini CLI | `gemini --experimental-acp` | `gemini` (then `/auth`) | `~/.gemini/oauth_creds.json` | — |
+| OpenCode | `opencode acp` | `opencode auth login` | `opencode auth list` | — |
+
+## Terminal safety for external agents
+
+When an agent runs a command through Caret (ACP `terminal/create`), the command goes through the same shell
+classifier as the built-in agent before anything spawns (`acp.terminalSafety`, on by default):
+
+- **blocked** or denylisted → never runs; the agent gets an error telling it to ask the user instead.
+- **destructive** → an approval card in the chat (Allow / Allow for session / Deny) unless the user already allowed that
+  exact command for the session through an ACP permission request.
+- everything else runs, and when the sandbox is available (macOS Seatbelt, Linux bubblewrap) the process is wrapped
+  with the workspace policy exactly like built-in shell tools; the agent log records `risk … sandboxed`.
+
+This closes the gap where an agent in its own "bypass permissions" mode could run anything on the machine: the
+agent's permission mode decides whether *it* asks, Caret's classifier decides what may run at all.
+
 ## Mapping (ACP ↔ Caret)
 
 | ACP | Caret |

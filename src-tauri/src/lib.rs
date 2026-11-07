@@ -109,6 +109,7 @@ pub fn run() {
             // REGISTER:commands:debug
             debug::debug_adapters, debug::debug_install_adapter, debug::debug_list_configs, debug::debug_start, debug::debug_sessions, debug::debug_stop, debug::debug_continue, debug::debug_next, debug::debug_step_in, debug::debug_step_out, debug::debug_pause, debug::debug_restart, debug::debug_threads, debug::debug_stack_trace, debug::debug_scopes, debug::debug_variables, debug::debug_evaluate, debug::debug_set_breakpoints, debug::debug_breakpoints, debug::debug_logs,
             // REGISTER:commands:acp
+            acp::commands::acp_account_status, acp::commands::acp_login_command, acp::commands::acp_add_account,
             acp::acp_list_agents, acp::acp_list_configs, acp::acp_add_agent, acp::acp_remove_agent, acp::acp_toggle_agent, acp::acp_probe, acp::acp_authenticate, acp::acp_set_mode, acp::acp_registry, acp::acp_install, acp::acp_logs, acp::acp_session_info, acp::acp_set_config_option, acp::acp_prepare_session,
             core::fs::fs_read_dir, core::fs::fs_read_file, core::fs::fs_write_file, core::fs::fs_stat, core::fs::fs_exists, core::fs::fs_create, core::fs::fs_rename, core::fs::fs_delete, core::fs::fs_copy, core::fs::fs_move, core::fs::fs_quick_open, core::fs::fs_read_image, core::fs::fs_list_files,
             // REGISTER:commands:fs

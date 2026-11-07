@@ -29,6 +29,8 @@ pub struct AcpAgentConfig {
     #[serde(default, skip_serializing_if = "Option::is_none")] pub icon: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")] pub install_hint: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")] pub website: Option<String>,
+    /// For extra accounts of a builtin (e.g. `codex-work`): the builtin id whose login/status commands apply.
+    #[serde(default, skip_serializing_if = "Option::is_none")] pub based_on: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -59,7 +61,18 @@ pub struct AcpAgentStatus {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct AcpRegistryEntry { pub id: String, pub name: String, #[serde(default, skip_serializing_if = "Option::is_none")] pub description: Option<String>, #[serde(default, skip_serializing_if = "Option::is_none")] pub install: Option<serde_json::Value>, #[serde(default, skip_serializing_if = "Option::is_none")] pub website: Option<String>, pub installed: bool }
+pub struct AcpRegistryEntry { pub id: String, pub name: String, #[serde(default, skip_serializing_if = "Option::is_none")] pub description: Option<String>, #[serde(default, skip_serializing_if = "Option::is_none")] pub install: Option<serde_json::Value>, #[serde(default, skip_serializing_if = "Option::is_none")] pub website: Option<String>, pub installed: bool,
+    /// CLI that signs the user in (run in a Caret terminal), e.g. `codex login`.
+    #[serde(default, skip_serializing_if = "Option::is_none")] pub login_command: Option<Vec<String>>,
+    /// CLI that prints the login state without side effects, e.g. `codex login status`.
+    #[serde(default, skip_serializing_if = "Option::is_none")] pub status_command: Option<Vec<String>>,
+    /// Environment variable that points the CLI at a separate config home (extra accounts), e.g. `CODEX_HOME`.
+    #[serde(default, skip_serializing_if = "Option::is_none")] pub account_env: Option<String> }
+
+/// Result of asking the vendor CLI whether the user is signed in.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AcpAccountStatus { pub agent_id: String, #[serde(default, skip_serializing_if = "Option::is_none")] pub logged_in: Option<bool>, pub detail: String, pub checked_with: String }
 
 /// Process-wide ACP state (managed by Tauri as `AcpState`).
 pub struct AcpInner {

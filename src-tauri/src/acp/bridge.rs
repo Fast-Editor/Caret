@@ -106,6 +106,17 @@ pub fn status_from_conn(c: &AgentConn) -> AcpAgentStatus {
     AcpAgentStatus { id: c.agent_id.clone(), name: c.init.agent_info.as_ref().and_then(|a| a.title.clone()).unwrap_or_else(|| c.config.name.clone()), installed: true, state: "ready".into(), version: c.init.agent_info.as_ref().and_then(|a| a.version.clone()), protocol_version: Some(c.init.protocol_version), error: None, auth_required: None, auth_methods: if c.init.auth_methods.is_empty() { None } else { Some(c.init.auth_methods.iter().map(|m| AcpAuthMethod { id: m.id.clone(), name: m.name.clone(), description: m.description.clone() }).collect()) }, capabilities: Some(AcpCapabilities { load_session: Some(caps.load_session), prompt_images: Some(caps.prompt_capabilities.image), mcp: Some(caps.mcp_capabilities.http || caps.mcp_capabilities.sse || true) }), modes: None, current_mode: None, config_options: None }
 }
 
+
+/// What Caret does with a command an external agent wants to run in one of our terminals.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TerminalGate { Allow, Ask, Block }
+
+/// Blocked or denylisted commands never run; destructive ones need the user's approval; the rest run (sandboxed when
+/// available). Mirrors `ai::agent::policy` for the built-in agent, minus auto-run modes, which belong to the agent.
+pub fn terminal_gate(class: &crate::sandbox::CommandClassification) -> TerminalGate {
+    if class.blocked || class.denylisted { TerminalGate::Block } else if class.is_destructive() { TerminalGate::Ask } else { TerminalGate::Allow }
+}
+
 fn make_log(inner: Arc<AcpInner>, agent_id: String) -> Arc<dyn Fn(String) + Send + Sync> {
     Arc::new(move |line: String| { tracing::debug!(agent=%agent_id, "{line}"); inner.log(&agent_id, line); })
 }
@@ -602,15 +613,57 @@ impl Bridge {
         let root = h.session.lock().root();
         let cwd = p.cwd.as_deref().map(|c| crate::paths::resolve(root.as_deref(), c)).unwrap_or_else(|| h.session.lock().cwd_path());
         let command_line = std::iter::once(p.command.clone()).chain(p.args.iter().cloned()).collect::<Vec<_>>().join(" ");
+        // ── Caret's own safety layer: the same classifier and sandbox the built-in agent gets, applied to commands an
+        //    external agent runs through our terminals (ACP terminal/create). Blocked never runs; destructive asks.
+        let settings = self.mgr.settings();
+        let mut sandboxed = false;
+        let mut risk = String::from("unclassified");
+        if settings.acp.terminal_safety {
+            let class = crate::sandbox::classify_with(&command_line, Some(&cwd), root.as_deref(), &settings.agent.command_allowlist, &settings.agent.command_denylist);
+            risk = class.overall_risk.clone();
+            match terminal_gate(&class) {
+                TerminalGate::Block => {
+                    let why = if class.reasons.is_empty() { class.labels.join(", ") } else { class.reasons.join("; ") };
+                    self.inner.log(&link.agent_id, format!("[terminal] blocked by safety policy: {command_line} [{why}]"));
+                    return Err(RpcError::invalid_params(format!("Caret blocked this command by safety policy ({}). Ask the user to run it themselves if it is really needed.", class.summary())));
+                }
+                TerminalGate::Ask => {
+                    let mem_key = format!("execute:{}", command_line.trim());
+                    if !link.allow_memory.contains_key(&mem_key) {
+                        let mid = self.current_message(&link, &h);
+                        let will_sandbox = crate::sandbox::will_sandbox(&settings, root.as_deref());
+                        let req = ApprovalRequest {
+                            approval_id: new_id(), session_id: link.caret_id.clone(), tool_call_id: format!("acp-terminal-{}", new_id()), kind: ApprovalKind::Command,
+                            title: "Run destructive command".into(), detail: format!("{} wants to run: {command_line}", link.agent_id), command: Some(command_line.clone()),
+                            cwd: Some(cwd.to_string_lossy().to_string()), options: vec![ApprovalOption::Allow, ApprovalOption::AllowSession, ApprovalOption::Deny],
+                            allow_always_pattern: Some(command_line.trim().to_string()), classification: Some(class.clone()), risk_tier: Some(class.risk_tier()), sandboxed: Some(will_sandbox), agent_id: Some(link.agent_id.clone()),
+                        };
+                        let cancel = link.cancel.lock().clone();
+                        match self.mgr.request_approval(&h, &mid, req, &cancel).await {
+                            Ok(ApprovalOption::Allow) => {}
+                            Ok(ApprovalOption::AllowSession) | Ok(ApprovalOption::AllowAlways) => { link.allow_memory.insert(mem_key, ()); }
+                            Ok(_) => { self.inner.log(&link.agent_id, format!("[terminal] declined by user: {command_line}")); return Err(RpcError::invalid_params("The user declined to run this command.")); }
+                            Err(_) => return Err(RpcError::invalid_params("Cancelled before the command was approved.")),
+                        }
+                    }
+                }
+                TerminalGate::Allow => {}
+            }
+        }
         let mut cmd = tokio::process::Command::new(&p.command);
-        cmd.args(&p.args).current_dir(&cwd).env("PATH", crate::acp::process::augmented_path()).stdin(std::process::Stdio::null()).stdout(std::process::Stdio::piped()).stderr(std::process::Stdio::piped()).kill_on_drop(false);
+        cmd.args(&p.args).current_dir(&cwd).env("PATH", crate::acp::process::augmented_path());
         for e in &p.env { cmd.env(&e.name, &e.value); }
+        // The sandbox wrapper rebuilds the Command (program, args, env, cwd), so stdio and the process group go after it.
+        if settings.acp.terminal_safety {
+            if let Ok(Some(policy)) = crate::sandbox::policy_for(&settings, root.as_deref(), &cwd) { cmd = crate::sandbox::wrap_with(cmd, &policy, crate::sandbox::wrap_options(&settings)); sandboxed = true; }
+        }
+        cmd.stdin(std::process::Stdio::null()).stdout(std::process::Stdio::piped()).stderr(std::process::Stdio::piped()).kill_on_drop(false);
         #[cfg(unix)] { cmd.process_group(0); }
         let mut child = cmd.spawn().map_err(|e| RpcError::internal(format!("spawn `{command_line}`: {e}")))?;
         let id = format!("term-{}", new_id());
         let term = Arc::new(TermProc { id: id.clone(), caret_id: link.caret_id.clone(), command_line: command_line.clone(), cwd: cwd.to_string_lossy().to_string(), pid: child.id(), buf: Mutex::new(vec![]), truncated: AtomicBool::new(false), limit: p.output_byte_limit.unwrap_or(1 << 20) as usize, exit: Mutex::new(None), done: tokio::sync::Notify::new(), finished: AtomicBool::new(false), tool: Mutex::new(None) });
         self.inner.terminals.insert(id.clone(), term.clone());
-        self.inner.log(&link.agent_id, format!("[terminal] {id}: {command_line} (cwd {})", cwd.display()));
+        self.inner.log(&link.agent_id, format!("[terminal] {id}: {command_line} (cwd {}, risk {risk}{})", cwd.display(), if sandboxed { ", sandboxed" } else { "" }));
         let mut out = child.stdout.take(); let mut err = child.stderr.take();
         let (t1, t2, t3) = (term.clone(), term.clone(), term.clone());
         let o = tokio::spawn(async move { if let Some(mut o) = out.take() { let mut b = [0u8; 8192]; while let Ok(n) = o.read(&mut b).await { if n == 0 { break; } t1.append(&b[..n]); } } });
@@ -712,4 +765,25 @@ mod tests {
     }
     #[test]
     fn unified_diff_counts() { let (d, a, r) = unified_diff("x.txt", "a\nb\n", "a\nc\nd\n"); assert!(d.contains("+c")); assert_eq!(a, 2); assert_eq!(r, 1); }
+}
+
+#[cfg(test)]
+mod terminal_gate_tests {
+    use super::{terminal_gate, TerminalGate};
+    fn class(cmd: &str) -> crate::sandbox::CommandClassification { crate::sandbox::classify(cmd, &[], &[]) }
+    #[test]
+    fn safe_commands_pass_destructive_ask_blocked_block() {
+        assert_eq!(terminal_gate(&class("ls -la")), TerminalGate::Allow);
+        assert_eq!(terminal_gate(&class("git status")), TerminalGate::Allow);
+        assert_eq!(terminal_gate(&class("rm -rf ./build")), TerminalGate::Ask);
+        assert_eq!(terminal_gate(&class("git push --force origin main")), TerminalGate::Ask);
+        let blocked = class("rm -rf /");
+        assert!(blocked.blocked || blocked.is_destructive());
+        assert_ne!(terminal_gate(&blocked), TerminalGate::Allow);
+    }
+    #[test]
+    fn denylist_blocks() {
+        let c = crate::sandbox::classify("npm publish", &[], &["npm publish".to_string()]);
+        assert_eq!(terminal_gate(&c), TerminalGate::Block);
+    }
 }

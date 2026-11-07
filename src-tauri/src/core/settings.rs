@@ -312,9 +312,11 @@ pub struct AcpSettings {
     pub pass_mcp_servers: bool,
     /// agent id → { config option id → value } remembered from the composer's pickers (model, effort, …).
     pub session_defaults: BTreeMap<String, BTreeMap<String, Value>>,
+    /// Classify commands external agents run through Caret terminals (block/ask on destructive) and run them in the sandbox.
+    #[serde(default = "default_true")] pub terminal_safety: bool,
 }
 impl Default for AcpSettings {
-    fn default() -> Self { Self { enabled: true, default_agent_id: "caret".into(), agents: vec![], pass_mcp_servers: true, session_defaults: BTreeMap::new() } }
+    fn default() -> Self { Self { enabled: true, default_agent_id: "caret".into(), agents: vec![], pass_mcp_servers: true, session_defaults: BTreeMap::new(), terminal_safety: true } }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
