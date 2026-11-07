@@ -1,8 +1,8 @@
 import { useEffect, useMemo, useState } from 'react'
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu'
-import { Bot, Check, Download, Settings2, Sparkles, AlertTriangle } from 'lucide-react'
+import { Bot, Check, Download, Settings2, Sparkles, AlertTriangle, ArrowRightLeft } from 'lucide-react'
 import type { AcpAgentStatus } from '@/types'
-import { useChat } from '@/store/chat'
+import { isSessionBusy, useChat } from '@/store/chat'
 import { useSettings } from '@/store/settings'
 import { api } from '@/lib/api'
 import { runCommand } from '@/lib/commands'
@@ -28,8 +28,12 @@ export function AgentPicker({ sessionId }: { sessionId: string }) {
   const agentId = useChat((s) => s.draft(sessionId).agentId ?? CARET_AGENT)
   const update = useChat((s) => s.updateDraft)
   const session = useChat((s) => s.loaded[sessionId])
+  const handoff = useChat((s) => s.handoffSession)
   const [agents, setAgents] = useState<AcpAgentStatus[]>([])
   const [open, setOpen] = useState(false)
+  /** Pending "hand off this thread?" confirmation (agent id + display name). */
+  const [pending, setPending] = useState<{ id: string; name: string } | null>(null)
+  const [busyHandoff, setBusyHandoff] = useState(false)
   const load = () => api.acp.agents().then(setAgents).catch(() => setAgents([]))
   useEffect(() => { if (enabled) void load() }, [enabled])
   useEffect(() => { if (open && enabled) void load() }, [open, enabled])
@@ -39,8 +43,32 @@ export function AgentPicker({ sessionId }: { sessionId: string }) {
   const current = useMemo(() => agents.find((a) => a.id === agentId), [agents, agentId])
   if (!enabled) return null
   const label = agentId === CARET_AGENT ? 'Caret' : current?.name ?? agentId
-  const choose = (id: string) => { update(sessionId, { agentId: id }); if (session) busEmit('chat:agent-changed', { sessionId, agentId: id }) }
+  const nameOf = (id: string) => (id === CARET_AGENT ? 'Caret' : agents.find((a) => a.id === id)?.name ?? id)
+  const apply = (id: string) => { update(sessionId, { agentId: id }); if (session) busEmit('chat:agent-changed', { sessionId, agentId: id }) }
+  // Switching the agent of a thread that already has messages is a handoff: confirm, then let the backend transfer
+  // the conversation within the budget. Empty threads just change the draft.
+  const choose = (id: string) => {
+    const sessionAgent = session?.agentId ?? CARET_AGENT
+    const hasMessages = (session?.messages.length ?? 0) > 0
+    if (!session || !hasMessages || id === sessionAgent) { apply(id); return }
+    setPending({ id, name: nameOf(id) })
+  }
+  const confirmHandoff = async () => {
+    if (!pending) return
+    if (isSessionBusy(session?.status)) { void runCommand('app.notify', { level: 'warn', title: 'Agent is running', message: 'Wait for the agent to finish (or stop it) before handing off the thread.' }); return }
+    setBusyHandoff(true)
+    try { await handoff(sessionId, { agentId: pending.id }); apply(pending.id); setPending(null) }
+    catch (e) { void runCommand('app.notify', { level: 'error', title: 'Handoff failed', message: e instanceof Error ? e.message : String(e) }) }
+    finally { setBusyHandoff(false) }
+  }
   return (
+    <div className="relative">
+    {pending && (
+      <div role="dialog" aria-label="Hand off thread" className="absolute bottom-full left-0 mb-2 z-50 w-[300px] rounded-md surface-float p-3 text-[12px] text-fg animate-fade-up" data-testid="handoff-confirm">
+        <div className="flex items-start gap-2"><ArrowRightLeft size={14} className="text-accent mt-0.5 shrink-0" /><div className="flex-1"><div className="font-medium">Hand off this thread to {pending.name}?</div><div className="mt-1 text-muted">The conversation is transferred within the budget: recent messages verbatim, older ones summarised. The thread stays in this list.</div></div></div>
+        <div className="flex justify-end gap-1.5 mt-3"><button type="button" onClick={() => setPending(null)} className="px-2 h-6 rounded border border-border hover:bg-hover press">Cancel</button><button type="button" onClick={() => void confirmHandoff()} disabled={busyHandoff} className="px-2 h-6 rounded bg-accent text-accent-fg hover:bg-accent-hover disabled:opacity-50 press">{busyHandoff ? 'Handing off…' : 'Hand off'}</button></div>
+      </div>
+    )}
     <DropdownMenu.Root open={open} onOpenChange={setOpen}>
       <DropdownMenu.Trigger asChild>
         <button type="button" title={`Agent: ${label}${current?.version ? ` v${current.version}` : ''}`} className="flex items-center gap-1 h-6 px-1.5 rounded hover:bg-hover text-[11.5px] cursor-pointer" data-testid="agent-picker">
@@ -76,5 +104,6 @@ export function AgentPicker({ sessionId }: { sessionId: string }) {
         </DropdownMenu.Content>
       </DropdownMenu.Portal>
     </DropdownMenu.Root>
+    </div>
   )
 }

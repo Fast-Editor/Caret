@@ -43,6 +43,9 @@ pub struct SessionLink {
     pub pending_diffs: DashMap<String, Vec<(String, Option<String>, String)>>,
     pub cancel: Mutex<CancellationToken>,
     pub turn_started: Mutex<Option<Instant>>,
+    /// The Caret session already had messages when this link was created: send them (within the handoff budget)
+    /// with the first prompt. Set at creation so eager `acp_prepare_session` links transfer history too.
+    pub history_pending: AtomicBool,
 }
 
 pub struct TermProc {
@@ -188,7 +191,7 @@ pub async fn ensure_session(inner: &Arc<AcpInner>, mgr: &Arc<AgentManager>, app:
         }
         Err(e) => return Err(CaretError::provider(format!("{}: session/new failed: {}", conn.config.name, e.message))),
     };
-    let link = Arc::new(SessionLink { caret_id: caret_id.clone(), acp_id: res.session_id.clone(), agent_id: conn.agent_id.clone(), conn_key: conn.key.clone(), message_id: Mutex::new(None), turn_id: Mutex::new(None), modes: Mutex::new(res.modes.clone()), config_options: Mutex::new(res.config_options.clone()), commands: Mutex::new(vec![]), tool_msg: DashMap::new(), registered: DashMap::new(), allow_memory: DashMap::new(), pending_diffs: DashMap::new(), cancel: Mutex::new(CancellationToken::new()), turn_started: Mutex::new(None) });
+    let link = Arc::new(SessionLink { caret_id: caret_id.clone(), acp_id: res.session_id.clone(), agent_id: conn.agent_id.clone(), conn_key: conn.key.clone(), message_id: Mutex::new(None), turn_id: Mutex::new(None), modes: Mutex::new(res.modes.clone()), config_options: Mutex::new(res.config_options.clone()), commands: Mutex::new(vec![]), tool_msg: DashMap::new(), registered: DashMap::new(), allow_memory: DashMap::new(), pending_diffs: DashMap::new(), cancel: Mutex::new(CancellationToken::new()), turn_started: Mutex::new(None), history_pending: AtomicBool::new(h.session.lock().messages.iter().any(|m| m.role != MessageRole::System)) });
     inner.links.insert(caret_id.clone(), link.clone());
     inner.by_acp.insert(res.session_id.clone(), caret_id);
     // Apply the options the user last picked for this agent (model, effort, …) to the fresh session.
@@ -212,18 +215,12 @@ pub async fn ensure_session(inner: &Arc<AcpInner>, mgr: &Arc<AgentManager>, app:
     Ok((link, true))
 }
 
-/// Summarised prior transcript for a fresh ACP session bound to a Caret session that already has history.
-fn history_block(s: &Session) -> Option<String> {
-    let mut out = String::new();
-    for m in s.messages.iter().rev().take(12).collect::<Vec<_>>().into_iter().rev() {
-        let role = match m.role { MessageRole::User => "User", MessageRole::Assistant => "Assistant", MessageRole::System => continue };
-        let text: String = m.parts.iter().filter_map(|p| match p { MessagePart::Text { text } => Some(text.as_str()), MessagePart::Tool { call } => Some(call.display_name.as_str()), _ => None }).collect::<Vec<_>>().join("\n");
-        if text.trim().is_empty() { continue; }
-        let t: String = text.chars().take(1200).collect();
-        out.push_str(&format!("{role}: {t}\n\n"));
-        if out.len() > 7000 { break; }
-    }
-    if out.trim().is_empty() { None } else { Some(format!("<previous_conversation note=\"earlier turns of this chat, for continuity; the editor restarted\">\n{out}</previous_conversation>")) }
+/// Prior conversation for a fresh ACP session bound to a Caret session that already has history: the most recent
+/// messages verbatim within `budget_tokens` (chars/4), older ones as a `<conversation_summary>` (the session's last
+/// compaction or handoff summary, else a one-line-per-message digest).
+fn history_block(s: &Session, budget_tokens: usize) -> Option<String> {
+    let plan = crate::ai::agent::handoff::plan_handoff(&s.messages, budget_tokens.max(500));
+    crate::ai::agent::handoff::history_block(&plan, s.summary.as_deref())
 }
 
 /// Queue-aware entry point used by `chat_send` for sessions driven by an ACP agent.
@@ -277,7 +274,7 @@ pub async fn run_turn(inner: &Arc<AcpInner>, mgr: &Arc<AgentManager>, app: Optio
 
     // 1. connection + session (may spawn the agent)
     let conn = match ensure_conn(inner, mgr, &agent_id).await { Ok(c) => c, Err(e) => { mgr.emit(AgentEvent::Error { session_id: session_id.clone(), message: e.message.clone() }); mgr.set_status(h, SessionStatus::Error); return Err(e); } };
-    let (link, fresh) = match ensure_session(inner, mgr, app, h, &conn).await { Ok(x) => x, Err(e) => { mgr.emit(AgentEvent::Error { session_id: session_id.clone(), message: e.message.clone() }); mgr.set_status(h, SessionStatus::Error); return Err(e); } };
+    let (link, _fresh) = match ensure_session(inner, mgr, app, h, &conn).await { Ok(x) => x, Err(e) => { mgr.emit(AgentEvent::Error { session_id: session_id.clone(), message: e.message.clone() }); mgr.set_status(h, SessionStatus::Error); return Err(e); } };
     *link.cancel.lock() = cancel.clone();
 
     // 2. user message + checkpoint (mirrors the built-in runner so restore/edit/regenerate behave the same)
@@ -297,7 +294,7 @@ pub async fn run_turn(inner: &Arc<AcpInner>, mgr: &Arc<AgentManager>, app: Optio
     user_msg.parts.push(MessagePart::Text { text: req.text.clone() });
     let user_msg_id = user_msg.id.clone();
     let checkpoint = Checkpoint { id: turn_id.clone(), session_id: session_id.clone(), message_id: user_msg_id.clone(), created_at: now_ms(), files: vec![], label: req.text.chars().take(60).collect() };
-    let history = { let mut s = h.session.lock(); let hist = if fresh { history_block(&s) } else { None }; s.checkpoints.push(checkpoint); s.messages.push(user_msg.clone()); s.current_turn = Some(turn_id.clone()); s.touch(); hist };
+    let history = { let mut s = h.session.lock(); let hist = if link.history_pending.swap(false, Ordering::SeqCst) { history_block(&s, settings.chat.handoff_budget_tokens as usize) } else { None }; s.checkpoints.push(checkpoint); s.messages.push(user_msg.clone()); s.current_turn = Some(turn_id.clone()); s.touch(); hist };
     mgr.emit(AgentEvent::MessageStart { session_id: session_id.clone(), message: user_msg });
     mgr.emit(AgentEvent::Checkpoint { session_id: session_id.clone(), checkpoint_id: turn_id.clone(), message_id: user_msg_id.clone() });
     mgr.persist(h);

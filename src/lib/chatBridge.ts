@@ -174,5 +174,6 @@ export function initChatModule(): void {
     { id: 'chat.searchMessages', title: 'Chat: Search Messages in All Threads', category: 'Chat', run: (a) => { openPane(); useChat.getState().openHistorySearch((a as { query?: string } | undefined)?.query ?? '') } },
     { id: 'chat.nextThread', title: 'Chat: Next Thread', category: 'Chat', keybinding: 'ctrl+alt+]', run: () => cycleThread(1) },
     { id: 'chat.prevThread', title: 'Chat: Previous Thread', category: 'Chat', keybinding: 'ctrl+alt+[', run: () => cycleThread(-1) },
+    { id: 'chat.fork', title: 'Chat: Fork Thread', category: 'Chat', run: async (a) => { const o = a as { sessionId?: string; messageId?: string } | undefined; const c = useChat.getState(); const id = o?.sessionId ?? c.activeSessionId; if (!id) return; const s = await c.forkSession(id, o?.messageId); openPane(s.id); return s.id } },
   ])
 }

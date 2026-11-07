@@ -89,7 +89,7 @@ export const DEFAULTS: Settings = {
   terminal: { blocks: true, shellIntegration: true, aiEnabled: true, programStatus: true, maxBlocks: 200, suggestions: 'ai' },
   router: { enabled: false, source: 'npm', overrides: {}, excludedModels: [], stickySessions: true, routeSingleShot: true, tpmLimit: undefined, embeddingsProviderId: undefined },
   notifications: { desktop: true, onlyWhenUnfocused: true, onFinish: true, onError: true, onApproval: true, onQuestion: true, sound: false },
-  chat: { autoSettleDays: 0 },
+  chat: { autoSettleDays: 0, handoffBudgetTokens: 12000 },
 }
 
 export const SETTINGS_FIELDS: SettingField[] = [
@@ -161,6 +161,7 @@ export const SETTINGS_FIELDS: SettingField[] = [
   { id: 'agent.summarizeThresholdRatio', page: 'agent', type: 'number', title: 'Summarize at context usage', description: 'Fraction of the context window after which older turns are summarized.', min: 0.3, max: 0.95, step: 0.05, group: 'Behaviour' },
   { id: 'agent.largeContextMode', page: 'agent', type: 'boolean', title: 'Large context mode', description: 'Include more file content per request (higher cost).', group: 'Behaviour' },
   { id: 'agent.chimeOnFinish', page: 'agent', type: 'boolean', title: 'Play a chime when the agent finishes', group: 'Behaviour' },
+  { id: 'chat.handoffBudgetTokens', page: 'agent', type: 'number', title: 'Handoff context budget', description: 'Tokens of conversation carried over when a thread is handed to another agent or model, or forked without exact history. Older messages beyond the budget are summarised; the most recent travel verbatim.', unit: 'tokens', min: 1000, max: 200000, step: 1000, group: 'Behaviour', keywords: ['handoff', 'fork', 'compare', 'transfer', 'codex', 'claude code'] },
   { id: 'agent.webSearchEnabled', page: 'agent', type: 'boolean', title: 'Enable web search tool', group: 'Web' },
   { id: 'agent.webSearchProvider', page: 'agent', type: 'select', title: 'Web search provider', options: [{ value: 'duckduckgo', label: 'DuckDuckGo (no key)' }, { value: 'searxng', label: 'SearXNG (self-hosted)' }, { value: 'brave', label: 'Brave Search API' }, { value: 'tavily', label: 'Tavily' }], dependsOn: 'agent.webSearchEnabled', group: 'Web' },
   { id: 'agent.webSearchEndpoint', page: 'agent', type: 'string', title: 'Search endpoint', description: 'SearXNG base URL.', placeholder: 'http://localhost:8080', optional: true, dependsOn: 'agent.webSearchEnabled', group: 'Web' },

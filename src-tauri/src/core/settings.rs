@@ -381,8 +381,11 @@ impl Default for NotificationsSettings {
 pub struct ChatSettings {
     /// Mark idle, unpinned, unarchived threads as settled after this many days without activity (0 = off).
     pub auto_settle_days: u32,
+    /// Token budget (chars/4) for the context transferred when a thread is handed to another agent or model.
+    /// Older messages beyond the budget are summarised; the most recent ones travel verbatim.
+    pub handoff_budget_tokens: u32,
 }
-impl Default for ChatSettings { fn default() -> Self { Self { auto_settle_days: 0 } } }
+impl Default for ChatSettings { fn default() -> Self { Self { auto_settle_days: 0, handoff_budget_tokens: 12_000 } } }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]

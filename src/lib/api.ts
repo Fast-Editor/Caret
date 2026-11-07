@@ -168,6 +168,12 @@ const apiBase = {
     listSessionsAll: (includeArchived = false) => invoke<T.ChatSessionSummary[]>('chat_list_sessions_all', { includeArchived }),
     regenerateTitle: (sessionId: string) => invoke<string>('chat_regenerate_title', { sessionId }),
     searchMessages: (query: string, opts?: { includeArchived?: boolean; allWorkspaces?: boolean; limit?: number }) => invoke<T.MessageSearchHit[]>('chat_search_messages', { query, includeArchived: opts?.includeArchived ?? false, allWorkspaces: opts?.allWorkspaces ?? false, limit: opts?.limit ?? 50 }),
+    /** Clone a thread; with `messageId` the fork keeps history up to and including that message. */
+    forkSession: (sessionId: string, messageId?: string) => invoke<T.ChatSession>('chat_fork_session', { sessionId, messageId }),
+    /** Move an idle thread to another agent and/or model; the conversation is transferred within `chat.handoffBudgetTokens`. */
+    handoffSession: (sessionId: string, target: { agentId?: string; modelId?: string }) => invoke<T.ChatSession>('chat_handoff_session', { sessionId, agentId: target.agentId, modelId: target.modelId }),
+    /** Send one prompt to several models at once (one session per model, same `fanOutGroup`). Returns the session ids. */
+    fanOut: (req: T.FanOutRequest) => invoke<string[]>('chat_fan_out', { ...req }),
   },
 
   ai: {

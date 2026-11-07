@@ -1,7 +1,7 @@
 import { create } from 'zustand'
 import type {
   AgentEvent, ApprovalOption, ChatSession, ChatSessionSummary, ContextItem, Effort, ImageAttachment, ModeId, SendMessageRequest,
-  SlashCommandInfo, ThinkingPref, TodoItem, PendingChange, Checkpoint, ModelConfig, MessageSearchHit,
+  SlashCommandInfo, ThinkingPref, TodoItem, PendingChange, Checkpoint, ModelConfig, MessageSearchHit, FanOutRequest,
 } from '@/types'
 import { api } from '@/lib/api'
 import { emit as busEmit } from '@/lib/bus'
@@ -11,6 +11,7 @@ import { notify } from '@/store/notifications'
 import { applyAgentEvents, emptyCoreState, type ChatCoreState, type PendingQuestion } from './chatReducer'
 import { BUILTIN_SLASH } from '@/components/chat/mentions'
 import { uid } from '@/components/chat/util'
+import { toggleCompareModel } from '@/components/chat/composer/compareModels'
 
 export interface ModeDescriptor { id: string; name: string; description: string; icon?: string; builtin: boolean; tools: string[] | 'all' | 'readonly' }
 export interface ToolDesc { name: string; displayName: string; description: string; group: string; readonly: boolean }
@@ -27,6 +28,8 @@ export interface ComposerDraft {
   useWorktree: boolean
   /** 'caret' (built-in) or an ACP agent id (claude-code, codex, …). */
   agentId: string
+  /** Models selected for a multi-model fan-out ("Compare models"); 2+ turns Send into "Send to N". */
+  compareModelIds?: string[]
 }
 
 export const AUTO_MODEL = 'auto'
@@ -135,6 +138,15 @@ export interface ChatState extends ChatCoreState {
   openThread: (id: string, workspaceRoot?: string, messageId?: string) => Promise<void>
   clearReveal: () => void
   openHistorySearch: (query?: string) => void
+  // forks / provider handoff / multi-model fan-out
+  /** Clone a thread (optionally cut right after `messageId`) and make it active. */
+  forkSession: (sessionId: string, messageId?: string) => Promise<ChatSession>
+  /** Move an idle thread to another agent and/or model; the backend transfers the conversation within the budget. */
+  handoffSession: (sessionId: string, target: { agentId?: string; modelId?: string }) => Promise<void>
+  /** Send the draft to several models at once (forks of the session when it has history). Returns the new session ids. */
+  fanOut: (sessionId: string | null, modelIds: string[], overrides?: { context?: ContextItem[] }) => Promise<string[]>
+  toggleCompareModel: (sessionId: string, modelId: string) => void
+  clearCompare: (sessionId: string) => void
 }
 
 /** Same request shape `send` builds from a draft (shared by steer / background send). Null when there is nothing to send. */
@@ -446,6 +458,44 @@ export const useChat = create<ChatState>((set, get) => ({
   },
   clearReveal: () => set({ revealTarget: null }),
   openHistorySearch: (query = '') => set((s) => ({ historyOpen: true, historySearch: { nonce: s.historySearch.nonce + 1, query } })),
+  forkSession: async (sessionId, messageId) => {
+    const session = await api.chat.forkSession(sessionId, messageId)
+    set((s) => {
+      const from = s.drafts[sessionId] ?? draftForSession(s.loaded[sessionId])
+      return {
+        loaded: { ...s.loaded, [session.id]: session }, activeSessionId: session.id, editingMessageId: null,
+        drafts: { ...s.drafts, [session.id]: { ...from, text: '', images: [], context: [], compareModelIds: [], modelId: session.modelId ?? AUTO_MODEL, agentId: session.agentId ?? 'caret', useWorktree: false } },
+      }
+    })
+    await get().loadSessions()
+    return session
+  },
+  handoffSession: async (sessionId, target) => {
+    const session = await api.chat.handoffSession(sessionId, target)
+    set((s) => ({ loaded: { ...s.loaded, [sessionId]: session }, versions: Object.fromEntries(session.messages.map((m) => [m.id, (s.versions[m.id] ?? 0) + 1])), sessions: s.sessions.map((x) => (x.id === sessionId ? { ...x, agentId: session.agentId, modelId: session.modelId } : x)) }))
+    get().updateDraft(sessionId, { agentId: session.agentId ?? 'caret', modelId: session.modelId ?? AUTO_MODEL })
+  },
+  fanOut: async (sessionId, modelIds, overrides) => {
+    const id = sessionId ?? get().activeSessionId
+    const d = id ? get().draft(id) : defaultDraft()
+    const text = d.text.trim()
+    const models = [...new Set(modelIds.filter((m) => m && m !== AUTO_MODEL))]
+    if ((!text && d.images.length === 0) || models.length < 2) return []
+    const hasHistory = !!id && (get().loaded[id]?.messages.length ?? 0) > 0
+    const req: FanOutRequest = { sessionId: hasHistory && id ? id : undefined, text, modelIds: models, useWorktree: d.useWorktree, mode: d.mode, context: overrides?.context ?? d.context, images: d.images, thinking: d.thinking, effort: d.effort }
+    if (id) set((s) => ({ drafts: { ...s.drafts, [id]: { ...d, text: '', images: [], context: d.context.filter((c) => c.pinned) } } }))
+    try {
+      const ids = await api.chat.fanOut(req)
+      await get().loadSessions()
+      if (ids[0]) await get().selectSession(ids[0])
+      return ids
+    } catch (e) {
+      if (id) set((s) => ({ drafts: { ...s.drafts, [id]: { ...d } } }))
+      throw e
+    }
+  },
+  toggleCompareModel: (sessionId, modelId) => get().updateDraft(sessionId, (d) => ({ compareModelIds: toggleCompareModel(d.compareModelIds ?? [], modelId, d.modelId) })),
+  clearCompare: (sessionId) => get().updateDraft(sessionId, { compareModelIds: [] }),
 }))
 
 export function fallbackModes(): ModeDescriptor[] {
