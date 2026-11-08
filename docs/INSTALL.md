@@ -44,7 +44,7 @@ brew install --cask caret
 ```
 
 Homebrew 7 or later no longer quarantines cask downloads, so the app opens straight away. The cask lives in the
-[Fast-Editor/homebrew-caret](https://github.com/Fast-Editor/homebrew-caret) tap and is bumped after each release. The copy in the older `fast-editor/lynkr` tap is deprecated and points here; `brew upgrade` keeps working there, but new installs should use `fast-editor/caret`.
+[Fast-Editor/homebrew-caret](https://github.com/Fast-Editor/homebrew-caret) tap and is bumped after each release. Caret used to ship from the `fast-editor/lynkr` tap; that copy was removed so the short name `caret` stays unambiguous. If you installed it from there, run `brew uninstall --cask caret` once and install from `fast-editor/caret` (your `~/.caret` settings and sessions are kept; only `brew zap` removes them).
 
 ### DMG
 
