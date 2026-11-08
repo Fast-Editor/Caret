@@ -195,8 +195,8 @@ pub async fn call(ctx: &Arc<Ctx>, name: &str, args: &Value) -> Result<Value> {
         "read_thread" => read_thread(ctx, args),
         "stop" => stop(ctx, args),
         "pending" => pending(ctx, args),
-        "approve" => approve(ctx, args),
-        "answer" => answer(ctx, args),
+        "approve" => approve(ctx, args).await,
+        "answer" => answer(ctx, args).await,
         "delete_thread" => delete_thread(ctx, args).await,
         other => Err(CaretError::not_found(format!("tool `{other}`"))),
     }
@@ -412,19 +412,41 @@ fn parse_option(raw: &str) -> Result<ApprovalOption> {
     serde_json::from_value(Value::String(raw.trim().to_ascii_lowercase().replace('_', "-"))).map_err(|_| CaretError::invalid(format!("unknown option `{raw}`; use allow, allow-session or deny")))
 }
 
-fn approve(ctx: &Ctx, args: &Value) -> Result<Value> {
+async fn approve(ctx: &Arc<Ctx>, args: &Value) -> Result<Value> {
     let id = need_str(args, "approval_id")?;
     let option = parse_option(&need_str(args, "option")?)?;
+    let sid = ctx.pending.approvals_for(None).into_iter().find(|a| a.approval_id == id).map(|a| a.session_id)
+        .or_else(|| session_with_item(ctx, |s| scan_session(s).0.iter().any(|a| a.approval_id == id)));
     ctx.mgr.resolve_approval(&id, option)?;
     ctx.pending.remove_approval(&id);
+    if let Some(sid) = sid { settle_after_resolution(ctx, &sid, |s| scan_session(s).0.iter().any(|a| a.approval_id == id)).await; }
     Ok(json!({ "ok": true, "approval_id": id, "option": option }))
 }
 
-fn answer(ctx: &Ctx, args: &Value) -> Result<Value> {
+/// Id of the session whose messages satisfy `pred` (used when the tracker has not seen the item).
+fn session_with_item(ctx: &Ctx, pred: impl Fn(&Session) -> bool) -> Option<String> {
+    ctx.mgr.list_sessions(true).into_iter().map(|s| s.id).find(|id| ctx.mgr.handle(id).map(|h| pred(&h.session.lock())).unwrap_or(false))
+}
+
+/// After an approval or answer is resolved the runner needs a moment to leave the awaiting state. Wait (bounded) until
+/// the item is gone from the session, so a `wait` issued right afterwards does not see the stale status and return early.
+async fn settle_after_resolution(ctx: &Arc<Ctx>, sid: &str, still_pending: impl Fn(&Session) -> bool) {
+    let deadline = Instant::now() + Duration::from_secs(3);
+    while Instant::now() < deadline {
+        let Ok(h) = ctx.mgr.handle(sid) else { return };
+        let waiting = { let s = h.session.lock(); matches!(s.status, SessionStatus::AwaitingApproval | SessionStatus::AwaitingInput) && still_pending(&s) };
+        if !waiting { return; }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+}
+
+async fn answer(ctx: &Arc<Ctx>, args: &Value) -> Result<Value> {
     let id = need_str(args, "question_id")?;
     let answer = need_str(args, "answer")?;
+    let sid = session_with_item(ctx, |s| scan_session(s).1.iter().any(|(_, q)| q.question_id == id));
     ctx.mgr.resolve_question(&id, answer)?;
     ctx.pending.remove_question(&id);
+    if let Some(sid) = sid { settle_after_resolution(ctx, &sid, |s| scan_session(s).1.iter().any(|(_, q)| q.question_id == id)).await; }
     Ok(json!({ "ok": true, "question_id": id }))
 }
 

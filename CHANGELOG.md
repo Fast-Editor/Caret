@@ -4,6 +4,13 @@ All notable changes to Caret. The version here must match `package.json`, `src-t
 
 ## Unreleased
 
+- Usage page: the ledger is backfilled once from your saved chat sessions (and on demand with **Import past sessions**), so
+  history from before this release is counted; when every request is priced at $0 the page says so and the chart shows
+  tokens per day instead of an empty box; external agent histories are scanned newest first with a 1 GB cap (was 200 MB,
+  which cut off part of a large Claude Code history). New command `usage_backfill`.
+- Usage page: the Settings User / Workspace toggle now filters the ledger to the open folder in Workspace scope (external
+  agent histories stay in User scope); the JSON button creates `.caret/settings.json` when a workspace has none yet
+  instead of failing to open it.
 - External agents: **Cursor** (official `cursor-agent acp`, your Cursor plan) and **Grok Build** (the Grok CLI's native
   `grok agent stdio` ACP server) join Claude Code, Codex, Gemini CLI, OpenCode, Pi and GLM. Settings → Agents now shows each agent's
   sign-in state from the vendor CLI, a **Sign in** button that runs the vendor login in a Caret terminal (ChatGPT for

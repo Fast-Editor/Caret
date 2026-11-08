@@ -413,12 +413,15 @@ export const api = {
   ...apiBase, ...apiWave1, ...apiRemote, pty: { ...apiBase.pty, ...apiWave1.pty },
   /** Usage ledger (`~/.caret/usage/YYYY-MM.jsonl`) and external agent histories; see docs/USAGE.md. */
   usage: {
-    summary: (range: T.UsageRange, groupBy: T.UsageGroupBy) => invoke<T.UsageSummary>('usage_summary', { range, groupBy }),
-    daily: (range: T.UsageRange) => invoke<T.UsageDailyPoint[]>('usage_daily', { range }),
+    /** `workspace` limits the ledger to requests recorded in that folder (the Workspace scope on the Usage page). */
+    summary: (range: T.UsageRange, groupBy: T.UsageGroupBy, workspace?: string) => invoke<T.UsageSummary>('usage_summary', { range, groupBy, workspace }),
+    daily: (range: T.UsageRange, workspace?: string) => invoke<T.UsageDailyPoint[]>('usage_daily', { range, workspace }),
     recent: (limit = 50) => invoke<T.UsageEntry[]>('usage_recent', { limit }),
-    exportCsv: (range: T.UsageRange) => invoke<string>('usage_export_csv', { range }),
+    exportCsv: (range: T.UsageRange, workspace?: string) => invoke<string>('usage_export_csv', { range, workspace }),
     external: (range: T.UsageRange = '30d') => invoke<T.UsageExternalReport>('usage_external', { range }),
     dir: () => invoke<string>('usage_dir'),
+    /** Import usage from saved sessions into the ledger (idempotent). */
+    backfill: () => invoke<T.UsageBackfillReport>('usage_backfill'),
   },
 }
 export type Api = typeof api

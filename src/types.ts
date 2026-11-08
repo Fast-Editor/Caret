@@ -607,6 +607,7 @@ export interface UsageDailyPoint { day: string; costUsd: number; tokens: number 
 export interface UsageWindow { label: string; usedPercent: number; windowMinutes: number; resetsAt?: number }
 export interface UsageExternalAgent { id: string; name: string; available: boolean; sourcePathPattern: string; totals: UsageTotals; byModel: UsageRow[]; windows: UsageWindow[]; note?: string }
 export interface UsageExternalReport { agents: UsageExternalAgent[]; from: number; to: number }
+export interface UsageBackfillReport { sessions: number; imported: number; skipped: number }
 // ───────────────────────────── permission modes, worktree policies, scratch threads ─────────────────────────────
 /** Mirror of `policy::PermissionMode` (kebab-case). Ordered from most to least restrictive. */
 export type PermissionMode = 'supervised' | 'auto-accept-edits' | 'auto' | 'full-access'

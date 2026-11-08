@@ -3,8 +3,10 @@
  * histories of external agents (Claude Code, Codex, OpenCode). Charts are plain CSS; data comes from `api.usage`.
  */
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { ChartColumn, Download, FolderOpen, Plus, RefreshCw, Trash2 } from 'lucide-react'
+import { ChartColumn, Download, FolderOpen, Plus, RefreshCw, Trash2, History } from 'lucide-react'
 import { api } from '@/lib/api'
+import { useSettingsScope } from '../useField'
+import { useWorkspace } from '@/store/workspace'
 import { fieldsForPage } from '@/lib/settingsSchema'
 import { useSettings } from '@/store/settings'
 import { fmtTokens } from '@/components/chat/util'
@@ -21,6 +23,11 @@ export function UsagePage() {
   const track = settings?.usage?.track ?? true
   const includeExternal = settings?.usage?.includeExternal ?? true
   const customPrices = settings?.usage?.customPrices ?? NO_PRICES
+  const scope = useSettingsScope((s) => s.scope)
+  const wsRoot = useWorkspace((s) => s.workspace?.root)
+  const wsName = useWorkspace((s) => s.workspace?.name)
+  /** Workspace scope: only requests recorded in the open folder; User scope: everything on this machine. */
+  const wsFilter = scope === 'workspace' && wsRoot ? wsRoot : undefined
   const [range, setRange] = useState<UsageRange>('30d')
   const [groupBy, setGroupBy] = useState<UsageGroupBy>('model')
   const [summary, setSummary] = useState<UsageSummary | null>(null)
@@ -34,23 +41,23 @@ export function UsagePage() {
   const load = useCallback(async () => {
     setLoading(true); setError(null)
     try {
-      const [s, d] = await Promise.all([api.usage.summary(range, groupBy), api.usage.daily(range)])
+      const [s, d] = await Promise.all([api.usage.summary(range, groupBy, wsFilter), api.usage.daily(range, wsFilter)])
       setSummary(s); setDaily(d)
     } catch (e) { setError(errorMessage(e)) } finally { setLoading(false) }
-  }, [range, groupBy])
+  }, [range, groupBy, wsFilter])
   useEffect(() => { void load() }, [load, tick, customPrices])
 
   useEffect(() => {
-    if (!includeExternal) { setExternal(null); return }
+    if (!includeExternal || wsFilter) { setExternal(null); return }
     let cancelled = false
     setExtLoading(true)
     api.usage.external(range).then((r) => { if (!cancelled) setExternal(r) }).catch((e) => { if (!cancelled) notify('warn', 'External agent histories unavailable', errorMessage(e)) }).finally(() => { if (!cancelled) setExtLoading(false) })
     return () => { cancelled = true }
-  }, [range, includeExternal, customPrices, tick])
+  }, [range, includeExternal, customPrices, tick, wsFilter])
 
   const exportCsv = async () => {
     try {
-      const csv = await api.usage.exportCsv(range)
+      const csv = await api.usage.exportCsv(range, wsFilter)
       try {
         const { save } = await import('@tauri-apps/plugin-dialog')
         const path = await save({ defaultPath: csvFilename(range, new Date()), filters: [{ name: 'CSV', extensions: ['csv'] }] })
@@ -63,6 +70,13 @@ export function UsagePage() {
       }
     } catch (e) { notify('error', 'Export failed', errorMessage(e)) }
   }
+  const importPast = async () => {
+    try {
+      const r = await api.usage.backfill()
+      notify(r.imported ? 'success' : 'info', r.imported ? `Imported ${r.imported} request${r.imported === 1 ? '' : 's'} from ${r.sessions} saved session${r.sessions === 1 ? '' : 's'}` : 'Nothing new to import', r.skipped ? `${r.skipped} already in the ledger` : undefined)
+      setTick((t) => t + 1)
+    } catch (e) { notify('error', 'Import failed', errorMessage(e)) }
+  }
   const openFolder = async () => { try { await api.app.showInFolder(await api.usage.dir()) } catch (e) { notify('error', 'Cannot open the usage folder', errorMessage(e)) } }
 
   const totals = summary?.totals
@@ -74,11 +88,13 @@ export function UsagePage() {
         </div>
         <div className="flex items-center gap-1.5">
           <Button onClick={() => setTick((t) => t + 1)} disabled={loading || extLoading}><RefreshCw size={12} className={loading || extLoading ? 'spin' : ''} />Refresh</Button>
+          <Button onClick={() => void importPast()} title="Add the usage saved on older chat sessions to the ledger (safe to repeat)"><History size={12} />Import past sessions</Button>
           <Button onClick={() => void exportCsv()}><Download size={12} />Export CSV</Button>
           <Button onClick={() => void openFolder()}><FolderOpen size={12} />Open usage folder</Button>
         </div>
       </div>
 
+      {wsFilter && <div className="mb-4 rounded-md border border-border bg-input/40 p-3 text-[11px] text-muted">Workspace scope: requests recorded in <span className="text-fg">{wsName ?? wsRoot}</span> only. Switch to User for everything on this machine, including external agents.</div>}
       {!track && <div className="mb-4 rounded-md border border-warning/40 bg-warning/10 p-3 text-[11px]">Usage recording is off: new requests are not added to the ledger. Existing entries are still shown.</div>}
       {error && <div className="mb-4 rounded-md border border-danger/40 bg-danger/10 p-3 text-[11px] text-danger">{error}</div>}
 
@@ -86,7 +102,7 @@ export function UsagePage() {
         <StatCard label="Tokens in" value={fmtTokens(totals ? totals.input + totals.cacheRead + totals.cacheWrite : 0)} hint={totals ? `${fmtTokens(totals.input)} fresh · ${fmtTokens(totals.cacheRead)} cached` : undefined} />
         <StatCard label="Tokens out" value={fmtTokens(totals?.output ?? 0)} hint={totals?.thinking ? `${fmtTokens(totals.thinking)} thinking` : undefined} />
         <StatCard label="Cache hit rate" value={fmtPct(totals?.cacheHitRate ?? 0)} hint="cache reads over all prompt tokens" />
-        <StatCard label="Cost" value={costLabel(totals)} hint={totals?.unpriced ? `${totals.unpriced} request${totals.unpriced === 1 ? '' : 's'} without a price` : 'at list prices'} accent />
+        <StatCard label="Cost" value={costLabel(totals)} hint={totals?.unpriced ? `${totals.unpriced} request${totals.unpriced === 1 ? '' : 's'} without a price` : totals && totals.requests > 0 && (totals.costUsd ?? 0) === 0 ? 'your models are priced at $0; set prices in Models or below' : 'at list prices'} accent />
         <StatCard label="Requests" value={String(totals?.requests ?? 0)} hint={summary ? (summary.from === 0 ? 'all time' : `${dayLabel(dayKey(summary.from))} to ${dayLabel(dayKey(summary.to))}`) : undefined} />
       </div>
 
@@ -98,11 +114,13 @@ export function UsagePage() {
         {summary && summary.rows.length > 0 ? <BreakdownTable rows={summary.rows} firstColumn={GROUPS.find((g) => g.id === groupBy)?.label ?? 'Group'} /> : <Empty icon={<ChartColumn size={22} />} title={loading ? 'Loading usage' : 'No usage recorded in this range'} description={loading ? undefined : 'Entries appear here after the first priced request. Switch to a wider range to see older activity.'} />}
       </Section>
 
+      {!wsFilter && (
       <Section title="External agents" description="Read-only view of the histories that Claude Code, Codex and OpenCode keep on this machine. Costs are estimates at list prices unless the agent recorded them.">
         {!includeExternal ? <div className="p-3 text-[11px] text-muted">Turn on <b>Include external agents</b> below to scan local histories.</div>
           : !external ? <div className="p-3 flex items-center gap-2 text-[11px] text-muted"><Spinner />Scanning local histories</div>
           : external.agents.map((a) => <ExternalAgentCard key={a.id} agent={a} />)}
       </Section>
+      )}
 
       <PricesEditor prices={customPrices} />
 
@@ -137,14 +155,20 @@ function CostChart({ points }: { points: UsageDailyPoint[] }) {
   const shown = useMemo(() => bucketDaily(points, 120), [points])
   const heights = useMemo(() => barHeights(shown), [shown])
   const total = shown.reduce((a, p) => a + p.costUsd, 0)
-  if (shown.length === 0 || total <= 0) return <div className="h-[120px] flex items-center justify-center text-[11px] text-muted">No cost recorded in this range</div>
+  const tokenTotal = shown.reduce((a, p) => a + p.tokens, 0)
+  // No priced cost but tokens were used (models priced at $0): draw tokens per day instead of an empty box.
+  const byTokens = total <= 0 && tokenTotal > 0
+  const series = useMemo(() => (byTokens ? shown.map((p) => ({ ...p, costUsd: p.tokens })) : shown), [byTokens, shown])
+  const seriesHeights = useMemo(() => (byTokens ? barHeights(series) : heights), [byTokens, series, heights])
+  if (shown.length === 0 || (total <= 0 && tokenTotal <= 0)) return <div className="h-[120px] flex items-center justify-center text-[11px] text-muted">No requests recorded in this range</div>
   const bucketed = shown.length !== points.length
   return (
     <div>
-      <div className="flex items-end gap-[2px] h-[120px] overflow-hidden" role="img" aria-label={`Cost per ${bucketed ? 'period' : 'day'}: ${fmtUsd(total)} total`}>
-        {shown.map((p, i) => (
-          <div key={p.day} className="flex-1 min-w-[2px] h-full flex items-end" title={`${dayLabel(p.day)}${bucketed ? ' onwards' : ''}: ${fmtUsd(p.costUsd)} · ${fmtTokens(p.tokens)} tokens`}>
-            <div className={cn('w-full rounded-t-sm transition-[height]', p.costUsd > 0 ? 'bg-accent/80 hover:bg-accent' : 'bg-border/40')} style={{ height: `${p.costUsd > 0 ? Math.max(heights[i], 2) : 1}%` }} />
+      {byTokens && <div className="text-[10.5px] text-muted mb-1">Tokens per {bucketed ? 'period' : 'day'} ({fmtTokens(tokenTotal)} total); no priced cost in this range.</div>}
+      <div className="flex items-end gap-[2px] h-[120px] overflow-hidden" role="img" aria-label={byTokens ? `Tokens per ${bucketed ? 'period' : 'day'}: ${fmtTokens(tokenTotal)} total` : `Cost per ${bucketed ? 'period' : 'day'}: ${fmtUsd(total)} total`}>
+        {series.map((p, i) => (
+          <div key={p.day} className="flex-1 min-w-[2px] h-full flex items-end" title={`${dayLabel(p.day)}${bucketed ? ' onwards' : ''}: ${byTokens ? '' : `${fmtUsd(shown[i].costUsd)} · `}${fmtTokens(p.tokens)} tokens`}>
+            <div className={cn('w-full rounded-t-sm transition-[height]', p.costUsd > 0 ? 'bg-accent/80 hover:bg-accent' : 'bg-border/40')} style={{ height: `${p.costUsd > 0 ? Math.max(seriesHeights[i], 2) : 1}%` }} />
           </div>
         ))}
       </div>

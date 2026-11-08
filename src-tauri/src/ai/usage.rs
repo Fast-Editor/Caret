@@ -401,7 +401,7 @@ pub struct ExternalReport { pub agents: Vec<ExternalAgent>, pub from: u64, pub t
 pub struct ExtRecord { pub ts: u64, pub model: String, pub input: u64, pub output: u64, pub cache_read: u64, pub cache_write: u64, pub thinking: u64, pub cost: Option<f64> }
 
 /// Hard cap on history bytes read per agent per scan.
-pub const MAX_SCAN_BYTES: u64 = 200 * 1024 * 1024;
+pub const MAX_SCAN_BYTES: u64 = 1024 * 1024 * 1024;
 const EXTERNAL_CACHE_TTL: Duration = Duration::from_secs(60);
 
 #[derive(Default)]
@@ -418,11 +418,17 @@ impl ScanBudget {
     }
 }
 
+/// Files with `ext` under `root`, newest first (by mtime), so a byte cap drops the oldest history rather than an
+/// alphabetical slice of it.
 fn files_under(root: &Path, max_depth: usize, ext: &str) -> Vec<PathBuf> {
-    let mut v: Vec<PathBuf> = walkdir::WalkDir::new(root).max_depth(max_depth).follow_links(false).into_iter().filter_map(|e| e.ok())
-        .filter(|e| e.file_type().is_file() && e.path().extension().and_then(|x| x.to_str()) == Some(ext)).map(|e| e.into_path()).collect();
-    v.sort();
-    v
+    let mut v: Vec<(u64, PathBuf)> = walkdir::WalkDir::new(root).max_depth(max_depth).follow_links(false).into_iter().filter_map(|e| e.ok())
+        .filter(|e| e.file_type().is_file() && e.path().extension().and_then(|x| x.to_str()) == Some(ext))
+        .map(|e| {
+            let mtime = e.metadata().ok().and_then(|m| m.modified().ok()).and_then(|t| t.duration_since(UNIX_EPOCH).ok()).map(|d| d.as_millis() as u64).unwrap_or(0);
+            (mtime, e.into_path())
+        }).collect();
+    v.sort_by(|a, b| b.0.cmp(&a.0).then_with(|| a.1.cmp(&b.1)));
+    v.into_iter().map(|(_, p)| p).collect()
 }
 
 // Claude Code: ~/.claude/projects/<project>/<session>.jsonl
@@ -590,7 +596,7 @@ fn build_agent(settings: &Settings, id: &str, name: &str, pattern: &str, availab
 }
 fn with_cap(note: Option<String>, budget: &ScanBudget) -> Option<String> {
     if !budget.capped { return note; }
-    let cap = format!("Scan stopped after {} MB of history; totals are partial.", MAX_SCAN_BYTES / (1024 * 1024));
+    let cap = format!("Scan stopped after {} MB of history (newest first); the oldest sessions are not counted.", MAX_SCAN_BYTES / (1024 * 1024));
     Some(match note { Some(n) => format!("{n} {cap}"), None => cap })
 }
 
@@ -632,26 +638,99 @@ pub fn external_report(settings: &Settings, range: &str) -> ExternalReport {
     report
 }
 
+// ───────────────────────── backfill from saved sessions ─────────────────────────
+
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BackfillReport { pub sessions: usize, pub imported: usize, pub skipped: usize }
+
+const BACKFILL_MARKER: &str = ".sessions-backfilled-v1";
+
+/// Import the usage recorded on assistant messages in every saved session (`<sessions_dir>/<workspace>/<id>.json`)
+/// into the ledger, so history from before the ledger existed shows up. Idempotent: an entry whose
+/// `(session_id, ts)` is already in the ledger is skipped. Messages without a cost are priced from the current
+/// model prices when known.
+pub fn backfill_from_sessions(settings: &Settings, ledger: &Ledger, sessions_dir: &Path) -> BackfillReport {
+    use crate::ai::agent::session::{MessageRole, Session};
+    let existing: HashSet<(String, u64)> = ledger.read_range(0, u64::MAX).into_iter().filter_map(|e| e.session_id.map(|s| (s, e.ts))).collect();
+    let mut rep = BackfillReport::default();
+    let Ok(workspaces) = std::fs::read_dir(sessions_dir) else { return rep };
+    for ws in workspaces.flatten().filter(|e| e.path().is_dir()) {
+        let Ok(files) = std::fs::read_dir(ws.path()) else { continue };
+        for f in files.flatten() {
+            let path = f.path();
+            if path.extension().and_then(|x| x.to_str()) != Some("json") || path.file_name().and_then(|n| n.to_str()) == Some("index.json") { continue; }
+            let Ok(text) = std::fs::read_to_string(&path) else { continue };
+            let Ok(session) = serde_json::from_str::<Session>(&text) else { continue };
+            rep.sessions += 1;
+            let agent = session.agent_id.clone().filter(|a| a != "caret" && !a.is_empty());
+            for m in &session.messages {
+                if !matches!(m.role, MessageRole::Assistant) { continue; }
+                let Some(u) = &m.usage else { continue };
+                if u.input_tokens + u.output_tokens + u.cache_read_tokens + u.cache_write_tokens == 0 && u.cost_usd.map(|c| c <= 0.0).unwrap_or(true) { continue; }
+                if existing.contains(&(session.id.clone(), m.created_at)) { rep.skipped += 1; continue; }
+                let model_id = m.model_id.clone().or_else(|| session.model_id.clone());
+                let mut e = UsageEntry {
+                    ts: m.created_at,
+                    source: if agent.is_some() { "acp" } else { "agent" }.to_string(),
+                    provider_id: model_id.as_deref().and_then(|id| settings.model(id)).map(|mc| mc.provider_id.clone()),
+                    model_id,
+                    agent_id: Some(agent.clone().unwrap_or_else(|| "caret".to_string())),
+                    session_id: Some(session.id.clone()),
+                    workspace: Some(session.workspace_root.clone()).filter(|w| !w.is_empty()),
+                    input: u.input_tokens, output: u.output_tokens, cache_read: u.cache_read_tokens, cache_write: u.cache_write_tokens,
+                    thinking: u.thinking_tokens.unwrap_or(0),
+                    cost_usd: u.cost_usd,
+                    duration_ms: m.duration_ms,
+                };
+                if e.cost_usd.is_none() { e.cost_usd = entry_cost(settings, &e); }
+                match ledger.append(&e) { Ok(()) => rep.imported += 1, Err(err) => tracing::warn!(error = %err, "usage backfill: append failed") }
+            }
+        }
+    }
+    rep
+}
+
+/// Run the backfill once per ledger (marker file in the usage folder); later runs are no-ops unless forced.
+pub fn backfill_once(settings: &Settings, force: bool) -> Option<BackfillReport> {
+    let ledger = Ledger::open_default();
+    let marker = ledger.dir().join(BACKFILL_MARKER);
+    if marker.exists() && !force { return None; }
+    let rep = backfill_from_sessions(settings, &ledger, &paths::sub_dir("sessions"));
+    let _ = std::fs::create_dir_all(ledger.dir());
+    let _ = std::fs::write(&marker, format!("{}\n", serde_json::to_string(&rep).unwrap_or_default()));
+    tracing::info!(sessions = rep.sessions, imported = rep.imported, skipped = rep.skipped, "usage ledger backfilled from saved sessions");
+    Some(rep)
+}
+
 // ───────────────────────── commands ─────────────────────────
 
 fn check_range(range: &str) -> Result<()> { if RANGES.contains(&range) { Ok(()) } else { Err(CaretError::invalid(format!("unknown range `{range}`"))) } }
 
 #[tauri::command(async)]
-pub fn usage_summary(st: State<'_, SettingsState>, range: String, group_by: String) -> Result<Summary> {
+pub fn usage_summary(st: State<'_, SettingsState>, range: String, group_by: String, workspace: Option<String>) -> Result<Summary> {
     check_range(&range)?;
     if !GROUPS.contains(&group_by.as_str()) { return Err(CaretError::invalid(format!("unknown group_by `{group_by}`"))); }
     let settings = st.effective();
     let (from, to) = range_bounds(&range, now_ms());
-    let entries = Ledger::open_default().read_range(from, to);
+    let entries = filter_workspace(Ledger::open_default().read_range(from, to), workspace.as_deref());
     Ok(summarize(&settings, &entries, &group_by, from, to))
 }
 
+/// Keep only entries recorded in `workspace` (the Settings page's Workspace scope); `None` keeps everything.
+pub fn filter_workspace(entries: Vec<UsageEntry>, workspace: Option<&str>) -> Vec<UsageEntry> {
+    match workspace.map(|w| w.trim_end_matches('/')).filter(|w| !w.is_empty()) {
+        None => entries,
+        Some(w) => entries.into_iter().filter(|e| e.workspace.as_deref().map(|x| x.trim_end_matches('/')) == Some(w)).collect(),
+    }
+}
+
 #[tauri::command(async)]
-pub fn usage_daily(st: State<'_, SettingsState>, range: String) -> Result<Vec<DailyPoint>> {
+pub fn usage_daily(st: State<'_, SettingsState>, range: String, workspace: Option<String>) -> Result<Vec<DailyPoint>> {
     check_range(&range)?;
     let settings = st.effective();
     let (from, to) = range_bounds(&range, now_ms());
-    let entries = Ledger::open_default().read_range(from, to);
+    let entries = filter_workspace(Ledger::open_default().read_range(from, to), workspace.as_deref());
     Ok(daily(&settings, &entries, from, to))
 }
 
@@ -659,10 +738,10 @@ pub fn usage_daily(st: State<'_, SettingsState>, range: String) -> Result<Vec<Da
 pub fn usage_recent(limit: Option<usize>) -> Result<Vec<UsageEntry>> { Ok(Ledger::open_default().read_recent(limit.unwrap_or(50).clamp(1, 1000))) }
 
 #[tauri::command(async)]
-pub fn usage_export_csv(range: String) -> Result<String> {
+pub fn usage_export_csv(range: String, workspace: Option<String>) -> Result<String> {
     check_range(&range)?;
     let (from, to) = range_bounds(&range, now_ms());
-    Ok(to_csv(&Ledger::open_default().read_range(from, to)))
+    Ok(to_csv(&filter_workspace(Ledger::open_default().read_range(from, to), workspace.as_deref())))
 }
 
 #[tauri::command(async)]
@@ -673,6 +752,13 @@ pub fn usage_external(st: State<'_, SettingsState>, range: Option<String>) -> Re
     let (from, to) = range_bounds(&range, now_ms());
     if !settings.usage.include_external { return Ok(ExternalReport { agents: vec![], from, to }); }
     Ok(external_report(&settings, &range))
+}
+
+/// Import usage from saved sessions into the ledger (idempotent). Runs automatically once per machine on startup;
+/// the button on the Usage page calls it again after restoring sessions or when older history is missing.
+#[tauri::command(async)]
+pub fn usage_backfill(st: State<'_, SettingsState>) -> Result<BackfillReport> {
+    Ok(backfill_once(&st.effective(), true).unwrap_or_default())
 }
 
 #[tauri::command(async)]
@@ -975,7 +1061,7 @@ mod tests {
         let mut full = ScanBudget { bytes: MAX_SCAN_BYTES, ..Default::default() };
         assert!(full.take(&f, 0).is_none());
         assert!(full.capped);
-        assert!(with_cap(None, &full).unwrap().contains("200 MB"));
+        assert!(with_cap(None, &full).unwrap().contains("1024 MB"));
         assert_eq!(with_cap(Some("n".into()), &b), Some("n".into()));
         let claude = scan_claude(dir.path(), 0, u64::MAX, &mut ScanBudget::default());
         assert!(claude.is_none(), "no projects dir means not installed");
@@ -1002,5 +1088,63 @@ mod tests {
         let v = serde_json::to_value(&ExternalReport { agents: vec![missing], from, to }).unwrap();
         assert_eq!(v["agents"][0]["sourcePathPattern"], "p");
         assert_eq!(v["agents"][0]["totals"]["costUsd"], Value::Null);
+    }
+
+    #[test]
+    fn backfill_imports_saved_sessions_once() {
+        use crate::ai::agent::session::{ChatMessage, MessageRole, Session, Usage};
+        let dir = tempfile::tempdir().unwrap();
+        let sessions = dir.path().join("sessions"); let ledger = Ledger::new(dir.path().join("usage"));
+        let mut s = Session::default(); s.workspace_root = "/w/proj".into(); s.model_id = Some("gpt-5-codex".into());
+        let mut a = ChatMessage::new(MessageRole::Assistant); a.created_at = 1_700_000_000_000; a.model_id = Some("gpt-5-codex".into());
+        a.usage = Some(Usage { input_tokens: 1000, output_tokens: 200, cache_read_tokens: 300, cache_write_tokens: 0, thinking_tokens: None, cost_usd: None, requests: Some(1) });
+        let mut b = ChatMessage::new(MessageRole::Assistant); b.created_at = 1_700_000_060_000;
+        b.usage = Some(Usage { input_tokens: 10, output_tokens: 5, cache_read_tokens: 0, cache_write_tokens: 0, thinking_tokens: Some(3), cost_usd: Some(0.0), requests: Some(1) });
+        let mut user = ChatMessage::new(MessageRole::User); user.usage = Some(Usage { input_tokens: 99, ..Default::default() }); // never counted
+        s.messages = vec![user, a, b];
+        let ws = sessions.join("abcd"); std::fs::create_dir_all(&ws).unwrap();
+        std::fs::write(ws.join(format!("{}.json", s.id)), serde_json::to_string(&s).unwrap()).unwrap();
+        std::fs::write(ws.join("index.json"), "[]").unwrap();
+        let settings = Settings::default();
+        let rep = backfill_from_sessions(&settings, &ledger, &sessions);
+        assert_eq!((rep.sessions, rep.imported, rep.skipped), (1, 2, 0));
+        let entries = ledger.read_range(0, u64::MAX);
+        assert_eq!(entries.len(), 2);
+        assert_eq!(entries[0].session_id.as_deref(), Some(s.id.as_str()));
+        assert_eq!(entries[0].source, "agent");
+        assert_eq!(entries[0].workspace.as_deref(), Some("/w/proj"));
+        assert_eq!((entries[0].input, entries[0].output, entries[0].cache_read), (1000, 200, 300));
+        // priced from the built-in table because the message carried no cost
+        let want = (1000.0 * 1.25 + 200.0 * 10.0 + 300.0 * 0.125) / 1e6;
+        assert!((entries[0].cost_usd.unwrap() - want).abs() < 1e-9, "{:?}", entries[0].cost_usd);
+        assert_eq!(entries[1].cost_usd, Some(0.0));
+        assert_eq!(entries[1].thinking, 3);
+        // second run is a no-op
+        let rep2 = backfill_from_sessions(&settings, &ledger, &sessions);
+        assert_eq!((rep2.imported, rep2.skipped), (0, 2));
+        assert_eq!(ledger.read_range(0, u64::MAX).len(), 2);
+    }
+
+    #[test]
+    fn files_under_lists_newest_first() {
+        let dir = tempfile::tempdir().unwrap();
+        let old = dir.path().join("old.jsonl"); let new = dir.path().join("new.jsonl");
+        std::fs::write(&old, "a").unwrap();
+        let t = std::time::SystemTime::now() - std::time::Duration::from_secs(3600);
+        std::fs::File::open(&old).unwrap().set_modified(t).unwrap();
+        std::fs::write(&new, "b").unwrap();
+        let v = files_under(dir.path(), 2, "jsonl");
+        assert_eq!(v, vec![new, old]);
+    }
+
+    #[test]
+    fn workspace_filter_matches_root_ignoring_trailing_slash() {
+        let mk = |w: Option<&str>| UsageEntry { ts: 1, source: "agent".into(), workspace: w.map(String::from), input: 1, ..Default::default() };
+        let all = vec![mk(Some("/w/a")), mk(Some("/w/b/")), mk(None)];
+        assert_eq!(filter_workspace(all.clone(), None).len(), 3);
+        assert_eq!(filter_workspace(all.clone(), Some("")).len(), 3);
+        assert_eq!(filter_workspace(all.clone(), Some("/w/a/")).len(), 1);
+        assert_eq!(filter_workspace(all.clone(), Some("/w/b")).len(), 1);
+        assert_eq!(filter_workspace(all, Some("/w/c")).len(), 0);
     }
 }
