@@ -734,7 +734,15 @@ pub fn settings_import_env_keys(st: State<'_, SettingsState>) -> Result<Vec<Stri
 #[tauri::command(async)]
 pub fn settings_path(st: State<'_, SettingsState>, scope: String) -> Result<String> {
     Ok(match scope.as_str() {
-        "workspace" => st.workspace_root.read().clone().map(|r| workspace_settings_path(&r)).ok_or_else(CaretError::no_workspace)?,
+        "workspace" => {
+            // Opening the file in the editor is how it gets created, so make sure it exists (`{}`) first.
+            let p = st.workspace_root.read().clone().map(|r| workspace_settings_path(&r)).ok_or_else(CaretError::no_workspace)?;
+            if !p.exists() {
+                if let Some(dir) = p.parent() { std::fs::create_dir_all(dir).map_err(|e| CaretError::io(e.to_string()))?; }
+                std::fs::write(&p, "{}\n").map_err(|e| CaretError::io(e.to_string()))?;
+            }
+            p
+        }
         "keybindings" => paths::config_dir().join("keybindings.json"),
         _ => user_path(),
     }.to_string_lossy().to_string())

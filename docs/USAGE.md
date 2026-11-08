@@ -27,6 +27,13 @@ Recording is cheap and never blocks the agent loop: `ai::usage::record` hands th
 through a channel; write errors are logged with `tracing::warn` and otherwise ignored. Turn it off with Settings → Usage
 → *Record usage* (`usage.track`); existing entries stay visible.
 
+## User and Workspace scope
+
+The User / Workspace toggle at the top of Settings applies to this page too. **User** shows every request recorded on
+this machine plus the external agent histories. **Workspace** keeps only the requests recorded while the open folder
+was the workspace (entries carry the workspace root); external agent histories are per machine, so that section is
+hidden in Workspace scope. CSV export follows the same filter.
+
 ## Older sessions
 
 The ledger only exists from the release that introduced it, so on first start Caret imports the usage stored on the

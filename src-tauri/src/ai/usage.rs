@@ -708,21 +708,29 @@ pub fn backfill_once(settings: &Settings, force: bool) -> Option<BackfillReport>
 fn check_range(range: &str) -> Result<()> { if RANGES.contains(&range) { Ok(()) } else { Err(CaretError::invalid(format!("unknown range `{range}`"))) } }
 
 #[tauri::command(async)]
-pub fn usage_summary(st: State<'_, SettingsState>, range: String, group_by: String) -> Result<Summary> {
+pub fn usage_summary(st: State<'_, SettingsState>, range: String, group_by: String, workspace: Option<String>) -> Result<Summary> {
     check_range(&range)?;
     if !GROUPS.contains(&group_by.as_str()) { return Err(CaretError::invalid(format!("unknown group_by `{group_by}`"))); }
     let settings = st.effective();
     let (from, to) = range_bounds(&range, now_ms());
-    let entries = Ledger::open_default().read_range(from, to);
+    let entries = filter_workspace(Ledger::open_default().read_range(from, to), workspace.as_deref());
     Ok(summarize(&settings, &entries, &group_by, from, to))
 }
 
+/// Keep only entries recorded in `workspace` (the Settings page's Workspace scope); `None` keeps everything.
+pub fn filter_workspace(entries: Vec<UsageEntry>, workspace: Option<&str>) -> Vec<UsageEntry> {
+    match workspace.map(|w| w.trim_end_matches('/')).filter(|w| !w.is_empty()) {
+        None => entries,
+        Some(w) => entries.into_iter().filter(|e| e.workspace.as_deref().map(|x| x.trim_end_matches('/')) == Some(w)).collect(),
+    }
+}
+
 #[tauri::command(async)]
-pub fn usage_daily(st: State<'_, SettingsState>, range: String) -> Result<Vec<DailyPoint>> {
+pub fn usage_daily(st: State<'_, SettingsState>, range: String, workspace: Option<String>) -> Result<Vec<DailyPoint>> {
     check_range(&range)?;
     let settings = st.effective();
     let (from, to) = range_bounds(&range, now_ms());
-    let entries = Ledger::open_default().read_range(from, to);
+    let entries = filter_workspace(Ledger::open_default().read_range(from, to), workspace.as_deref());
     Ok(daily(&settings, &entries, from, to))
 }
 
@@ -730,10 +738,10 @@ pub fn usage_daily(st: State<'_, SettingsState>, range: String) -> Result<Vec<Da
 pub fn usage_recent(limit: Option<usize>) -> Result<Vec<UsageEntry>> { Ok(Ledger::open_default().read_recent(limit.unwrap_or(50).clamp(1, 1000))) }
 
 #[tauri::command(async)]
-pub fn usage_export_csv(range: String) -> Result<String> {
+pub fn usage_export_csv(range: String, workspace: Option<String>) -> Result<String> {
     check_range(&range)?;
     let (from, to) = range_bounds(&range, now_ms());
-    Ok(to_csv(&Ledger::open_default().read_range(from, to)))
+    Ok(to_csv(&filter_workspace(Ledger::open_default().read_range(from, to), workspace.as_deref())))
 }
 
 #[tauri::command(async)]
@@ -1127,5 +1135,16 @@ mod tests {
         std::fs::write(&new, "b").unwrap();
         let v = files_under(dir.path(), 2, "jsonl");
         assert_eq!(v, vec![new, old]);
+    }
+
+    #[test]
+    fn workspace_filter_matches_root_ignoring_trailing_slash() {
+        let mk = |w: Option<&str>| UsageEntry { ts: 1, source: "agent".into(), workspace: w.map(String::from), input: 1, ..Default::default() };
+        let all = vec![mk(Some("/w/a")), mk(Some("/w/b/")), mk(None)];
+        assert_eq!(filter_workspace(all.clone(), None).len(), 3);
+        assert_eq!(filter_workspace(all.clone(), Some("")).len(), 3);
+        assert_eq!(filter_workspace(all.clone(), Some("/w/a/")).len(), 1);
+        assert_eq!(filter_workspace(all.clone(), Some("/w/b")).len(), 1);
+        assert_eq!(filter_workspace(all, Some("/w/c")).len(), 0);
     }
 }

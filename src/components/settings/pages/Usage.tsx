@@ -5,6 +5,8 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { ChartColumn, Download, FolderOpen, Plus, RefreshCw, Trash2, History } from 'lucide-react'
 import { api } from '@/lib/api'
+import { useSettingsScope } from '../useField'
+import { useWorkspace } from '@/store/workspace'
 import { fieldsForPage } from '@/lib/settingsSchema'
 import { useSettings } from '@/store/settings'
 import { fmtTokens } from '@/components/chat/util'
@@ -21,6 +23,11 @@ export function UsagePage() {
   const track = settings?.usage?.track ?? true
   const includeExternal = settings?.usage?.includeExternal ?? true
   const customPrices = settings?.usage?.customPrices ?? NO_PRICES
+  const scope = useSettingsScope((s) => s.scope)
+  const wsRoot = useWorkspace((s) => s.workspace?.root)
+  const wsName = useWorkspace((s) => s.workspace?.name)
+  /** Workspace scope: only requests recorded in the open folder; User scope: everything on this machine. */
+  const wsFilter = scope === 'workspace' && wsRoot ? wsRoot : undefined
   const [range, setRange] = useState<UsageRange>('30d')
   const [groupBy, setGroupBy] = useState<UsageGroupBy>('model')
   const [summary, setSummary] = useState<UsageSummary | null>(null)
@@ -34,23 +41,23 @@ export function UsagePage() {
   const load = useCallback(async () => {
     setLoading(true); setError(null)
     try {
-      const [s, d] = await Promise.all([api.usage.summary(range, groupBy), api.usage.daily(range)])
+      const [s, d] = await Promise.all([api.usage.summary(range, groupBy, wsFilter), api.usage.daily(range, wsFilter)])
       setSummary(s); setDaily(d)
     } catch (e) { setError(errorMessage(e)) } finally { setLoading(false) }
-  }, [range, groupBy])
+  }, [range, groupBy, wsFilter])
   useEffect(() => { void load() }, [load, tick, customPrices])
 
   useEffect(() => {
-    if (!includeExternal) { setExternal(null); return }
+    if (!includeExternal || wsFilter) { setExternal(null); return }
     let cancelled = false
     setExtLoading(true)
     api.usage.external(range).then((r) => { if (!cancelled) setExternal(r) }).catch((e) => { if (!cancelled) notify('warn', 'External agent histories unavailable', errorMessage(e)) }).finally(() => { if (!cancelled) setExtLoading(false) })
     return () => { cancelled = true }
-  }, [range, includeExternal, customPrices, tick])
+  }, [range, includeExternal, customPrices, tick, wsFilter])
 
   const exportCsv = async () => {
     try {
-      const csv = await api.usage.exportCsv(range)
+      const csv = await api.usage.exportCsv(range, wsFilter)
       try {
         const { save } = await import('@tauri-apps/plugin-dialog')
         const path = await save({ defaultPath: csvFilename(range, new Date()), filters: [{ name: 'CSV', extensions: ['csv'] }] })
@@ -87,6 +94,7 @@ export function UsagePage() {
         </div>
       </div>
 
+      {wsFilter && <div className="mb-4 rounded-md border border-border bg-input/40 p-3 text-[11px] text-muted">Workspace scope: requests recorded in <span className="text-fg">{wsName ?? wsRoot}</span> only. Switch to User for everything on this machine, including external agents.</div>}
       {!track && <div className="mb-4 rounded-md border border-warning/40 bg-warning/10 p-3 text-[11px]">Usage recording is off: new requests are not added to the ledger. Existing entries are still shown.</div>}
       {error && <div className="mb-4 rounded-md border border-danger/40 bg-danger/10 p-3 text-[11px] text-danger">{error}</div>}
 
@@ -106,11 +114,13 @@ export function UsagePage() {
         {summary && summary.rows.length > 0 ? <BreakdownTable rows={summary.rows} firstColumn={GROUPS.find((g) => g.id === groupBy)?.label ?? 'Group'} /> : <Empty icon={<ChartColumn size={22} />} title={loading ? 'Loading usage' : 'No usage recorded in this range'} description={loading ? undefined : 'Entries appear here after the first priced request. Switch to a wider range to see older activity.'} />}
       </Section>
 
+      {!wsFilter && (
       <Section title="External agents" description="Read-only view of the histories that Claude Code, Codex and OpenCode keep on this machine. Costs are estimates at list prices unless the agent recorded them.">
         {!includeExternal ? <div className="p-3 text-[11px] text-muted">Turn on <b>Include external agents</b> below to scan local histories.</div>
           : !external ? <div className="p-3 flex items-center gap-2 text-[11px] text-muted"><Spinner />Scanning local histories</div>
           : external.agents.map((a) => <ExternalAgentCard key={a.id} agent={a} />)}
       </Section>
+      )}
 
       <PricesEditor prices={customPrices} />
 
