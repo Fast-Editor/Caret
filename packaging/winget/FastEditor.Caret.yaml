@@ -2,7 +2,7 @@
 # Version manifest for winget. scripts/update-packaging.mjs rewrites PackageVersion on every release.
 # Submit the three FastEditor.Caret.*.yaml files to microsoft/winget-pkgs under manifests/f/FastEditor/Caret/<version>/.
 PackageIdentifier: FastEditor.Caret
-PackageVersion: 0.1.0
+PackageVersion: 0.2.0
 DefaultLocale: en-US
 ManifestType: version
 ManifestVersion: 1.6.0

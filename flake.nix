@@ -7,10 +7,10 @@
     let
       # Pinned to one GitHub release. scripts/update-packaging.mjs rewrites the version and the hashes
       # (hex sha256 values from SHA256SUMS.txt on the release) whenever a tag is published.
-      version = "0.1.0";
+      version = "0.2.0";
       hashes = {
-        aarch64-darwin = "fe79cbac6fe22382f324f867ad7310a172089eb5279698b5f5e71e30d85e451f";
-        x86_64-linux = "773346aa90fae31c379e3e5827e4f25ce2fb24fd9f3dd242cbcaa4e10aa55885";
+        aarch64-darwin = "7e7d7ee45103a02fac789d49c1a6180c05488b8d7e1b4967d49c61b34c4fc960";
+        x86_64-linux = "3e2056e0c66a3b8a434425a7195f5ed8d8d7d6ea48d90ea784e64578c5cbdafd";
       };
       baseUrl = "https://github.com/Fast-Editor/Caret/releases/download/v${version}";
 

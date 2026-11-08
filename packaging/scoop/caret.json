@@ -1,5 +1,5 @@
 {
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "A Cursor-class AI code editor with a Rust core. No bundled Chromium, no Node at run time.",
   "homepage": "https://github.com/Fast-Editor/Caret",
   "license": "MIT",
@@ -9,8 +9,8 @@
   ],
   "architecture": {
     "64bit": {
-      "url": "https://github.com/Fast-Editor/Caret/releases/download/v0.1.0/Caret_0.1.0_x64-setup.exe",
-      "hash": "2e4f5ecdb0a7547d237597f41b39597713ec2b0666a66801cc38ebe27e7632fa"
+      "url": "https://github.com/Fast-Editor/Caret/releases/download/v0.2.0/Caret_0.2.0_x64-setup.exe",
+      "hash": "5fe7bba5da526cbc37d3b5366e04e0894c2697d0f147b78acaf21cf29c8e0758"
     }
   },
   "installer": {

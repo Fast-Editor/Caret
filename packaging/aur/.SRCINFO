@@ -1,6 +1,6 @@
 pkgbase = caret-bin
 	pkgdesc = Cursor-class AI code editor with a Rust core (Tauri 2 + React/Monaco), binary release
-	pkgver = 0.1.0
+	pkgver = 0.2.0
 	pkgrel = 1
 	url = https://github.com/Fast-Editor/Caret
 	arch = x86_64
@@ -13,11 +13,11 @@ pkgbase = caret-bin
 	optdepends = ollama: local models for chat, Tab and embeddings
 	provides = caret
 	conflicts = caret
-	noextract = caret-bin-0.1.0.deb
+	noextract = caret-bin-0.2.0.deb
 	options = !strip
-	source = caret-bin-0.1.0.deb::https://github.com/Fast-Editor/Caret/releases/download/v0.1.0/Caret_0.1.0_amd64.deb
-	source = caret-bin-0.1.0-LICENSE::https://raw.githubusercontent.com/Fast-Editor/Caret/v0.1.0/LICENSE
-	sha256sums = 5fd4699221279ad53e0474ce50e466d9d63906b828a5770c218c3d5ce04c4a17
+	source = caret-bin-0.2.0.deb::https://github.com/Fast-Editor/Caret/releases/download/v0.2.0/Caret_0.2.0_amd64.deb
+	source = caret-bin-0.2.0-LICENSE::https://raw.githubusercontent.com/Fast-Editor/Caret/v0.2.0/LICENSE
+	sha256sums = a7481688bc1be1c42b7fc6d4f38eebb77a6d37b9e47844745643f5f0acdfba38
 	sha256sums = 9f3ac3acca6ad40dd524215a0c41b8b70096b033c619678de92850a7c4ad17ea
 
 pkgname = caret-bin

@@ -2,7 +2,7 @@
 # Installer manifest for winget: the x64 NSIS installer built by Tauri (per-user install, silent with /S).
 # scripts/update-packaging.mjs rewrites PackageVersion, ReleaseDate, InstallerUrl and InstallerSha256.
 PackageIdentifier: FastEditor.Caret
-PackageVersion: 0.1.0
+PackageVersion: 0.2.0
 InstallerType: nullsoft
 Scope: user
 InstallModes:
@@ -13,11 +13,11 @@ InstallerSwitches:
   Silent: /S
   SilentWithProgress: /S
 UpgradeBehavior: install
-ReleaseDate: 2026-10-28
+ReleaseDate: 2026-11-08
 Installers:
   - Architecture: x64
-    InstallerUrl: https://github.com/Fast-Editor/Caret/releases/download/v0.1.0/Caret_0.1.0_x64-setup.exe
-    InstallerSha256: 2E4F5ECDB0A7547D237597F41B39597713EC2B0666A66801CC38EBE27E7632FA
+    InstallerUrl: https://github.com/Fast-Editor/Caret/releases/download/v0.2.0/Caret_0.2.0_x64-setup.exe
+    InstallerSha256: 5FE7BBA5DA526CBC37D3B5366E04E0894C2697D0F147B78ACAF21CF29C8E0758
     # Tauri's NSIS template registers the uninstaller under the bundle identifier.
     ProductCode: dev.caret.editor
 ManifestType: installer
