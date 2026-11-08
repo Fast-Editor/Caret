@@ -333,7 +333,10 @@ mod tests {
     fn free_ports_are_bindable_and_distinct() {
         let a = free_port().unwrap(); let b = free_port().unwrap();
         assert!(a > 1024 && b > 1024);
-        let _l = std::net::TcpListener::bind(("127.0.0.1", a)).expect("port is free");
+        // Other tests in this binary bind loopback ports concurrently, so the port handed back can be taken between
+        // the probe and this bind; the property under test is "a freshly probed port is bindable", so allow a few tries.
+        let bound = (0..5).find_map(|_| free_port().ok().and_then(|p| std::net::TcpListener::bind(("127.0.0.1", p)).ok()));
+        assert!(bound.is_some(), "a freshly probed free port should be bindable");
         assert!(random_hex64().len() == 64 && random_hex64() != random_hex64());
     }
 

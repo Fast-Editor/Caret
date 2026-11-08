@@ -53,7 +53,7 @@ export function FieldControl({ field }: { field: SettingField }) {
     case 'boolean': control = <Toggle checked={!!value} onChange={(v) => set(v)} label={field.title} />; break
     case 'number': control = <NumberInput value={typeof value === 'number' ? value : Number(field.min ?? 0)} onChange={(v) => set(v)} min={field.min} max={field.max} step={field.step} unit={field.unit} />; break
     case 'string': control = <TextInput value={(value as string | undefined) ?? ''} onChange={(v) => set(field.optional && v === '' ? undefined : v)} placeholder={field.placeholder} className="min-w-[260px]" mono />; break
-    case 'select': control = <Select value={value as string | undefined} onChange={(v) => set(v)} options={field.options ?? []} />; break
+    case 'select': control = <Select value={value as string | undefined} onChange={(v) => set(v)} options={field.options ?? []} allowEmpty={field.optional ? (field.placeholder ?? 'Default') : undefined} />; break
     case 'stringList': control = <StringList value={Array.isArray(value) ? (value as string[]) : []} onChange={(v) => set(v)} />; break
     case 'textarea': control = <TextArea value={(value as string | undefined) ?? ''} onChange={(v) => set(v)} placeholder={field.placeholder} mono />; break
     case 'model': control = <ModelSelect value={value as string | undefined} onChange={(v) => set(v)} />; break

@@ -106,6 +106,11 @@ pub struct AgentSettings {
     pub auto_run_mcp_tools: Vec<String>,
     pub large_context_mode: bool,
     pub parallel_tool_calls: bool,
+    /// Permission mode for new threads. None derives it from the legacy `auto_run`
+    /// (off → supervised, allowlist → auto-accept-edits, all → auto).
+    #[serde(skip_serializing_if = "Option::is_none")] pub permission_mode: Option<crate::ai::agent::policy::PermissionMode>,
+    /// Cap: the effective mode never exceeds this. A workspace `.caret/settings.json` can lower it for a project.
+    #[serde(skip_serializing_if = "Option::is_none")] pub max_permission_mode: Option<crate::ai::agent::policy::PermissionMode>,
 }
 impl Default for AgentSettings {
     fn default() -> Self { Self {
@@ -116,7 +121,37 @@ impl Default for AgentSettings {
         max_iterations: 60, max_tool_output_chars: 30_000, web_search_enabled: true, web_search_provider: "duckduckgo".into(), web_search_endpoint: None, web_search_api_key_ref: None,
         subagent_model_id: None, summarize_threshold_ratio: 0.8, chime_on_finish: false, thinking: "auto".into(), effort: "high".into(), command_timeout_secs: 120,
         mcp_auto_run: false, auto_run_mcp_tools: vec![], large_context_mode: false, parallel_tool_calls: true,
+        permission_mode: None, max_permission_mode: None,
     } }
+}
+
+/// Agent worktree policies (location, branch naming, cleanup).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct WorktreeSettings {
+    /// Seed the composer's "run in a worktree" flag for new threads.
+    pub per_thread_default: bool,
+    /// Where agent worktrees live: relative to the workspace root, absolute, or `~/...`.
+    pub location: String,
+    /// Branch name template; placeholders `{slug}`, `{model}`, `{id}`, `{date}`.
+    pub branch_template: String,
+    /// Offer to clean up worktrees whose thread has been idle for this many days (0 = off).
+    pub cleanup_inactive_days: u32,
+    /// Clean up worktrees of archived (settled) threads.
+    pub cleanup_settled: bool,
+    /// Clean up worktrees whose branch is merged into the default branch.
+    pub cleanup_merged: bool,
+    /// Clean up worktrees whose branch has no commits beyond its base.
+    pub cleanup_no_commits: bool,
+    /// keep (skip dirty worktrees) | stash (stash before removal) | discard (force remove).
+    pub on_local_changes: String,
+    /// Delete the branch together with the worktree when it has no unmerged commits.
+    pub delete_branch_with_worktree: bool,
+    /// Run the cleanup policies automatically on app start and report the result.
+    pub auto_cleanup: bool,
+}
+impl Default for WorktreeSettings {
+    fn default() -> Self { Self { per_thread_default: false, location: ".caret/worktrees".into(), branch_template: "caret/{slug}".into(), cleanup_inactive_days: 14, cleanup_settled: true, cleanup_merged: true, cleanup_no_commits: true, on_local_changes: "keep".into(), delete_branch_with_worktree: true, auto_cleanup: false } }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -356,6 +391,82 @@ impl Default for RouterSettings {
     fn default() -> Self { Self { enabled: false, source: "npm".into(), overrides: BTreeMap::new(), excluded_models: vec![], sticky_sessions: true, route_single_shot: true, tpm_limit: None, embeddings_provider_id: None } }
 }
 
+/// Desktop (OS) notifications for agent sessions; the UI decides when a transition qualifies
+/// (`src/lib/desktopNotifications.ts`) and calls `app_notify_desktop`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct NotificationsSettings {
+    /// Master switch for OS notifications.
+    pub desktop: bool,
+    /// Only notify while the Caret window is not focused.
+    pub only_when_unfocused: bool,
+    pub on_finish: bool,
+    pub on_error: bool,
+    pub on_approval: bool,
+    pub on_question: bool,
+    /// Short beep when a turn finishes (in addition to `agent.chime_on_finish`).
+    pub sound: bool,
+}
+impl Default for NotificationsSettings {
+    fn default() -> Self { Self { desktop: true, only_when_unfocused: true, on_finish: true, on_error: true, on_approval: true, on_question: true, sound: false } }
+}
+/// Chat thread lifecycle (docs/THREADS.md).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct ChatSettings {
+    /// Mark idle, unpinned, unarchived threads as settled after this many days without activity (0 = off).
+    pub auto_settle_days: u32,
+    /// Token budget (chars/4) for the context transferred when a thread is handed to another agent or model.
+    /// Older messages beyond the budget are summarised; the most recent ones travel verbatim.
+    pub handoff_budget_tokens: u32,
+}
+impl Default for ChatSettings { fn default() -> Self { Self { auto_settle_days: 0, handoff_budget_tokens: 12_000 } } }
+/// Per-million-token prices for a model id that is not in the catalog (external agents, custom ids).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase", default)]
+pub struct ModelPrice {
+    pub input: f64,
+    pub output: f64,
+    #[serde(skip_serializing_if = "Option::is_none")] pub cache_read: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")] pub cache_write: Option<f64>,
+}
+impl Default for ModelPrice { fn default() -> Self { Self { input: 0.0, output: 0.0, cache_read: None, cache_write: None } } }
+
+/// Usage ledger (see `ai::usage`): what is recorded and how external histories are priced.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase", default)]
+pub struct UsageSettings {
+    /// Append every priced request to `~/.caret/usage/YYYY-MM.jsonl`.
+    pub track: bool,
+    /// Show Claude Code / Codex / OpenCode local histories on the Usage page.
+    pub include_external: bool,
+    /// model id (or prefix) -> prices per million tokens; checked before the catalog and the built-in table.
+    pub custom_prices: BTreeMap<String, ModelPrice>,
+}
+impl Default for UsageSettings { fn default() -> Self { Self { track: true, include_external: true, custom_prices: BTreeMap::new() } } }
+/// Caret as an MCP server for other agents (see `orchestrator`, docs/ORCHESTRATOR.md). Loopback only, bearer token.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase", default)]
+pub struct OrchestratorSettings {
+    pub enabled: bool,
+    /// Preferred port on 127.0.0.1; the next 10 are tried when it is busy.
+    pub port: u16,
+}
+impl Default for OrchestratorSettings { fn default() -> Self { Self { enabled: false, port: 17431 } } }
+/// Remote access (`caret serve`, see `remote`): a browser on the LAN or over Tailscale gets the full Caret UI,
+/// relayed through the desktop webview. Off by default; loopback only unless `host` is `0.0.0.0`.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase", default)]
+pub struct RemoteSettings {
+    pub enabled: bool,
+    /// Bind address: `127.0.0.1` (this machine only, e.g. behind an SSH tunnel) or `0.0.0.0` (LAN / Tailscale).
+    pub host: String,
+    pub port: u16,
+}
+impl Default for RemoteSettings {
+    fn default() -> Self { Self { enabled: false, host: "127.0.0.1".into(), port: 17430 } }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
 pub struct Settings {
@@ -378,10 +489,16 @@ pub struct Settings {
     pub acp: AcpSettings,
     pub terminal: TerminalSettings,
     pub router: RouterSettings,
+    pub notifications: NotificationsSettings,
+    pub chat: ChatSettings,
+    pub usage: UsageSettings,
+    pub worktrees: WorktreeSettings,
+    pub orchestrator: OrchestratorSettings,
+    pub remote: RemoteSettings,
 }
 impl Default for Settings {
     fn default() -> Self {
-        Self { providers: default_providers(), models: default_models(), tab: Default::default(), agent: Default::default(), indexing: Default::default(), ui: Default::default(), privacy: Default::default(), general: Default::default(), user_rules: String::new(), lsp: Default::default(), mcp: Default::default(), custom_modes: vec![], beta: Default::default(), keybindings: BTreeMap::new(), verify: Default::default(), sandbox: Default::default(), acp: Default::default(), terminal: Default::default(), router: Default::default() }
+        Self { providers: default_providers(), models: default_models(), tab: Default::default(), agent: Default::default(), indexing: Default::default(), ui: Default::default(), privacy: Default::default(), general: Default::default(), user_rules: String::new(), lsp: Default::default(), mcp: Default::default(), custom_modes: vec![], beta: Default::default(), keybindings: BTreeMap::new(), verify: Default::default(), sandbox: Default::default(), acp: Default::default(), terminal: Default::default(), router: Default::default(), notifications: Default::default(), chat: Default::default(), usage: Default::default(), worktrees: Default::default(), orchestrator: Default::default(), remote: Default::default() }
     }
 }
 

@@ -147,6 +147,10 @@ export interface AgentSettings {
   subagentModelId?: string; summarizeThresholdRatio: number; chimeOnFinish: boolean
   thinking: ThinkingPref; effort: Effort; commandTimeoutSecs: number; mcpAutoRun: boolean
   autoRunMcpTools: string[]; largeContextMode: boolean; parallelToolCalls: boolean
+  /** Default permission mode for new threads; unset derives it from `autoRun`. */
+  permissionMode?: PermissionMode
+  /** Cap: the effective mode never exceeds this (a workspace .caret/settings.json can lower it). */
+  maxPermissionMode?: PermissionMode
 }
 export interface IndexingSettings {
   enabled: boolean; embeddingsProviderId?: string; embeddingsModel?: string; maxFileSizeKb: number
@@ -186,6 +190,12 @@ export interface Settings {
   mcp: { enabled: boolean }; customModes: CustomMode[]; beta: BetaSettings
   keybindings: Record<string, string | null>
   verify: VerifySettings; sandbox: SandboxSettings; acp: AcpSettings; terminal: TerminalSettings; router: RouterSettings
+  notifications: NotificationsSettings
+  chat: ChatSettings
+  usage: UsageSettings
+  worktrees: WorktreeSettings
+  orchestrator: OrchestratorSettings
+  remote: RemoteSettings
 }
 export interface RouterSettings { enabled: boolean; source: 'npm' | 'bundled'; overrides: Record<string, string>; excludedModels: string[]; stickySessions: boolean; routeSingleShot: boolean; tpmLimit?: number; embeddingsProviderId?: string }
 export type RouterTier = 'simple' | 'medium' | 'complex' | 'reasoning'
@@ -226,6 +236,8 @@ export interface ApprovalRequest {
   kind: 'command' | 'mcp' | 'file-delete' | 'file-edit' | 'outside-workspace' | 'web' | 'subagent' | 'browser'
   title: string; detail: string; command?: string; cwd?: string; options: ApprovalOption[]; allowAlwaysPattern?: string
   classification?: CommandClassification; riskTier?: RiskTier; sandboxed?: boolean; agentId?: string
+  /** Effective permission mode the policy applied when it asked. */
+  permissionMode?: PermissionMode
 }
 export interface AgentQuestion { questionId: string; question: string; options?: string[]; allowFreeText: boolean }
 export interface FileChangeSummary {
@@ -260,7 +272,7 @@ export interface ChatMessage {
   routing?: RoutingInfo
 }
 export interface TodoItem { id: string; content: string; status: 'pending' | 'in_progress' | 'completed' | 'cancelled' }
-export interface QueuedMessage { id: string; text: string; context: ContextItem[]; images: ImageAttachment[]; mode?: ModeId }
+export interface QueuedMessage { id: string; text: string; context: ContextItem[]; images: ImageAttachment[]; mode?: ModeId; request?: SendMessageRequest }
 export type SessionStatus = 'idle' | 'running' | 'awaiting-approval' | 'awaiting-input' | 'error' | 'summarizing'
 export interface ChatSession {
   id: string; title: string; workspaceRoot: string; createdAt: number; updatedAt: number; mode: ModeId; modelId?: string
@@ -268,11 +280,19 @@ export interface ChatSession {
   worktreePath?: string; branch?: string; status: SessionStatus; queuedMessages: QueuedMessage[]
   summary?: string; parentSessionId?: string; isSubagent?: boolean; contextTokens: number; pinned?: boolean; archived?: boolean
   agentId?: string; agentKind?: AgentKind; lastVerificationId?: string; reviewComments?: ReviewComment[]
+  snoozedUntil?: number; settled?: boolean; archivedAt?: number; pinnedAt?: number
+  /** Per-thread permission mode override (unset = settings default). */
+  permissionMode?: PermissionMode
+  /** Scratch thread living in ~/.caret/scratch/<id> until promoted to a project. */
+  scratch?: boolean
 }
 export interface ChatSessionSummary {
   id: string; title: string; workspaceRoot: string; createdAt: number; updatedAt: number; mode: ModeId
   status: SessionStatus; messageCount: number; lastMessagePreview: string; worktreePath?: string; isSubagent?: boolean
   pendingChangeCount: number; pinned?: boolean; archived?: boolean; modelId?: string; agentId?: string; riskTier?: RiskTier
+  /** Thread lifecycle (docs/THREADS.md): snoozed until (unix ms), settled flag, timestamps for archive and pin. */
+  snoozedUntil?: number; settled?: boolean; archivedAt?: number; pinnedAt?: number
+  scratch?: boolean
 }
 export type AgentEvent =
   | { type: 'session-status'; sessionId: string; status: SessionStatus }
@@ -300,7 +320,9 @@ export type AgentEvent =
   | { type: 'verification'; sessionId: string; report: VerificationReport }
   | { type: 'agent-status'; sessionId: string; agentId: string; status: AcpAgentStatus }
   | { type: 'routed'; sessionId: string; messageId: string; routing: RoutingInfo }
+  | { type: 'steer'; sessionId: string; pending: QueuedMessage[] }
   | { type: 'review-comments'; sessionId: string; comments: ReviewComment[] }
+  | { type: 'session-updated'; session: ChatSessionSummary }
   | { type: 'error'; sessionId: string; message: string }
 export interface PendingChange {
   changeId: string; sessionId: string; path: string; kind: FileChangeSummary['kind']
@@ -525,3 +547,89 @@ export interface HistoryEntry {
 }
 export interface HistorySearchHit { entry: HistoryEntry; score: number; why: string }
 export interface HistoryNlResult { hits: HistorySearchHit[]; keywords: string[]; usedModel: boolean }
+
+// ───────────────────────────── desktop notifications (settings.notifications) ─────────────────────────────
+/** Mirrors `NotificationsSettings` in src-tauri/src/core/settings.rs. */
+export interface NotificationsSettings {
+  /** Master switch for OS notifications. */
+  desktop: boolean
+  /** Only notify while the Caret window is not focused. */
+  onlyWhenUnfocused: boolean
+  onFinish: boolean; onError: boolean; onApproval: boolean; onQuestion: boolean
+  /** Short beep when a turn finishes (in addition to `agent.chimeOnFinish`). */
+  sound: boolean
+}
+/** Why a desktop notification fired (one per session transition). */
+export type AgentNotificationKind = 'finished' | 'failed' | 'approval' | 'question'
+// ───────────────────────────── chat threads: lifecycle settings and message search (docs/THREADS.md) ─────────────────────────────
+export interface ChatSettings {
+  /** Mark idle, unpinned, unarchived threads as settled after this many days without activity (0 = off). */
+  autoSettleDays: number
+}
+/** One hit from `chat_search_messages`. */
+export interface MessageSearchHit { sessionId: string; sessionTitle: string; workspaceRoot: string; messageId: string; role: MessageRole; snippet: string; updatedAt: number }
+// ───────────────────────────── forks, provider handoff, multi-model fan-out ─────────────────────────────
+// Appended as interface merges so the diff stays append-only (TypeScript merges same-name interfaces in a module).
+/** Chat thread features (mirrors `ChatSettings` in src-tauri/src/core/settings.rs). */
+export interface ChatSettings {
+  /** Token budget (chars/4) for the context transferred when a thread is handed to another agent or model. */
+  handoffBudgetTokens: number
+}
+export interface Settings { chat: ChatSettings }
+export interface ChatSession {
+  /** Parent message this fork was cut after (`chat_fork_session` with a message id). */
+  forkOfMessageId?: string
+  /** Shared id of a multi-model fan-out batch (`chat_fan_out`). */
+  fanOutGroup?: string
+}
+export interface ChatSessionSummary { fanOutGroup?: string }
+/** `chat_fan_out` arguments (camelCase of the Rust command parameters). */
+export interface FanOutRequest {
+  sessionId?: string; text: string; modelIds: string[]; useWorktree?: boolean; mode?: ModeId
+  context?: ContextItem[]; images?: ImageAttachment[]; thinking?: ThinkingPref; effort?: Effort
+}
+// ───────────────────────────── usage ledger (Settings → Usage; `~/.caret/usage/YYYY-MM.jsonl`) ─────────────────────────────
+/** Per-million-token prices for a model id (or id prefix) that is not in the catalog. */
+export interface ModelPrice { input: number; output: number; cacheRead?: number; cacheWrite?: number }
+export interface UsageSettings { track: boolean; includeExternal: boolean; customPrices: Record<string, ModelPrice> }
+export type UsageRange = 'today' | '7d' | '30d' | 'all'
+export type UsageGroupBy = 'model' | 'provider' | 'agent' | 'source' | 'day' | 'workspace'
+export type UsageSource = 'agent' | 'acp' | 'inline' | 'tab' | 'review' | 'commit' | 'other'
+export interface UsageEntry {
+  ts: number; source: UsageSource | string; providerId?: string; modelId?: string; agentId?: string; sessionId?: string; workspace?: string
+  input: number; output: number; cacheRead: number; cacheWrite: number; thinking: number; costUsd?: number; durationMs?: number
+}
+/** `costUsd` is null when no request in the group could be priced; `unpriced` counts those requests. */
+export interface UsageTotals { input: number; output: number; cacheRead: number; cacheWrite: number; thinking: number; costUsd: number | null; requests: number; unpriced: number; cacheHitRate: number }
+export interface UsageRow extends UsageTotals { key: string; label: string }
+export interface UsageSummary { totals: UsageTotals; rows: UsageRow[]; from: number; to: number }
+export interface UsageDailyPoint { day: string; costUsd: number; tokens: number }
+export interface UsageWindow { label: string; usedPercent: number; windowMinutes: number; resetsAt?: number }
+export interface UsageExternalAgent { id: string; name: string; available: boolean; sourcePathPattern: string; totals: UsageTotals; byModel: UsageRow[]; windows: UsageWindow[]; note?: string }
+export interface UsageExternalReport { agents: UsageExternalAgent[]; from: number; to: number }
+// ───────────────────────────── permission modes, worktree policies, scratch threads ─────────────────────────────
+/** Mirror of `policy::PermissionMode` (kebab-case). Ordered from most to least restrictive. */
+export type PermissionMode = 'supervised' | 'auto-accept-edits' | 'auto' | 'full-access'
+export interface WorktreeSettings {
+  perThreadDefault: boolean; location: string; branchTemplate: string
+  cleanupInactiveDays: number; cleanupSettled: boolean; cleanupMerged: boolean; cleanupNoCommits: boolean
+  onLocalChanges: 'keep' | 'stash' | 'discard'; deleteBranchWithWorktree: boolean; autoCleanup: boolean
+}
+export interface WorktreeStatus { path: string; branch?: string; hasCommitsBeyondBase: boolean; dirty: boolean; mergedIntoDefault: boolean; lastActivity: number }
+export interface WorktreeCleanupCandidate { sessionId: string; title: string; path: string; branch?: string; reasons: string[]; dirty: boolean }
+export interface WorktreeCleanupReport { removed: string[]; skipped: { sessionId: string; reason: string }[]; notes: string[] }
+// ───────────────────────────── orchestrator (Caret as an MCP server) ─────────────────────────────
+/** Caret exposes itself as a loopback MCP server so other agents can spawn and steer threads (docs/ORCHESTRATOR.md). */
+export interface OrchestratorSettings { enabled: boolean; port: number }
+export interface OrchestratorStatus { enabled: boolean; running: boolean; url?: string; port?: number; tokenPath: string; token: string; endpointPath: string; error?: string }
+/** Ready-to-paste client configuration for the orchestrator endpoint. */
+export interface OrchestratorSnippets { claudeCode: string; codexToml: string; cursorJson: string; caretJson: string }
+// ───────────────────────────── remote access (`caret serve`) ─────────────────────────────
+/** Mirrors `RemoteSettings` in src-tauri/src/core/settings.rs. */
+export interface RemoteSettings { enabled: boolean; host: string; port: number }
+export interface RemoteDevice { id: string; name: string; createdAt: number; lastSeen: number; userAgent: string }
+export interface RemoteStatus {
+  enabled: boolean; running: boolean; serving: boolean; host: string; port: number; urls: string[]
+  devices: RemoteDevice[]; executorConnected: boolean; clients: number; error?: string
+}
+export interface RemotePairingCode { code: string; expiresAt: number }

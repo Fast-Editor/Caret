@@ -1,5 +1,5 @@
 import { Popover } from 'radix-ui'
-import { AlertCircle, AlertTriangle, Bot, Cpu, Database, GitBranch, Loader2, RefreshCw, ShieldCheck, Zap, ChevronUp, ChevronDown } from 'lucide-react'
+import { AlertCircle, AlertTriangle, Bot, Coins, Cpu, Database, GitBranch, Loader2, RefreshCw, ShieldCheck, Zap, ChevronUp, ChevronDown } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import { api } from '@/lib/api'
 import { runCommand, hasCommand } from '@/lib/commands'
@@ -11,6 +11,7 @@ import { useUi } from '@/store/ui'
 import { useWorkspace } from '@/store/workspace'
 import { NotificationBell } from '@/components/notifications'
 import { cn } from '@/components/common'
+import { fmtCost } from '@/components/chat/util'
 import type { IndexStatus, LspServerStatus, ProcessStats } from '@/types'
 
 function Item({ children, onClick, title, className }: { children: React.ReactNode; onClick?: () => void; title?: string; className?: string }) {
@@ -32,6 +33,7 @@ export function StatusBar() {
   const [index, setIndex] = useState<IndexStatus | null>(null)
   const [lsp, setLsp] = useState<LspServerStatus[]>([])
   const [stats, setStats] = useState<ProcessStats | null>(null)
+  const [todayCost, setTodayCost] = useState(0)
 
   useEffect(() => { if (ws) void git.refresh() }, [ws?.root]) // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => {
@@ -50,6 +52,15 @@ export function StatusBar() {
     api.index.status().then(setIndex).catch(() => {})
     api.lsp.status().then(setLsp).catch(() => {})
     return () => offs.forEach((o) => o())
+  }, [])
+  // Today's spend from the usage ledger: polled each minute and shortly after every agent usage event.
+  useEffect(() => {
+    let debounce: number | undefined
+    const tick = () => api.usage.daily('today').then((d) => setTodayCost(d.reduce((a, p) => a + p.costUsd, 0))).catch(() => {})
+    tick()
+    const id = window.setInterval(tick, 60_000)
+    const off = on<{ type?: string }>(Events.agentEvent, (e) => { if (e?.type === 'usage') { window.clearTimeout(debounce); debounce = window.setTimeout(tick, 1500) } })
+    return () => { window.clearInterval(id); window.clearTimeout(debounce); off() }
   }, [])
   const showMem = settings?.ui.showStatusBarMemory ?? true
   useEffect(() => {
@@ -92,6 +103,7 @@ export function StatusBar() {
         {edStatus?.eol && <Item title="End of line">{edStatus.eol}</Item>}
         {edStatus?.language && <Item title="Language mode">{edStatus.language}</Item>}
         {tab && <Item onClick={() => void runCommand('ai.tab.toggle')} title={tab.error ? 'Tab completions: the last request failed — check the Tab model in Settings' : 'Tab completions'}><Zap className={cn('size-3', tab.error ? 'text-danger' : tab.enabled ? 'text-accent' : 'text-faint')} />{tab.busy ? 'Tab…' : tab.error ? 'Tab !' : tab.enabled ? 'Tab' : 'Tab off'}</Item>}
+        {todayCost > 0 && <Item onClick={() => void runCommand('settings.open', { page: 'usage' })} title="Caret spend today at list prices. External agents are on the Usage page."><Coins className="size-3" />{fmtCost(todayCost)} today</Item>}
         {settings?.privacy.privacyMode && <Item title="Privacy mode: no data leaves beyond your configured model provider"><ShieldCheck className="size-3 text-success" />Privacy</Item>}
         {zoom !== 0 && <Item onClick={() => void runCommand('view.zoomReset')} title="Reset zoom">{Math.round(Math.pow(1.1, zoom) * 100)}%</Item>}
         {showMem && stats && <Item onClick={() => void runCommand('help.about')} title={`Core process RSS · CPU ${stats.cpuPercent.toFixed(0)}%`}><Cpu className="size-3" />{(stats.rssBytes / 1048576).toFixed(0)} MB</Item>}

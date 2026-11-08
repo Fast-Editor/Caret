@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { ArrowUp, AtSign, FolderGit2, Image as ImageIcon, Paperclip, Square } from 'lucide-react'
+import { ArrowUp, AtSign, Columns3, FolderGit2, Image as ImageIcon, Paperclip, Square } from 'lucide-react'
 import type { ContextItem, ImageAttachment, SlashCommandInfo } from '@/types'
-import { AUTO_MODEL, isSessionBusy, resolveModel, useChat } from '@/store/chat'
+import { AUTO_MODEL, isSessionBusy, resolveModel, useChat, useModelGroups } from '@/store/chat'
+import { isFanOut, pruneCompare, sendLabel } from './composer/compareModels'
 import { useSettings } from '@/store/settings'
 import { api } from '@/lib/api'
 import { runCommand } from '@/lib/commands'
@@ -11,10 +12,13 @@ import { SlashCommandPicker } from './composer/SlashCommandPicker'
 import { ContextRing, ModeSelector, ModelPicker, ThinkingControls } from './composer/Pickers'
 import { AgentPicker, CARET_AGENT } from './composer/AgentPicker'
 import { AgentOptions } from './composer/AgentOptions'
+import { SendModeControl, type SendMode } from './composer/SendMode'
+import { PermissionPicker } from './composer/PermissionPicker'
 import { ImageThumb } from './messages/Parts'
 import { detectTrigger, parseSlashCommand, replaceTrigger, type Trigger } from './mentions'
 import { baseName, fmtTokens, uid, MOD } from './util'
-import { getActiveFile } from '@/lib/chatBridge'
+import { getActiveFile, startInNewThread } from '@/lib/chatBridge'
+import { useUi } from '@/store/ui'
 import { usePresenceList } from './presence'
 import './chat.css'
 
@@ -31,6 +35,9 @@ export function Composer({ sessionId, autoFocusNonce }: { sessionId: string; aut
   const draft = useChat((s) => s.drafts[sessionId]) ?? useChat.getState().draft(sessionId)
   const update = useChat((s) => s.updateDraft)
   const send = useChat((s) => s.send)
+  const steer = useChat((s) => s.steer)
+  const steerByDefault = useUi((s) => s.steerByDefault)
+  const fanOut = useChat((s) => s.fanOut)
   const stop = useChat((s) => s.stop)
   const addContext = useChat((s) => s.addContext)
   const removeContext = useChat((s) => s.removeContext)
@@ -48,6 +55,11 @@ export function Composer({ sessionId, autoFocusNonce }: { sessionId: string; aut
   const [dragOver, setDragOver] = useState(false)
   const model = resolveModel(draft.modelId)
   const pills = usePresenceList(draft.context, (c) => c.id)
+  // Multi-model fan-out: 2+ models picked in the model picker (built-in agent only) turns Send into "Send to N".
+  const groups = useModelGroups()
+  const enabledModelIds = useMemo(() => groups.flatMap((g) => g.models.map((m) => m.id)), [groups])
+  const compareIds = useMemo(() => pruneCompare(draft.compareModelIds ?? [], enabledModelIds), [draft.compareModelIds, enabledModelIds])
+  const fanOutMode = isFanOut(compareIds) && (draft.agentId ?? CARET_AGENT) === CARET_AGENT
 
   useEffect(() => { taRef.current?.focus() }, [autoFocusNonce, sessionId])
   // Materialise the draft so selectors return a stable object.
@@ -102,13 +114,26 @@ export function Composer({ sessionId, autoFocusNonce }: { sessionId: string; aut
     applyReplacement(`/${c.name} `)
   }
 
-  const doSend = async () => {
+  const composeContext = () => {
+    const ctx = [...draft.context]
+    if (draft.includeActiveFile && activeFile && !ctx.some((c) => c.path === activeFile.path && (c.kind === 'file' || c.kind === 'active-file'))) ctx.push({ id: uid('af'), kind: 'active-file', label: 'Current file', path: activeFile.path })
+    return ctx
+  }
+  /** `how` matters only while a turn runs: 'queue' waits for it, 'steer' injects into it (ACP agents fall back to send now). */
+  const doSend = async (how: SendMode = 'queue') => {
     const text = draft.text.trim()
     const sc = parseSlashCommand(text)
     if (sc && MODE_SLASH.has(sc.name)) { void setMode(sessionId, sc.name); update(sessionId, { text: sc.args }); if (!sc.args) return }
-    const ctx = [...draft.context]
-    if (draft.includeActiveFile && activeFile && !ctx.some((c) => c.path === activeFile.path && (c.kind === 'file' || c.kind === 'active-file'))) ctx.push({ id: uid('af'), kind: 'active-file', label: 'Current file', path: activeFile.path })
-    try { await send(sessionId, { context: ctx, activeFile: activeFile?.path }) } catch (e) { void runCommand('app.notify', { level: 'error', title: 'Send failed', message: e instanceof Error ? e.message : String(e) }) }
+    const ctx = composeContext()
+    try {
+      if (fanOutMode) { await fanOut(sessionId, compareIds, { context: ctx }); return }
+      if (how === 'steer' && busy) await steer(sessionId, { context: ctx, activeFile: activeFile?.path }); else await send(sessionId, { context: ctx, activeFile: activeFile?.path })
+    } catch (e) { void runCommand('app.notify', { level: 'error', title: fanOutMode ? 'Fan-out failed' : how === 'steer' ? 'Steer failed' : 'Send failed', message: e instanceof Error ? e.message : String(e) }) }
+  }
+  /** Cmd/Ctrl+Shift+Enter: start a background thread with this draft (same agent/model/mode) and stay here. */
+  const doSendInNewThread = async () => {
+    if (!draft.text.trim() && !draft.images.length) return
+    try { await startInNewThread(sessionId, { context: composeContext() }) } catch (e) { void runCommand('app.notify', { level: 'error', title: 'New thread failed', message: e instanceof Error ? e.message : String(e) }) }
   }
 
   const onKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
@@ -117,10 +142,12 @@ export function Composer({ sessionId, autoFocusNonce }: { sessionId: string; aut
       const list = document.querySelector('[cmdk-root] [cmdk-input]') as HTMLInputElement | null
       if (list) { list.dispatchEvent(new KeyboardEvent('keydown', { key: e.key, bubbles: true })); e.preventDefault(); return }
     }
+    if (e.key === 'Enter' && e.shiftKey && (e.metaKey || e.ctrlKey) && !e.nativeEvent.isComposing) { e.preventDefault(); void doSendInNewThread(); return }
     if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
       e.preventDefault()
       if (e.metaKey || e.ctrlKey) { const pending = session?.pendingChanges.some((c) => c.status === 'pending'); if (pending && !draft.text.trim()) { void runCommand('chat.acceptAll'); return } }
-      void doSend(); return
+      // While running: Enter does the default (Queue unless steerByDefault), Alt+Enter does the other one.
+      void doSend(busy && e.altKey !== steerByDefault ? 'steer' : 'queue'); return
     }
     if (e.key === 'Backspace' && (e.metaKey || e.ctrlKey) && !draft.text.trim() && session?.pendingChanges.some((c) => c.status === 'pending')) { e.preventDefault(); void runCommand('chat.rejectAll'); return }
     if (e.key === 'Escape') { if (trigger) { setTrigger(null); return } if (busy) void stop(sessionId) }
@@ -150,7 +177,6 @@ export function Composer({ sessionId, autoFocusNonce }: { sessionId: string; aut
   }
   const insertAt = () => { const ta = taRef.current; if (!ta) return; const pos = ta.selectionStart ?? draft.text.length; const before = draft.text.slice(0, pos); const needsSpace = before && !/\s$/.test(before); const text = `${before}${needsSpace ? ' ' : ''}@${draft.text.slice(pos)}`; update(sessionId, { text }); requestAnimationFrame(() => { ta.focus(); const c = pos + (needsSpace ? 2 : 1); ta.setSelectionRange(c, c); setTrigger(detectTrigger(text, c)) }) }
 
-  const autoRun = settings?.agent.autoRun ?? 'allowlist'
   const ctxWindow = model?.contextWindow ?? 128_000
   const used = session?.contextTokens ?? 0
   const placeholder = useMemo(() => (draft.mode === 'ask' ? 'Ask anything about your code…' : draft.mode === 'plan' ? 'Describe what to plan…' : 'Plan, search, build anything… (@ for context, / for commands)'), [draft.mode])
@@ -172,6 +198,7 @@ export function Composer({ sessionId, autoFocusNonce }: { sessionId: string; aut
         className="chat-composer-ta w-full resize-none bg-transparent px-2.5 py-2 outline-none text-[13px] leading-[1.5] placeholder:text-faint min-h-[40px]" />
       <div className="flex items-center gap-0.5 px-1.5 pb-1.5">
         <AgentPicker sessionId={sessionId} />
+        <PermissionPicker sessionId={sessionId} />
         {(draft.agentId ?? CARET_AGENT) === CARET_AGENT ? (
           <>
             <ModeSelector sessionId={sessionId} />
@@ -182,13 +209,17 @@ export function Composer({ sessionId, autoFocusNonce }: { sessionId: string; aut
           <AgentOptions sessionId={sessionId} />
         )}
         <span className="flex-1" />
-        <button type="button" onClick={() => void runCommand('settings.open', { page: 'agent' })} title={`Auto-run: ${autoRun}. Click to configure.`} className={`h-6 px-1.5 rounded hover:bg-hover text-[10.5px] ${autoRun === 'all' ? 'text-warning' : autoRun === 'off' ? 'text-faint' : 'text-muted'}`}>{autoRun === 'all' ? 'auto-run: all' : autoRun === 'off' ? 'auto-run: off' : 'auto-run'}</button>
         {tokens !== null && <span className="text-[10.5px] text-faint px-1" title="Estimated prompt tokens">~{fmtTokens(tokens)}</span>}
         <ContextRing used={used} total={ctxWindow} onClick={() => void api.chat.summarize(sessionId)} />
         <button type="button" onClick={() => void attachImage()} title="Attach image" className="flex items-center justify-center w-6 h-6 rounded hover:bg-hover text-muted press">{draft.images.length ? <ImageIcon size={13} /> : <Paperclip size={13} />}</button>
+        {busy && <SendModeControl disabled={!draft.text.trim() && !draft.images.length} onSend={(m) => void doSend(m)} onSendInNewThread={() => void doSendInNewThread()} />}
         <span className="chat-send-slot" data-busy={busy}>
           <button type="button" onClick={() => void stop(sessionId)} data-active={busy} tabIndex={busy ? 0 : -1} aria-hidden={!busy} title="Stop (Esc)" className="flex items-center justify-center w-6 h-6 rounded bg-danger/20 text-danger hover:bg-danger/30 press"><Square size={11} fill="currentColor" /></button>
-          <button type="button" onClick={() => void doSend()} data-active={!busy} tabIndex={busy ? -1 : 0} aria-hidden={busy} disabled={!busy && !draft.text.trim() && !draft.images.length} title={`Send (⏎)${draft.modelId === AUTO_MODEL ? ' · Auto model' : ''} · ${MOD}⏎ accepts changes`} className="flex items-center justify-center w-6 h-6 rounded bg-accent text-accent-fg hover:bg-accent-hover disabled:opacity-40 disabled:hover:bg-accent press"><ArrowUp size={14} /></button>
+          {fanOutMode ? (
+            <button type="button" onClick={() => void doSend()} data-active={!busy} tabIndex={busy ? -1 : 0} aria-hidden={busy} disabled={!busy && !draft.text.trim() && !draft.images.length} title={`Send to ${compareIds.length} models (⏎): one thread per model, side by side in the Agents layout`} className="flex items-center gap-1 h-6 px-2 rounded bg-accent text-accent-fg hover:bg-accent-hover disabled:opacity-40 disabled:hover:bg-accent press text-[11.5px] font-medium whitespace-nowrap" data-testid="send-fanout"><Columns3 size={12} /> {sendLabel(compareIds)}</button>
+          ) : (
+            <button type="button" onClick={() => void doSend()} data-active={!busy} tabIndex={busy ? -1 : 0} aria-hidden={busy} disabled={!busy && !draft.text.trim() && !draft.images.length} title={`Send (⏎)${draft.modelId === AUTO_MODEL ? ' · Auto model' : ''} · ${MOD}⏎ accepts changes`} className="flex items-center justify-center w-6 h-6 rounded bg-accent text-accent-fg hover:bg-accent-hover disabled:opacity-40 disabled:hover:bg-accent press"><ArrowUp size={14} /></button>
+          )}
         </span>
       </div>
     </div>

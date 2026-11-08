@@ -21,7 +21,10 @@ pub mod context;
 pub mod summarize;
 pub mod tools;
 pub mod chat_commands;
+pub mod handoff;
 pub mod review_commands;
+pub mod worktrees;
+pub mod scratch;
 #[cfg(test)] pub mod testutil;
 #[cfg(test)] mod tests;
 // REGISTER:agent-core-modules (done)

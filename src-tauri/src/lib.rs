@@ -17,6 +17,8 @@ pub mod index;
 pub mod mcp;
 pub mod browser;
 pub mod debug;
+pub mod orchestrator;
+pub mod remote;
 // REGISTER:modules (index, mcp, browser)
 
 #[global_allocator]
@@ -41,6 +43,8 @@ fn init_tracing() {
 pub fn run() {
     init_tracing();
     tracing::info!(version = env!("CARGO_PKG_VERSION"), "starting Caret");
+    // `caret serve [--host H] [--port N] [--no-window] [--print-url]`: remember the overrides for `remote::init`.
+    if let (Some(serve), _) = remote::strip_serve_args(&std::env::args().skip(1).collect::<Vec<_>>()) { tracing::info!(?serve, "cli: serve mode"); remote::set_serve_args(serve); }
 
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
@@ -50,6 +54,7 @@ pub fn run() {
         .plugin(tauri_plugin_process::init())
         .plugin(tauri_plugin_os::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
+        .plugin(tauri_plugin_notification::init())
         .manage(core::settings::SettingsState::load())
         .manage(core::workspace::WorkspaceState::default())
         .manage(commands::app::AppStats::default())
@@ -64,12 +69,14 @@ pub fn run() {
         .manage(core::watcher::WatcherState::default())
         .manage(std::sync::Arc::new(ai::agent::manager::AgentManager::new()))
         // REGISTER:state (each domain adds `.manage(...)` lines here)
+        .manage(remote::RemoteState::default())
         .manage(core::terminal_history::TerminalHistoryState::default())
         .manage(std::sync::Arc::new(debug::DebugState::default()))
         .manage(ai::router::RouterState::default())
         .manage(core::cli::OpenQueue::default())
         .manage(ai::tab::TabState::default())
         .manage(ai::review::ReviewState::default())
+        .manage(orchestrator::OrchestratorState::default())
         .menu(|app| menu::build(app))
         .on_menu_event(|app, ev| menu::on_menu_event(app, ev.id().0.as_str()))
         .setup(|app| {
@@ -82,10 +89,13 @@ pub fn run() {
             core::cli::init(&handle);
             app.state::<std::sync::Arc<ai::agent::manager::AgentManager>>().attach(handle.clone());
             // REGISTER:setup (domain initialisation, e.g. watchers, lsp manager, index manager)
+            ai::agent::worktrees::init(&handle);
             ai::router::init(&handle);
             { let idx = index::IndexManager::new(handle.clone()); idx.install(); app.manage(idx); app.manage(index::DocsManager::new(handle.clone())); }
             { let m = mcp::McpManager::new(handle.clone()); app.manage(m.clone()); m.install(); }
             { let b = browser::BrowserManager::new(handle.clone()); b.install(); app.manage(b); }
+            orchestrator::init(&handle);
+            remote::init(&handle);
             if let Some(w) = app.get_webview_window("main") {
                 #[cfg(debug_assertions)]
                 if std::env::var("CARET_DEVTOOLS").ok().as_deref() == Some("1") { w.open_devtools(); }
@@ -95,6 +105,7 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             commands::app::app_info, commands::app::app_process_stats, commands::app::app_open_external, commands::app::app_show_in_folder, commands::app::app_open_devtools, commands::app::app_log,
+            commands::app::app_notify_desktop,
             core::workspace::workspace_open, core::workspace::workspace_current, core::workspace::workspace_close, core::workspace::workspace_recent, core::workspace::workspace_remove_recent, core::workspace::workspace_ensure_project_dir,
             core::settings::settings_get, core::settings::settings_update, core::settings::settings_reset, core::settings::settings_set_secret, core::settings::settings_delete_secret, core::settings::settings_list_secrets, core::settings::settings_import_env_keys, core::settings::settings_path,
             dev::automation::automation_result,
@@ -129,6 +140,12 @@ pub fn run() {
             // REGISTER:commands:lsp
             ai::agent::chat_commands::chat_subscribe, ai::agent::chat_commands::chat_list_sessions, ai::agent::chat_commands::chat_create_session, ai::agent::chat_commands::chat_get_session, ai::agent::chat_commands::chat_delete_session, ai::agent::chat_commands::chat_rename_session, ai::agent::chat_commands::chat_duplicate_session, ai::agent::chat_commands::chat_pin_session, ai::agent::chat_commands::chat_archive_session, ai::agent::chat_commands::chat_export_session, ai::agent::chat_commands::chat_send, ai::agent::chat_commands::chat_stop, ai::agent::chat_commands::chat_approve, ai::agent::chat_commands::chat_answer_question, ai::agent::chat_commands::chat_queue_remove, ai::agent::chat_commands::chat_queue_send_now, ai::agent::chat_commands::chat_accept_changes, ai::agent::chat_commands::chat_reject_changes, ai::agent::chat_commands::chat_pending_changes, ai::agent::chat_commands::chat_change_diff, ai::agent::chat_commands::chat_checkpoints, ai::agent::chat_commands::chat_restore_checkpoint, ai::agent::chat_commands::chat_set_todos, ai::agent::chat_commands::chat_summarize, ai::agent::chat_commands::chat_set_mode, ai::agent::chat_commands::chat_set_model, ai::agent::chat_commands::chat_regenerate, ai::agent::chat_commands::chat_edit_message, ai::agent::chat_commands::chat_list_modes, ai::agent::chat_commands::chat_context_preview, ai::agent::chat_commands::chat_mention_candidates, ai::agent::chat_commands::chat_tool_catalog,
             // REGISTER:commands:chat
+            ai::agent::chat_commands::chat_steer, ai::agent::chat_commands::chat_queue_update, ai::agent::chat_commands::chat_queue_move,
+            ai::agent::chat_commands::chat_snooze_session, ai::agent::chat_commands::chat_settle_session, ai::agent::chat_commands::chat_list_sessions_all, ai::agent::chat_commands::chat_regenerate_title, ai::agent::chat_commands::chat_search_messages,
+            ai::agent::chat_commands::chat_fork_session, ai::agent::chat_commands::chat_handoff_session, ai::agent::chat_commands::chat_fan_out,
+            // REGISTER:commands:usage
+            ai::usage::usage_summary, ai::usage::usage_daily, ai::usage::usage_recent, ai::usage::usage_export_csv, ai::usage::usage_external, ai::usage::usage_dir,
+            ai::agent::chat_commands::chat_set_permission_mode, ai::agent::chat_commands::chat_worktree_status, ai::agent::chat_commands::chat_worktree_cleanup_preview, ai::agent::chat_commands::chat_worktree_cleanup, ai::agent::chat_commands::chat_create_scratch_session, ai::agent::chat_commands::chat_promote_scratch,
             // REGISTER:commands:ai
             ai::single_shot_commands::ai_complete, ai::single_shot_commands::ai_next_edit, ai::single_shot_commands::ai_inline_edit, ai::single_shot_commands::ai_cancel, ai::single_shot_commands::ai_terminal_command, ai::single_shot_commands::ai_terminal_fix, ai::single_shot_commands::ai_terminal_suggest, ai::single_shot_commands::ai_apply, ai::single_shot_commands::ai_commit_message, ai::single_shot_commands::ai_review, ai::single_shot_commands::ai_review_list, ai::single_shot_commands::ai_review_dismiss, ai::single_shot_commands::ai_review_dismiss_finding, ai::single_shot_commands::models_list_remote, ai::single_shot_commands::models_test,
             // REGISTER:commands:rules
@@ -143,11 +160,15 @@ pub fn run() {
             mcp::commands::mcp_list_servers, mcp::commands::mcp_list_configs, mcp::commands::mcp_add_server, mcp::commands::mcp_update_server, mcp::commands::mcp_remove_server, mcp::commands::mcp_toggle_server, mcp::commands::mcp_restart_server, mcp::commands::mcp_tools, mcp::commands::mcp_toggle_tool, mcp::commands::mcp_resources, mcp::commands::mcp_read_resource, mcp::commands::mcp_prompts, mcp::commands::mcp_get_prompt, mcp::commands::mcp_call_tool, mcp::commands::mcp_logs,
             // REGISTER:commands:browser
             browser::commands::browser_open, browser::commands::browser_list, browser::commands::browser_navigate, browser::commands::browser_snapshot, browser::commands::browser_click, browser::commands::browser_type, browser::commands::browser_eval, browser::commands::browser_back, browser::commands::browser_forward, browser::commands::browser_close,
+            // REGISTER:commands:orchestrator
+            orchestrator::orchestrator_status, orchestrator::orchestrator_rotate_token, orchestrator::orchestrator_snippets,
+            // REGISTER:commands:remote
+            remote::remote_status, remote::remote_pairing_code, remote::remote_revoke_device, remote::remote_executor_secret, remote::remote_is_serving, remote::remote_set_enabled, remote::remote_restart,
         ])
         .build(tauri::generate_context!())
         .expect("error while building Caret")
         .run(|app, event| {
-            if matches!(event, tauri::RunEvent::ExitRequested { .. } | tauri::RunEvent::Exit) { ai::router::shutdown(app); }
+            if matches!(event, tauri::RunEvent::ExitRequested { .. } | tauri::RunEvent::Exit) { ai::router::shutdown(app); orchestrator::shutdown(app); remote::shutdown(app); }
             // `caret <path>` / Finder "Open with" / `caret://open?…` arrive here on macOS (also on cold start).
             #[cfg(any(target_os = "macos", target_os = "ios"))]
             if let tauri::RunEvent::Opened { urls } = &event { core::cli::on_opened(app, urls); }

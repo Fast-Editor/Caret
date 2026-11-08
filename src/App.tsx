@@ -4,6 +4,7 @@ import { TooltipProvider, ErrorBoundary } from '@/components/common'
 import { DialogHost } from '@/components/dialogs'
 import { Toasts } from '@/components/notifications'
 import { PaletteHost } from '@/components/palette'
+import { RemoteGlue } from '@/components/remote'
 import * as editorModule from '@/components/editor'
 import * as chatModule from '@/components/chat'
 import { registerShellCommands, MENU_MAP } from '@/lib/shellCommands'
@@ -96,6 +97,7 @@ export default function App() {
       <PaletteHost />
       <DialogHost />
       <Toasts />
+      <RemoteGlue />
     </TooltipProvider>
   )
 }

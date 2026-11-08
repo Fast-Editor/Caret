@@ -38,7 +38,8 @@ export const useNotifications = create<NotificationStore>((set, get) => ({
     if (n.onAction) get().actionHandlers.set(id, n.onAction)
     set((s) => ({ toasts: [...s.toasts.filter((t) => t.id !== id), toast].slice(-6), history: [toast, ...s.history.filter((t) => t.id !== id)].slice(0, 200), unread: s.centerOpen ? s.unread : s.unread + 1 }))
     const timeout = n.timeoutMs ?? (n.level === 'error' ? 10000 : n.sticky ? 0 : 5000)
-    if (timeout > 0 && !n.sticky && !n.actions?.length) {
+    // Toasts with actions stay until dismissed unless the caller sets an explicit timeout (e.g. a 5 s Undo).
+    if (timeout > 0 && !n.sticky && (!n.actions?.length || n.timeoutMs !== undefined)) {
       const t = window.setTimeout(() => get().dismiss(id), timeout)
       timers.set(id, t)
     }
@@ -47,6 +48,7 @@ export const useNotifications = create<NotificationStore>((set, get) => ({
   update: (id, patch) => set((s) => ({ toasts: s.toasts.map((t) => (t.id === id ? { ...t, ...patch } : t)), history: s.history.map((t) => (t.id === id ? { ...t, ...patch } : t)) })),
   dismiss: (id) => {
     const t = timers.get(id); if (t) { clearTimeout(t); timers.delete(id) }
+    get().actionHandlers.delete(id)
     const drop = () => set((s) => ({ toasts: s.toasts.filter((x) => x.id !== id) }))
     const ms = leaveDelayMs()
     if (ms === 0 || get().toasts.find((x) => x.id === id)?.leaving) { drop(); return }

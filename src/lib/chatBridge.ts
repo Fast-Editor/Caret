@@ -2,7 +2,7 @@
  * Chat module bootstrap: subscribes to the agent event stream (batched per animation frame),
  * loads sessions, reacts to workspace changes, and registers the chat-domain UI commands.
  */
-import type { AgentEvent, ContextItem, ReviewRequest } from '@/types'
+import type { AgentEvent, ContextItem, ReviewRequest, SendMessageRequest } from '@/types'
 import { api } from '@/lib/api'
 import { Events, on } from '@/lib/tauri'
 import { registerCommands, runCommand, hasCommand } from '@/lib/commands'
@@ -10,7 +10,10 @@ import { useChat, AUTO_MODEL, isSessionBusy } from '@/store/chat'
 import { emit as busEmit } from '@/lib/bus'
 import { initReviewStore, useReview } from '@/store/review'
 import { useUi } from '@/store/ui'
-import { uid, baseName } from '@/components/chat/util'
+import { notify } from '@/store/notifications'
+import { observeAgentEvent } from '@/lib/desktopNotifications'
+import { useWorkspace } from '@/store/workspace'
+import { uid, baseName, flattenThreadOrder, groupSessions, groupSessionsByProject } from '@/components/chat/util'
 
 let initialized = false
 let pending: AgentEvent[] = []
@@ -23,6 +26,7 @@ function flush() {
   useChat.getState().ingest(batch)
 }
 function onAgentEvent(e: AgentEvent) {
+  observeAgentEvent(e) // desktop notifications watch every transition before batching
   if (e.type === 'session-reset') { void useChat.getState().loadSession(e.sessionId); return }
   if (e.type === 'verification' || e.type === 'review-comments') { useReview.getState().ingestAgentEvent(e); return }
   pending.push(e)
@@ -58,6 +62,35 @@ export function openPane(sessionId?: string) {
   useChat.getState().focusComposer()
 }
 
+/** Send the draft of `sessionId` (or `overrides`) in a new background thread and toast an Open action; the user stays put. */
+export async function startInNewThread(sessionId: string, overrides?: Partial<SendMessageRequest>): Promise<string | null> {
+  const id = await useChat.getState().sendInNewThread(sessionId, overrides)
+  if (!id) return null
+  const title = useChat.getState().sessions.find((s) => s.id === id)?.title
+  notify('info', 'Started in a new thread', title && title !== 'New chat' ? title : undefined, { actions: [{ id: 'open', label: 'Open' }], onAction: (a) => { if (a === 'open') openPane(id) } })
+  return id
+}
+
+/** Thread ids in the order the history list shows them (grouped, collapsed sections skipped, current workspace only). */
+export function visibleThreadOrder(): string[] {
+  const chat = useChat.getState()
+  const ui = useUi.getState()
+  const opts = { showArchived: ui.threadShowArchived, folds: ui.threadFolds, isBusy: isSessionBusy }
+  const local = new Set(chat.sessions.map((s) => s.id))
+  const order = ui.threadGroupByProject && chat.allSessions.length
+    ? flattenThreadOrder(groupSessionsByProject(chat.allSessions, useWorkspace.getState().workspace?.root ?? null, opts))
+    : flattenThreadOrder(groupSessions(chat.sessions, opts))
+  return order.filter((id) => local.has(id))
+}
+function cycleThread(dir: 1 | -1): void {
+  const order = visibleThreadOrder()
+  if (!order.length) return
+  const chat = useChat.getState()
+  const i = order.indexOf(chat.activeSessionId ?? '')
+  const next = order[i === -1 ? (dir === 1 ? 0 : order.length - 1) : (i + dir + order.length) % order.length]
+  openPane(next)
+}
+
 function selectionItem(sel: SelectionInfo): ContextItem {
   return { id: uid('sel'), kind: 'selection', label: `${baseName(sel.path)}:${sel.startLine}-${sel.endLine}`, path: sel.path, range: { startLine: sel.startLine, endLine: sel.endLine }, data: sel.text }
 }
@@ -85,7 +118,11 @@ export function initChatModule(): void {
   const chat = useChat.getState()
   void chat.loadSessions()
   void chat.loadMeta()
-  on(Events.workspaceChanged, () => { useChat.getState().reset(); void useChat.getState().loadSessions(); void useChat.getState().loadMeta(); void useReview.getState().load() })
+  on(Events.workspaceChanged, () => {
+    const c = useChat.getState(); const pending = c.pendingSelect
+    c.reset(); useChat.setState({ pendingSelect: null })
+    void c.loadSessions().then(() => { if (pending) void useChat.getState().selectSession(pending) }); void c.loadMeta(); void useReview.getState().load()
+  })
   on(Events.rulesChanged, () => { void useChat.getState().loadMeta() })
 
   registerCommands([
@@ -113,6 +150,7 @@ export function initChatModule(): void {
     { id: 'chat.stop', title: 'Chat: Stop Generation', category: 'Chat', run: () => { const id = useChat.getState().activeSessionId; if (id) void useChat.getState().stop(id) } },
     { id: 'chat.acceptAll', title: 'Chat: Accept All Changes', category: 'Chat', run: () => { const id = useChat.getState().activeSessionId; if (id) void useChat.getState().acceptChanges(id, 'all') } },
     { id: 'chat.rejectAll', title: 'Chat: Reject All Changes', category: 'Chat', run: () => { const id = useChat.getState().activeSessionId; if (id) void useChat.getState().rejectChanges(id, 'all') } },
+    { id: 'chat.newScratch', title: 'Chat: New Scratch Thread', category: 'Chat', run: async (a) => { const o = a as { mode?: string; agentId?: string; title?: string } | undefined; const s = await useChat.getState().createScratchSession({ mode: o?.mode, agentId: o?.agentId, title: o?.title }); openPane(s.id); void runCommand('app.notify', { level: 'info', title: 'Scratch thread', message: 'A throwaway repository was created for this thread. Use the banner to turn it into a project later.' }); return s.id } },
     { id: 'chat.newBackground', title: 'Chat: New Background Agent (worktree)', category: 'Chat', keybinding: 'mod+e', run: async () => { const s = await useChat.getState().createSession({ useWorktree: true }); openPane(s.id); void runCommand('app.notify', { level: 'info', title: 'Background agent', message: 'This agent runs in an isolated git worktree. Send a task to start.' }) } },
     { id: 'chat.addTerminalOutput', title: 'Chat: Add Terminal Output to Chat', category: 'Chat', run: async (a) => { const { terminalId, title } = (a ?? {}) as { terminalId?: string; title?: string }; const c = useChat.getState(); const id = await c.ensureActiveSession(); let tid = terminalId; let label = title; if (!tid) { const list = await api.pty.list().catch(() => []); tid = list[0]?.id; label = list[0]?.title } if (!tid) { void runCommand('app.notify', { level: 'warn', title: 'No terminal open' }); return } c.addContext(id, { id: uid('term'), kind: 'terminal', label: label ?? 'Terminal', terminalId: tid }); openPane(id) } },
     { id: 'chat.addLints', title: 'Chat: Add Lint Errors to Chat', category: 'Chat', run: async () => { const c = useChat.getState(); const id = await c.ensureActiveSession(); const f = await getActiveFile(); c.addContext(id, { id: uid('lint'), kind: 'lint', label: 'Lint errors', path: f?.path }); openPane(id) } },
@@ -134,5 +172,13 @@ export function initChatModule(): void {
     } },
     { id: 'chat.toggleAgentsLayout', title: 'View: Toggle Agents Layout', category: 'View', hidden: true, run: () => { if (hasCommand('view.toggleAgentsLayout')) return runCommand('view.toggleAgentsLayout'); const ui = useUi.getState(); ui.set({ layout: ui.layout === 'agents' ? 'editor' : 'agents' }) } },
     { id: 'chat.selectModel', title: 'Chat: Select Model', category: 'Chat', hidden: true, run: (a) => useChat.getState().setModel(null, (a as { modelId?: string } | undefined)?.modelId ?? AUTO_MODEL) },
+    { id: 'chat.steer', title: 'Chat: Steer Running Agent', category: 'Chat', run: async (a) => { const o = (a ?? {}) as { text?: string; sessionId?: string }; const c = useChat.getState(); const id = o.sessionId ?? c.activeSessionId; if (!id) return; await c.steer(id, o.text ? { text: o.text } : undefined) } },
+    { id: 'chat.sendInNewThread', title: 'Chat: Send Draft in New Thread', category: 'Chat', run: async (a) => { const o = (a ?? {}) as { text?: string; sessionId?: string }; const id = o.sessionId ?? useChat.getState().activeSessionId; if (!id) return null; return startInNewThread(id, o.text ? { text: o.text } : undefined) } },
+    // thread lifecycle (docs/THREADS.md)
+    { id: 'chat.regenerateTitle', title: 'Chat: Regenerate Thread Title', category: 'Chat', run: (a) => { const id = (a as { sessionId?: string } | undefined)?.sessionId ?? useChat.getState().activeSessionId; if (id) return useChat.getState().regenerateTitle(id) } },
+    { id: 'chat.searchMessages', title: 'Chat: Search Messages in All Threads', category: 'Chat', run: (a) => { openPane(); useChat.getState().openHistorySearch((a as { query?: string } | undefined)?.query ?? '') } },
+    { id: 'chat.nextThread', title: 'Chat: Next Thread', category: 'Chat', keybinding: 'ctrl+alt+]', run: () => cycleThread(1) },
+    { id: 'chat.prevThread', title: 'Chat: Previous Thread', category: 'Chat', keybinding: 'ctrl+alt+[', run: () => cycleThread(-1) },
+    { id: 'chat.fork', title: 'Chat: Fork Thread', category: 'Chat', run: async (a) => { const o = a as { sessionId?: string; messageId?: string } | undefined; const c = useChat.getState(); const id = o?.sessionId ?? c.activeSessionId; if (!id) return; const s = await c.forkSession(id, o?.messageId); openPane(s.id); return s.id } },
   ])
 }

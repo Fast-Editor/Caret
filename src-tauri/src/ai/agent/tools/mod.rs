@@ -5,6 +5,7 @@ pub mod search_tools;
 pub mod shell_tools;
 pub mod web_tools;
 pub mod meta_tools;
+pub mod thread_tools;
 pub mod dynamic;
 
 use crate::ai::agent::manager::AgentManager;
@@ -112,6 +113,7 @@ impl ToolRegistry {
         tools.extend(shell_tools::tools());
         tools.extend(web_tools::tools());
         tools.extend(meta_tools::tools());
+        tools.extend(thread_tools::tools());
         Self { tools }
     }
     pub fn all(&self) -> &[Arc<dyn Tool>] { &self.tools }
@@ -157,7 +159,7 @@ mod tests {
             assert!(s.get("properties").is_some());
             assert!(!t.description().is_empty());
         }
-        for ro in ["read_file", "list_dir", "grep_search", "file_search", "codebase_search", "read_lints", "fetch_rules", "skill", "search_docs"] { assert!(reg.get(ro).unwrap().readonly(), "{ro} should be readonly"); }
+        for ro in ["read_file", "list_dir", "grep_search", "file_search", "codebase_search", "read_lints", "fetch_rules", "skill", "search_docs", "read_thread"] { assert!(reg.get(ro).unwrap().readonly(), "{ro} should be readonly"); }
         for rw in ["edit_file", "write_file", "delete_file", "run_terminal_cmd"] { assert!(!reg.get(rw).unwrap().readonly(), "{rw} should not be readonly"); }
     }
     #[test]

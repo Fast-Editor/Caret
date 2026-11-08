@@ -1,12 +1,13 @@
 import { memo, useState } from 'react'
-import { Check, Copy, Pencil } from 'lucide-react'
+import { Check, Copy, GitFork, Pencil } from 'lucide-react'
 import type { ChatMessage } from '@/types'
 import { ContextPill } from '../composer/ContextPills'
 import { CheckpointLink, ImageThumb } from './Parts'
 import { useChat } from '@/store/chat'
 
-export const UserMessage = memo(function UserMessage({ message, sessionId, isLast }: { message: ChatMessage; sessionId: string; isLast: boolean }) {
+export const UserMessage = memo(function UserMessage({ message, sessionId, isLast, readOnly }: { message: ChatMessage; sessionId: string; isLast: boolean; readOnly?: boolean }) {
   const editing = useChat((s) => s.editingMessageId === message.id)
+  const forkSession = useChat((s) => s.forkSession)
   const setEditing = useChat((s) => s.setEditing)
   const editMessage = useChat((s) => s.editMessage)
   const text = message.parts.filter((p) => p.type === 'text').map((p) => (p.type === 'text' ? p.text : '')).join('\n')
@@ -34,7 +35,8 @@ export const UserMessage = memo(function UserMessage({ message, sessionId, isLas
       <div className="flex items-center gap-2 mt-0.5 h-4 opacity-0 group-hover/msg:opacity-100 transition-opacity">
         {message.checkpointId && <CheckpointLink sessionId={sessionId} checkpointId={message.checkpointId} />}
         <span className="flex-1" />
-        <button type="button" onClick={() => { setDraft(text); setEditing(message.id) }} title="Edit and resend" className="text-faint hover:text-fg press"><Pencil size={11} /></button>
+        {!readOnly && <button type="button" onClick={() => void forkSession(sessionId, message.id)} title="Fork from here (new thread with the history up to this message)" className="text-faint hover:text-fg press"><GitFork size={11} /></button>}
+        {!readOnly && <button type="button" onClick={() => { setDraft(text); setEditing(message.id) }} title="Edit and resend" className="text-faint hover:text-fg press"><Pencil size={11} /></button>}
         <button type="button" onClick={() => void copy()} title="Copy" className="text-faint hover:text-fg press">{copied ? <Check size={11} className="text-success animate-pop" /> : <Copy size={11} />}</button>
       </div>
     </div>

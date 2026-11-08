@@ -204,8 +204,16 @@ pub fn resolve_model(settings: &Settings, secrets: &SettingsState, model_id: Opt
     Ok(ResolvedModel { model, provider, api_key })
 }
 
+/// Test-only provider overrides keyed by model id, so headless agent tests can drive a real turn through a scripted
+/// provider without touching other tests (which keep hitting the unconfigured real providers).
+#[cfg(test)]
+pub static TEST_PROVIDERS: parking_lot::Mutex<Option<std::collections::HashMap<String, Arc<dyn LlmProvider>>>> = parking_lot::Mutex::new(None);
+
 /// Build a provider client for a resolved model.
-pub fn provider_for(resolved: &ResolvedModel) -> Result<Arc<dyn LlmProvider>> { crate::ai::providers::build(resolved) }
+pub fn provider_for(resolved: &ResolvedModel) -> Result<Arc<dyn LlmProvider>> {
+    #[cfg(test)] { if let Some(p) = TEST_PROVIDERS.lock().as_ref().and_then(|m| m.get(&resolved.model.id).cloned()) { return Ok(p); } }
+    crate::ai::providers::build(resolved)
+}
 
 /// Convenience: run a streaming request and assemble the full turn, forwarding events to `on_event`.
 pub async fn run_stream(

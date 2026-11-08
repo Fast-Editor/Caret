@@ -43,6 +43,9 @@ pub struct SessionLink {
     pub pending_diffs: DashMap<String, Vec<(String, Option<String>, String)>>,
     pub cancel: Mutex<CancellationToken>,
     pub turn_started: Mutex<Option<Instant>>,
+    /// The Caret session already had messages when this link was created: send them (within the handoff budget)
+    /// with the first prompt. Set at creation so eager `acp_prepare_session` links transfer history too.
+    pub history_pending: AtomicBool,
 }
 
 pub struct TermProc {
@@ -117,6 +120,38 @@ pub fn terminal_gate(class: &crate::sandbox::CommandClassification) -> TerminalG
     if class.blocked || class.denylisted { TerminalGate::Block } else if class.is_destructive() { TerminalGate::Ask } else { TerminalGate::Allow }
 }
 
+/// Mode-aware gate: full access skips the destructive-command prompt; Block always holds.
+pub fn terminal_gate_for(class: &crate::sandbox::CommandClassification, mode: crate::ai::agent::policy::PermissionMode) -> TerminalGate {
+    match terminal_gate(class) { TerminalGate::Ask if mode == crate::ai::agent::policy::PermissionMode::FullAccess => TerminalGate::Allow, g => g }
+}
+
+/// Push a Caret permission mode onto the external agent: a matching session mode (`session/set_mode`) or, failing
+/// that, its approval/permission config option. Returns true when the agent state changed (callers emit status).
+pub async fn apply_permission_mode(inner: &AcpInner, link: &SessionLink, conn: &AgentConn, mode: crate::ai::agent::policy::PermissionMode) -> bool {
+    use crate::acp::permission_map::{plan, AcpPermissionAction};
+    let action = { let modes = link.modes.lock().clone(); let opts = link.config_options.lock().clone(); plan(mode, modes.as_ref(), opts.as_deref()) };
+    match action {
+        AcpPermissionAction::SetMode(id) => {
+            if link.modes.lock().as_ref().map(|m| m.current_mode_id == id).unwrap_or(false) { return false; }
+            match conn.set_mode(&link.acp_id, &id).await {
+                Ok(()) => { if let Some(ms) = link.modes.lock().as_mut() { ms.current_mode_id = id.clone(); } inner.log(&link.agent_id, format!("[acp] permission mode {} -> session mode {id}", mode.id())); true }
+                Err(e) => { inner.log(&link.agent_id, format!("[acp] could not set session mode {id} for permission mode {}: {}", mode.id(), e.message)); false }
+            }
+        }
+        AcpPermissionAction::SetConfigOption { config_id, value } => {
+            if link.config_options.lock().as_ref().map(|o| o.iter().any(|x| x.id == config_id && x.current_value == value)).unwrap_or(false) { return false; }
+            match conn.set_config_option(&link.acp_id, &config_id, &value).await {
+                Ok(Some(opts)) => { *link.config_options.lock() = Some(opts); }
+                Ok(None) => { if let Some(opts) = link.config_options.lock().as_mut() { if let Some(o) = opts.iter_mut().find(|o| o.id == config_id) { o.current_value = value.clone(); } } }
+                Err(e) => { inner.log(&link.agent_id, format!("[acp] could not set {config_id}={value} for permission mode {}: {}", mode.id(), e.message)); return false; }
+            }
+            inner.log(&link.agent_id, format!("[acp] permission mode {} -> {config_id}={value}", mode.id()));
+            true
+        }
+        AcpPermissionAction::None => { inner.log(&link.agent_id, format!("[acp] agent exposes no mode or option for permission mode {}; Caret's own gates still apply", mode.id())); false }
+    }
+}
+
 fn make_log(inner: Arc<AcpInner>, agent_id: String) -> Arc<dyn Fn(String) + Send + Sync> {
     Arc::new(move |line: String| { tracing::debug!(agent=%agent_id, "{line}"); inner.log(&agent_id, line); })
 }
@@ -188,7 +223,7 @@ pub async fn ensure_session(inner: &Arc<AcpInner>, mgr: &Arc<AgentManager>, app:
         }
         Err(e) => return Err(CaretError::provider(format!("{}: session/new failed: {}", conn.config.name, e.message))),
     };
-    let link = Arc::new(SessionLink { caret_id: caret_id.clone(), acp_id: res.session_id.clone(), agent_id: conn.agent_id.clone(), conn_key: conn.key.clone(), message_id: Mutex::new(None), turn_id: Mutex::new(None), modes: Mutex::new(res.modes.clone()), config_options: Mutex::new(res.config_options.clone()), commands: Mutex::new(vec![]), tool_msg: DashMap::new(), registered: DashMap::new(), allow_memory: DashMap::new(), pending_diffs: DashMap::new(), cancel: Mutex::new(CancellationToken::new()), turn_started: Mutex::new(None) });
+    let link = Arc::new(SessionLink { caret_id: caret_id.clone(), acp_id: res.session_id.clone(), agent_id: conn.agent_id.clone(), conn_key: conn.key.clone(), message_id: Mutex::new(None), turn_id: Mutex::new(None), modes: Mutex::new(res.modes.clone()), config_options: Mutex::new(res.config_options.clone()), commands: Mutex::new(vec![]), tool_msg: DashMap::new(), registered: DashMap::new(), allow_memory: DashMap::new(), pending_diffs: DashMap::new(), cancel: Mutex::new(CancellationToken::new()), turn_started: Mutex::new(None), history_pending: AtomicBool::new(h.session.lock().messages.iter().any(|m| m.role != MessageRole::System)) });
     inner.links.insert(caret_id.clone(), link.clone());
     inner.by_acp.insert(res.session_id.clone(), caret_id);
     // Apply the options the user last picked for this agent (model, effort, …) to the fresh session.
@@ -203,6 +238,9 @@ pub async fn ensure_session(inner: &Arc<AcpInner>, mgr: &Arc<AgentManager>, app:
             }
         }
     }
+    // Mirror the thread's effective permission mode onto the agent (Claude Code / Gemini modes, Codex approval policy).
+    let pmode = { let s = h.session.lock(); crate::ai::agent::policy::effective_permission_mode(&settings, &s) };
+    apply_permission_mode(inner, &link, conn, pmode).await;
     emit_agent_status(inner, mgr, &link, conn);
     // Replay updates (available commands, mode) the agent sent before the link existed.
     if let Some((_, early)) = inner.pending_updates.remove(&res.session_id) {
@@ -212,18 +250,12 @@ pub async fn ensure_session(inner: &Arc<AcpInner>, mgr: &Arc<AgentManager>, app:
     Ok((link, true))
 }
 
-/// Summarised prior transcript for a fresh ACP session bound to a Caret session that already has history.
-fn history_block(s: &Session) -> Option<String> {
-    let mut out = String::new();
-    for m in s.messages.iter().rev().take(12).collect::<Vec<_>>().into_iter().rev() {
-        let role = match m.role { MessageRole::User => "User", MessageRole::Assistant => "Assistant", MessageRole::System => continue };
-        let text: String = m.parts.iter().filter_map(|p| match p { MessagePart::Text { text } => Some(text.as_str()), MessagePart::Tool { call } => Some(call.display_name.as_str()), _ => None }).collect::<Vec<_>>().join("\n");
-        if text.trim().is_empty() { continue; }
-        let t: String = text.chars().take(1200).collect();
-        out.push_str(&format!("{role}: {t}\n\n"));
-        if out.len() > 7000 { break; }
-    }
-    if out.trim().is_empty() { None } else { Some(format!("<previous_conversation note=\"earlier turns of this chat, for continuity; the editor restarted\">\n{out}</previous_conversation>")) }
+/// Prior conversation for a fresh ACP session bound to a Caret session that already has history: the most recent
+/// messages verbatim within `budget_tokens` (chars/4), older ones as a `<conversation_summary>` (the session's last
+/// compaction or handoff summary, else a one-line-per-message digest).
+fn history_block(s: &Session, budget_tokens: usize) -> Option<String> {
+    let plan = crate::ai::agent::handoff::plan_handoff(&s.messages, budget_tokens.max(500));
+    crate::ai::agent::handoff::history_block(&plan, s.summary.as_deref())
 }
 
 /// Queue-aware entry point used by `chat_send` for sessions driven by an ACP agent.
@@ -245,7 +277,7 @@ pub async fn submit(inner: Arc<AcpInner>, mgr: Arc<AgentManager>, app: Option<Ap
             let q = { let mut s = h.session.lock(); if s.queued.is_empty() { None } else { Some(s.queued.remove(0)) } };
             if let Some(q) = q {
                 mgr.emit(AgentEvent::Queue { session_id: h.id(), queued: h.session.lock().queued.clone() });
-                next = Some(q.request.unwrap_or(SendMessageRequest { session_id: h.id(), text: q.text, context: q.context, images: q.images, mode: q.mode.unwrap_or_else(|| h.session.lock().mode.clone()), ..Default::default() }));
+                next = Some({ let s = h.session.lock(); q.into_request(&s) });
             }
         }
         h.running.store(false, Ordering::SeqCst);
@@ -277,7 +309,7 @@ pub async fn run_turn(inner: &Arc<AcpInner>, mgr: &Arc<AgentManager>, app: Optio
 
     // 1. connection + session (may spawn the agent)
     let conn = match ensure_conn(inner, mgr, &agent_id).await { Ok(c) => c, Err(e) => { mgr.emit(AgentEvent::Error { session_id: session_id.clone(), message: e.message.clone() }); mgr.set_status(h, SessionStatus::Error); return Err(e); } };
-    let (link, fresh) = match ensure_session(inner, mgr, app, h, &conn).await { Ok(x) => x, Err(e) => { mgr.emit(AgentEvent::Error { session_id: session_id.clone(), message: e.message.clone() }); mgr.set_status(h, SessionStatus::Error); return Err(e); } };
+    let (link, _fresh) = match ensure_session(inner, mgr, app, h, &conn).await { Ok(x) => x, Err(e) => { mgr.emit(AgentEvent::Error { session_id: session_id.clone(), message: e.message.clone() }); mgr.set_status(h, SessionStatus::Error); return Err(e); } };
     *link.cancel.lock() = cancel.clone();
 
     // 2. user message + checkpoint (mirrors the built-in runner so restore/edit/regenerate behave the same)
@@ -297,7 +329,7 @@ pub async fn run_turn(inner: &Arc<AcpInner>, mgr: &Arc<AgentManager>, app: Optio
     user_msg.parts.push(MessagePart::Text { text: req.text.clone() });
     let user_msg_id = user_msg.id.clone();
     let checkpoint = Checkpoint { id: turn_id.clone(), session_id: session_id.clone(), message_id: user_msg_id.clone(), created_at: now_ms(), files: vec![], label: req.text.chars().take(60).collect() };
-    let history = { let mut s = h.session.lock(); let hist = if fresh { history_block(&s) } else { None }; s.checkpoints.push(checkpoint); s.messages.push(user_msg.clone()); s.current_turn = Some(turn_id.clone()); s.touch(); hist };
+    let history = { let mut s = h.session.lock(); let hist = if link.history_pending.swap(false, Ordering::SeqCst) { history_block(&s, settings.chat.handoff_budget_tokens as usize) } else { None }; s.checkpoints.push(checkpoint); s.messages.push(user_msg.clone()); s.current_turn = Some(turn_id.clone()); s.touch(); hist };
     mgr.emit(AgentEvent::MessageStart { session_id: session_id.clone(), message: user_msg });
     mgr.emit(AgentEvent::Checkpoint { session_id: session_id.clone(), checkpoint_id: turn_id.clone(), message_id: user_msg_id.clone() });
     mgr.persist(h);
@@ -562,7 +594,8 @@ impl Bridge {
             if d.is_empty() { d = format!("{} wants to run: {}", link.agent_id, title); }
             d
         };
-        let req = ApprovalRequest { approval_id: new_id(), session_id: link.caret_id.clone(), tool_call_id: tc.tool_call_id.clone(), kind: akind, title: title.clone(), detail, command: command.clone(), cwd: Some(h.session.lock().cwd_path().to_string_lossy().to_string()), options, allow_always_pattern: None, classification: None, risk_tier: None, sandboxed: Some(false), agent_id: Some(link.agent_id.clone()) };
+        let pmode = { let s = h.session.lock(); crate::ai::agent::policy::effective_permission_mode(&self.mgr.settings(), &s) };
+        let req = ApprovalRequest { approval_id: new_id(), session_id: link.caret_id.clone(), tool_call_id: tc.tool_call_id.clone(), kind: akind, title: title.clone(), detail, command: command.clone(), cwd: Some(h.session.lock().cwd_path().to_string_lossy().to_string()), options, allow_always_pattern: None, classification: None, risk_tier: None, sandboxed: Some(false), agent_id: Some(link.agent_id.clone()), permission_mode: Some(pmode) };
         let cancel = link.cancel.lock().clone();
         let res = self.mgr.request_approval(&h, &mid, req, &cancel).await;
         let outcome = match res {
@@ -621,7 +654,8 @@ impl Bridge {
         if settings.acp.terminal_safety {
             let class = crate::sandbox::classify_with(&command_line, Some(&cwd), root.as_deref(), &settings.agent.command_allowlist, &settings.agent.command_denylist);
             risk = class.overall_risk.clone();
-            match terminal_gate(&class) {
+            let pmode = { let s = h.session.lock(); crate::ai::agent::policy::effective_permission_mode(&settings, &s) };
+            match terminal_gate_for(&class, pmode) {
                 TerminalGate::Block => {
                     let why = if class.reasons.is_empty() { class.labels.join(", ") } else { class.reasons.join("; ") };
                     self.inner.log(&link.agent_id, format!("[terminal] blocked by safety policy: {command_line} [{why}]"));
@@ -636,7 +670,7 @@ impl Bridge {
                             approval_id: new_id(), session_id: link.caret_id.clone(), tool_call_id: format!("acp-terminal-{}", new_id()), kind: ApprovalKind::Command,
                             title: "Run destructive command".into(), detail: format!("{} wants to run: {command_line}", link.agent_id), command: Some(command_line.clone()),
                             cwd: Some(cwd.to_string_lossy().to_string()), options: vec![ApprovalOption::Allow, ApprovalOption::AllowSession, ApprovalOption::Deny],
-                            allow_always_pattern: Some(command_line.trim().to_string()), classification: Some(class.clone()), risk_tier: Some(class.risk_tier()), sandboxed: Some(will_sandbox), agent_id: Some(link.agent_id.clone()),
+                            allow_always_pattern: Some(command_line.trim().to_string()), classification: Some(class.clone()), risk_tier: Some(class.risk_tier()), sandboxed: Some(will_sandbox), agent_id: Some(link.agent_id.clone()), permission_mode: Some(pmode),
                         };
                         let cancel = link.cancel.lock().clone();
                         match self.mgr.request_approval(&h, &mid, req, &cancel).await {
@@ -732,6 +766,7 @@ impl IncomingHandler for Bridge {
             }
             "session_info_update" => { if let Some(t) = update.get("title").and_then(|t| t.as_str()) { let changed = { let mut s = h.session.lock(); if !s.title_generated || s.title != t { s.title = t.to_string(); s.title_generated = true; true } else { false } }; if changed { self.mgr.emit(AgentEvent::Title { session_id: link.caret_id.clone(), title: t.to_string() }); } } }
             "usage_update" => {
+                crate::ai::usage::record_acp(&self.mgr.settings(), &h, &link.agent_id, update);
                 let used = update.get("used").and_then(|u| u.as_u64()).or_else(|| update.get("inputTokens").and_then(|u| u.as_u64()));
                 let cost = update.pointer("/cost/amount").and_then(|c| c.as_f64());
                 let (usage, ctx, session_usage) = { let mut s = h.session.lock(); if let Some(u) = used { s.context_tokens = u; } if let Some(c) = cost { s.usage.cost_usd = Some(c); } let mut u = Usage::default(); u.cost_usd = cost; (u, s.context_tokens, s.usage.clone()) };

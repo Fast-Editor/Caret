@@ -20,8 +20,10 @@ The workflow builds four targets in parallel and attaches them to a **draft** re
 | Linux x64 | ubuntu-22.04 | `Caret_X.Y.Z_amd64.deb`, `Caret-X.Y.Z-1.x86_64.rpm`, `Caret_X.Y.Z_amd64.AppImage` + `.sig` | builds green since v0.1.0; runtime untested (`continue-on-error`) |
 | Windows x64 | windows-latest | `Caret_X.Y.Z_x64_en-US.msi`, `Caret_X.Y.Z_x64-setup.exe` + `.sig` | builds green since v0.1.0; runtime untested (`continue-on-error`) |
 
-Then `tauri-action` writes `latest.json` (the updater manifest) and a final job attaches `SHA256SUMS.txt`. Review the
-draft, edit notes if needed, and **publish** it — the in-app updater only sees published releases.
+Then `tauri-action` writes `latest.json` (the updater manifest), the `checksums` job attaches `SHA256SUMS.txt`, and the
+`packaging` job rewrites the package manager manifests from it and commits them to `main` (see
+[Package managers](#package-managers)). Review the draft, edit notes if needed, and **publish** it; the in-app updater
+only sees published releases.
 
 CI (`ci.yml`) runs typecheck, vitest and `cargo test --lib` on every push and pull request.
 
@@ -54,10 +56,55 @@ the workflow to Developer ID signing + notarization automatically; remove the `s
 builds. Updates are downloaded by the app itself (no quarantine), verified against the public key and installed in place,
 then the app relaunches. Dev builds report "updates unavailable".
 
-## Homebrew cask
+## Package managers
+
+User-facing commands and the publication status of each channel are in [INSTALL.md](INSTALL.md). This section is the
+maintainer side.
+
+### Homebrew cask
 
 `Casks/caret.rb` in the `Fast-Editor/homebrew-lynkr` tap points at the latest DMG; bump `version` and `sha256` (from
-`SHA256SUMS.txt`) after each release, or let `bump.sh` there do it.
+`SHA256SUMS.txt`) after each release, or let `bump.sh` there do it. This is the one manifest that lives outside this
+repository.
+
+### Manifests in this repository
+
+| File | Channel | Asset |
+| --- | --- | --- |
+| `packaging/winget/FastEditor.Caret.yaml`, `.installer.yaml`, `.locale.en-US.yaml` | winget (schema 1.6, id `FastEditor.Caret`) | `Caret_X.Y.Z_x64-setup.exe`, silent `/S` |
+| `packaging/scoop/caret.json` | scoop, with `checkver` and `autoupdate` | `Caret_X.Y.Z_x64-setup.exe` |
+| `packaging/aur/PKGBUILD`, `.SRCINFO` | AUR `caret-bin`, `provides=('caret')` | `Caret_X.Y.Z_amd64.deb` plus `LICENSE` at the tag |
+| `flake.nix` | Nix, `packages.aarch64-darwin.default` and `packages.x86_64-linux.default` | `Caret_X.Y.Z_aarch64.dmg`, `Caret_X.Y.Z_amd64.AppImage` |
+
+`scripts/update-packaging.mjs` rewrites the version and sha256 fields of all of them from a `SHA256SUMS.txt`:
+
+```bash
+gh release download v0.2.0 -p SHA256SUMS.txt --repo Fast-Editor/Caret -O /tmp/SHA256SUMS.txt
+npm run release:packaging -- 0.2.0 /tmp/SHA256SUMS.txt     # regex based and idempotent; missing assets become REPLACE_WITH_SHA256
+```
+
+The release workflow's `packaging` job (`needs: checksums`, `continue-on-error: true`) does exactly that after the
+checksums are attached and commits the result to `main` as `github-actions[bot]` with the message
+`release: packaging manifests for vX.Y.Z`. It is best effort: if `main` is protected or an asset is missing it fails
+without affecting the release, and you run the two commands above locally and commit. A tag pushed from a commit that is
+not on `main` still gets the manifests, because the job checks out `main` explicitly.
+
+### Manual steps per channel
+
+- **winget:** the first version needs a pull request to [microsoft/winget-pkgs](https://github.com/microsoft/winget-pkgs):
+  copy the three files to `manifests/f/FastEditor/Caret/X.Y.Z/`, run `winget validate manifests/f/FastEditor/Caret/X.Y.Z`
+  and open the PR. Later versions can use `wingetcreate update FastEditor.Caret --version X.Y.Z --urls <setup.exe url> --submit`.
+  The `ProductCode` in the installer manifest is the bundle identifier (`dev.caret.editor`), which is the uninstall
+  registry key Tauri's NSIS template writes; confirm it on a Windows machine the first time.
+- **scoop:** `scoop install <raw URL>` works from this repository without a bucket. To get a plain `scoop install caret`,
+  either submit `caret.json` to [ScoopInstaller/Extras](https://github.com/ScoopInstaller/Extras) or create a
+  `Fast-Editor/scoop-bucket` repository; `checkver` and `autoupdate` let the bucket's excavator bump it on its own.
+- **AUR:** create an AUR account with an SSH key, then `git clone ssh://aur@aur.archlinux.org/caret-bin.git`, copy in
+  `PKGBUILD` and `.SRCINFO`, regenerate `.SRCINFO` with `makepkg --printsrcinfo > .SRCINFO`, test with `makepkg -si`
+  and push. Each release afterwards is the same copy, regenerate, push cycle.
+- **Nix:** run `nix flake lock` once on a machine with Nix and commit `flake.lock` so `nix run github:Fast-Editor/Caret`
+  does not have to resolve nixpkgs at run time; verify hashes with `nix build .#packages.aarch64-darwin.default`
+  (or `x86_64-linux`). Submitting to nixpkgs is a separate decision.
 
 ## Troubleshooting
 

@@ -16,10 +16,15 @@ export const site = {
   installCommand: "curl -fsSL https://raw.githubusercontent.com/Fast-Editor/Caret/main/scripts/install.sh | sh",
   brewCommand: "brew install --cask fast-editor/lynkr/caret",
   quarantineCommand: "xattr -dr com.apple.quarantine /Applications/Caret.app",
+  wingetCommand: "winget install FastEditor.Caret",
+  scoopCommand: "scoop install https://raw.githubusercontent.com/Fast-Editor/Caret/main/packaging/scoop/caret.json",
+  aurCommand: "yay -S caret-bin",
+  nixCommand: "nix run github:Fast-Editor/Caret",
 };
 
 export const nav = [
   { href: "/docs", label: "Docs" },
+  { href: "/compare", label: "Compare" },
   { href: "/changelog", label: "Changelog" },
   { href: "/download", label: "Download" },
 ];
@@ -49,7 +54,7 @@ export const features: Feature[] = [
   { icon: "book", title: "Rules and knowledge", body: ".caret rules, .cursorrules, AGENTS.md and CLAUDE.md, memories, hooks, slash commands, skills, subagents and plans." },
   { icon: "search", title: "Codebase index", body: "Ignore-aware walker, language-aware chunking, BM25 with tantivy plus optional embeddings via Ollama or any OpenAI-compatible endpoint, hybrid retrieval." },
   { icon: "plug", title: "MCP", body: "stdio, streamable HTTP and SSE servers from .caret/mcp.json or Cursor's config, with tools, resources, prompts, per-tool enable and logs." },
-  { icon: "users", title: "External agents", body: "Run Claude Code, Codex, Gemini CLI, OpenCode, Pi or any Agent Client Protocol agent per chat, with its model, effort and permission mode in the composer." },
+  { icon: "users", title: "External agents", body: "Run Claude Code, Codex, Cursor, Grok Build, Gemini CLI, OpenCode, Pi or any Agent Client Protocol agent per chat, with its model, effort and permission mode in the composer." },
   { icon: "route", title: "Auto routing", body: "A managed Lynkr sidecar scores each request and picks one of your own models per tier, with session pins and fallback. Every reply shows which model answered." },
   { icon: "shield", title: "Command safety", body: "Every agent shell command is parsed and classified before it runs. Destructive commands always ask, blocked ones never run, approved ones run under Seatbelt or bubblewrap." },
   { icon: "bug", title: "Run and Debug", body: "A Debug Adapter Protocol client with breakpoints, stepping, variables, watch and a debug console for Node, TypeScript and Python, launch.json compatible." },
@@ -74,7 +79,7 @@ export const faq = [
   },
   {
     q: "Can I use my Claude Code or Codex subscription?",
-    a: "Yes. Pick Claude Code, Codex, Gemini CLI, OpenCode or any ACP agent from the composer. The agent runs locally with its own login; its text, tool calls, permission prompts, diffs and terminals flow through Caret's UI.",
+    a: "Yes, and your Cursor and Grok Build subscriptions too. Pick Claude Code, Codex, Cursor, Grok Build, Gemini CLI, OpenCode, Pi or any ACP agent from the composer. The agent runs locally with its own login: Settings → Agents shows the signed-in state of each one with a Sign in button, and supports a second account per provider, for example a work plan next to a personal one. Its text, tool calls, permission prompts, diffs and terminals flow through Caret's UI.",
   },
   {
     q: "What about local models?",
@@ -84,4 +89,50 @@ export const faq = [
     q: "Windows and Linux?",
     a: "Installers for both are attached to every release and built by the same workflow as macOS, but they have had far less runtime testing. Expect rough edges and please report them.",
   },
+];
+
+export type ParityStatus = "yes" | "partial" | "no";
+export type ParityRow = { group: string; feature: string; caret: ParityStatus; t3: ParityStatus; cursor: ParityStatus; note?: string };
+
+/** Feature parity against T3 Code and Cursor, rendered on /compare. Rows describe shipped behaviour. */
+export const parity: ParityRow[] = [
+  // Editor
+  { group: "Editor", feature: "Code editor with LSP", caret: "yes", t3: "no", cursor: "yes", note: "T3 Code is a harness control surface without an editor by design." },
+  { group: "Editor", feature: "Tab completions", caret: "yes", t3: "no", cursor: "yes" },
+  { group: "Editor", feature: "Inline edit (Cmd K) with streaming diff", caret: "yes", t3: "no", cursor: "yes" },
+  { group: "Editor", feature: "Debugger (DAP)", caret: "yes", t3: "no", cursor: "yes" },
+  { group: "Editor", feature: "Terminal with command blocks and AI fix-it", caret: "yes", t3: "partial", cursor: "partial" },
+  { group: "Editor", feature: "Codebase index with local embeddings", caret: "yes", t3: "no", cursor: "yes" },
+  // Agents and subscriptions
+  { group: "Agents and subscriptions", feature: "Built-in agent with your own API keys", caret: "yes", t3: "no", cursor: "partial", note: "Cursor routes through its own backend." },
+  { group: "Agents and subscriptions", feature: "Claude Code subscription", caret: "yes", t3: "yes", cursor: "no" },
+  { group: "Agents and subscriptions", feature: "ChatGPT subscription via Codex", caret: "yes", t3: "yes", cursor: "no" },
+  { group: "Agents and subscriptions", feature: "Cursor subscription", caret: "yes", t3: "yes", cursor: "yes" },
+  { group: "Agents and subscriptions", feature: "Grok Build", caret: "yes", t3: "yes", cursor: "no" },
+  { group: "Agents and subscriptions", feature: "Gemini CLI, OpenCode, Pi", caret: "yes", t3: "partial", cursor: "no" },
+  { group: "Agents and subscriptions", feature: "Any Agent Client Protocol agent", caret: "yes", t3: "yes", cursor: "no" },
+  { group: "Agents and subscriptions", feature: "Local models (Ollama, LM Studio, vLLM)", caret: "yes", t3: "no", cursor: "partial" },
+  { group: "Agents and subscriptions", feature: "Auto routing across your own models", caret: "yes", t3: "no", cursor: "partial" },
+  { group: "Agents and subscriptions", feature: "Second account per provider (separate config home)", caret: "yes", t3: "yes", cursor: "no" },
+  // Threads and workflow
+  { group: "Threads and workflow", feature: "Pin, snooze, settle, archive with undo", caret: "yes", t3: "yes", cursor: "no" },
+  { group: "Threads and workflow", feature: "Queue or steer while a turn runs", caret: "yes", t3: "yes", cursor: "partial" },
+  { group: "Threads and workflow", feature: "Permission modes per thread and per project", caret: "yes", t3: "yes", cursor: "yes" },
+  { group: "Threads and workflow", feature: "Provider handoff mid-thread and forks", caret: "yes", t3: "yes", cursor: "no" },
+  { group: "Threads and workflow", feature: "Multi-model fan-out, one worktree each", caret: "yes", t3: "yes", cursor: "yes" },
+  { group: "Threads and workflow", feature: "Worktree per thread with cleanup policies", caret: "yes", t3: "yes", cursor: "partial" },
+  { group: "Threads and workflow", feature: "Usage page across providers", caret: "yes", t3: "yes", cursor: "partial" },
+  { group: "Threads and workflow", feature: "Desktop notifications", caret: "yes", t3: "yes", cursor: "yes" },
+  { group: "Threads and workflow", feature: "Orchestrator MCP endpoint", caret: "yes", t3: "yes", cursor: "no" },
+  // Safety
+  { group: "Safety", feature: "Shell command classifier (AST) before every run", caret: "yes", t3: "no", cursor: "no" },
+  { group: "Safety", feature: "OS sandbox (Seatbelt, bubblewrap) around agent commands, including external agents", caret: "yes", t3: "no", cursor: "partial" },
+  { group: "Safety", feature: "Verified diffs after each turn", caret: "yes", t3: "no", cursor: "no" },
+  // Remote
+  { group: "Remote", feature: "Headless server with web client (LAN or Tailscale)", caret: "yes", t3: "yes", cursor: "no" },
+  { group: "Remote", feature: "Mobile app", caret: "no", t3: "yes", cursor: "partial" },
+  { group: "Remote", feature: "Hosted relay or cloud agents", caret: "no", t3: "yes", cursor: "yes" },
+  // Footprint
+  { group: "Footprint", feature: "No bundled Chromium, no Node at run time", caret: "yes", t3: "no", cursor: "no" },
+  { group: "Footprint", feature: "Open source", caret: "yes", t3: "yes", cursor: "no" },
 ];

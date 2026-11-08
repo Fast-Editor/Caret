@@ -17,7 +17,9 @@ frontend rendered by the OS WebView. No bundled Chromium, no Node runtime at run
 │         tab(FIM + next-edit) · inline_edit(Cmd+K) · commit · review(Bugbot) · apply           │
 │ index/  walker · chunker · tantivy BM25 · embeddings · hybrid search · docs crawler           │
 │ mcp/    MCP client manager (stdio / streamable-http / sse)                                    │
+│ orchestrator/ Caret as an MCP server (loopback Streamable HTTP, bearer token): threads as tools │
 │ browser/ agent-driven browser windows (navigate, DOM snapshot, click, type, eval)             │
+│ remote/ `caret serve`: hyper + WebSocket relay serving the UI to LAN/Tailscale browsers       │
 └───────────────────────────────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -60,13 +62,16 @@ frontend rendered by the OS WebView. No bundled Chromium, no Node runtime at run
 | Commands (`/slash`), Skills (SKILL.md), Subagents | `ai/agent/{commands,skills,subagents}.rs` |
 | Codebase indexing (ignore files, incremental, embeddings) + @Docs | `index/*` |
 | MCP (stdio, streamable-http, sse; tools/resources/prompts) | `mcp/*` |
+| Orchestrator: Caret as an MCP server so Claude Code, Codex, Cursor or another Caret can spawn, steer, read and approve threads on any provider or ACP agent (T3 Code parity) | `orchestrator/*` (server, tools, lifecycle) over `AgentManager::subscribe_events()`, `settings/pages/OrchestratorSection.tsx` (docs/ORCHESTRATOR.md) |
 | External agents via the Agent Client Protocol (Claude Code, Codex, Gemini CLI, Pi, GLM, custom) driving the same chat/review/approval UI (Caret-only; Cursor has no ACP client) | `acp/*` (protocol, process, client, bridge, registry, commands) → `chat_commands.rs` routing, `components/chat/composer/AgentPicker.tsx`, `settings/pages/Agents.tsx` — docs/ACP.md |
 | Command safety: shell AST + deterministic risk classifier, Seatbelt/bwrap sandbox, MCP tool pinning (Caret-only; Cursor has allow/deny lists) | `sandbox/*` → `ai/agent/policy.rs`, `tools/shell_tools.rs`, `components/chat/messages/ToolCallCard.tsx`, `settings/pages/SandboxSection.tsx` — docs/SANDBOX.md |
 | Background / parallel agents, worktrees, Agents layout | `AgentManager` in runner + `components/agents` |
 | Browser automation | `browser/*` |
+| Remote access from a browser (`caret serve`, Tailscale), relayed through the desktop webview (Caret-only) | `remote/*` + `remote/shim.js` → `lib/remoteExecutor.ts`, `settings/pages/Remote.tsx`; docs/REMOTE.md |
 | Bugbot-style review, commit message generation, blame | `ai/review.rs`, `ai/commit.rs`, `core/git.rs` |
 | Auto-run with allow/deny lists, file-delete protection, sandboxed shell | `ai/agent/policy.rs` |
 | Privacy mode, usage/cost tracking, model picker, thinking/effort | settings + runner usage accounting |
+| Usage page: local token/cost ledger, breakdowns, external agent histories (Claude Code, Codex, OpenCode) and subscription windows (Caret-only) | `ai/usage.rs` (ledger, pricing, aggregation, parsers) → `settings/pages/Usage.tsx`, status bar spend item; see docs/USAGE.md |
 | Integrated terminal, git, search, LSP intelligence, themes, keybindings, settings UI | `core/*` + shell UI |
 
 ## UI motion rules

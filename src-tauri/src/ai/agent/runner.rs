@@ -18,7 +18,7 @@ use std::sync::Arc;
 use tauri::Manager;
 use tokio_util::sync::CancellationToken;
 
-fn resolve(mgr: &AgentManager, settings: &Settings, model_id: Option<&str>) -> Result<ResolvedModel> {
+pub(crate) fn resolve(mgr: &AgentManager, settings: &Settings, model_id: Option<&str>) -> Result<ResolvedModel> {
     match mgr.app_opt() { Some(app) => { let secrets = app.state::<SettingsState>(); llm::resolve_model(settings, &secrets, model_id) } None => llm::resolve_model(settings, &SettingsState::load(), model_id) }
 }
 
@@ -43,6 +43,45 @@ fn end_message(mgr: &AgentManager, h: &SessionHandle, message_id: &str, status: 
     let sid = { let mut s = h.session.lock(); if let Some(m) = s.message_mut(message_id) { m.status = Some(status); m.duration_ms = Some(started.elapsed().as_millis() as u64); if let Some(e) = &error { if !m.parts.iter().any(|p| matches!(p, MessagePart::Error { .. })) { m.parts.push(MessagePart::Error { message: e.clone() }); } } } s.touch(); s.id.clone() };
     mgr.emit(AgentEvent::MessageEnd { session_id: sid, message_id: message_id.to_string(), status, error, duration_ms: started.elapsed().as_millis() as u64 });
     mgr.persist(h);
+}
+
+/// Inject one steered message into a running turn: a user `ChatMessage` (same turn id, so edit/regenerate/restore
+/// treat it as part of this turn) plus the matching transcript content. When the transcript currently ends with a user
+/// message (tool results, or a steer injected moments earlier) the blocks are appended to it so the conversation keeps
+/// alternating roles and tool results stay ahead of the new text, which every provider accepts.
+/// Pure (no events, no IO): the runner builds the attached-context text beforehand.
+pub(crate) fn inject_steer(s: &mut Session, item: &QueuedMessage, turn_id: &str, mode_id: &str, context_text: &str, context_images: &[(String, String)]) -> ChatMessage {
+    let mut um = ChatMessage::new(MessageRole::User);
+    um.turn_id = Some(turn_id.to_string()); um.mode = Some(mode_id.to_string());
+    if !item.context.is_empty() { um.parts.push(MessagePart::Context { items: item.context.clone() }); }
+    for img in &item.images { um.parts.push(MessagePart::Image { image: img.clone() }); }
+    um.parts.push(MessagePart::Text { text: item.text.clone() });
+    let mut content = vec![];
+    if !context_text.trim().is_empty() { content.push(ContentBlock::Text { text: format!("<attached_context>\n{context_text}</attached_context>") }); }
+    for (m, d) in context_images { content.push(ContentBlock::Image { media_type: m.clone(), data: d.clone() }); }
+    for img in &item.images { content.push(ContentBlock::Image { media_type: img.mime.clone(), data: img.data_base64.clone() }); }
+    content.push(ContentBlock::Text { text: if item.text.trim().is_empty() { "(see attachments)".into() } else { item.text.clone() } });
+    match s.transcript.last_mut() {
+        Some(last) if last.role == Role::User => last.content.extend(content),
+        _ => s.transcript.push(LlmMessage { role: Role::User, content }),
+    }
+    s.messages.push(um.clone());
+    s.context_tokens = s.estimate_context_tokens();
+    s.touch();
+    um
+}
+
+/// Drain the handle's steer buffer into the session (oldest first) and mirror each new user message to the UI.
+async fn drain_steer(mgr: &AgentManager, h: &SessionHandle, env: &ContextEnv<'_>, session_id: &str, turn_id: &str, mode_id: &str) -> usize {
+    let items = mgr.take_steer(h);
+    let n = items.len();
+    for item in items {
+        let built = context::build(env, &item.context).await;
+        let um = { let mut s = h.session.lock(); inject_steer(&mut s, &item, turn_id, mode_id, &built.text, &built.images) };
+        mgr.emit(AgentEvent::MessageStart { session_id: session_id.to_string(), message: um });
+    }
+    if n > 0 { mgr.persist(h); }
+    n
 }
 
 fn volatile_block(settings: &Settings, s: &Session, model: &str, req: &SendMessageRequest) -> SystemBlock {
@@ -99,13 +138,13 @@ pub(crate) async fn execute_one(mgr: Arc<AgentManager>, h: Arc<SessionHandle>, c
     }
     // Deterministic risk classification for shell commands (shown on the card whether or not approval is needed).
     let shell_class = if let ToolEffect::Shell(c) = &effect { Some(crate::sandbox::classify_with(c, Some(&ctx.cwd), ctx.root.as_deref(), &ctx.settings.agent.command_allowlist, &ctx.settings.agent.command_denylist)) } else { None };
-    let decision = { let s = h.session.lock(); policy::decide(&PolicyInput { settings: &ctx.settings, session: &s, tool_name: tool.name(), mode_auto_run: ctx.mode.auto_run }, &effect) };
+    let (decision, pmode) = { let s = h.session.lock(); let input = PolicyInput { settings: &ctx.settings, session: &s, tool_name: tool.name(), mode_auto_run: ctx.mode.auto_run }; (policy::decide(&input, &effect), policy::mode_for(&input)) };
     match decision {
         Decision::Deny(reason) => { update_tool(&mgr, &h, &ctx.message_id, &run.id, |r| { r.status = ToolStatus::Rejected; r.error = Some(reason.clone()); r.finished_at = Some(now_ms()); }); return (run.id, ToolOutput::error(format!("Denied by policy: {reason}"))); }
         Decision::NeedsApproval { kind, title, detail, allow_always_pattern, classification } => {
             let options = match kind { ApprovalKind::Command => vec![ApprovalOption::Allow, ApprovalOption::AllowSession, ApprovalOption::AllowAlways, ApprovalOption::Deny, ApprovalOption::DenyAlways], ApprovalKind::Mcp => vec![ApprovalOption::Allow, ApprovalOption::AllowSession, ApprovalOption::AllowAlways, ApprovalOption::Deny], _ => vec![ApprovalOption::Allow, ApprovalOption::AllowSession, ApprovalOption::Deny] };
             let (command, cwd) = if let ToolEffect::Shell(c) = &effect { (Some(c.clone()), Some(ctx.cwd.to_string_lossy().to_string())) } else { (None, None) };
-            let req = ApprovalRequest { approval_id: new_id(), session_id: ctx.session_id.clone(), tool_call_id: run.id.clone(), kind, title, detail, command, cwd, options, allow_always_pattern: allow_always_pattern.clone(), classification: classification.clone().or_else(|| shell_class.clone()), risk_tier: classification.as_ref().or(shell_class.as_ref()).map(|c| c.risk_tier()), sandboxed: if matches!(effect, ToolEffect::Shell(_)) { Some(crate::sandbox::will_sandbox(&ctx.settings, ctx.root.as_deref())) } else { None }, agent_id: None };
+            let req = ApprovalRequest { approval_id: new_id(), session_id: ctx.session_id.clone(), tool_call_id: run.id.clone(), kind, title, detail, command, cwd, options, allow_always_pattern: allow_always_pattern.clone(), classification: classification.clone().or_else(|| shell_class.clone()), risk_tier: classification.as_ref().or(shell_class.as_ref()).map(|c| c.risk_tier()), sandboxed: if matches!(effect, ToolEffect::Shell(_)) { Some(crate::sandbox::will_sandbox(&ctx.settings, ctx.root.as_deref())) } else { None }, agent_id: None, permission_mode: Some(pmode) };
             match mgr.request_approval(&h, &ctx.message_id, req, &ctx.cancel).await {
                 Ok(ApprovalOption::Allow) => {}
                 Ok(ApprovalOption::AllowSession) => { let pats = session_allow_pattern(kind, allow_always_pattern.as_deref()); let mut s = h.session.lock(); for p in pats { if !s.session_allow.contains(&p) { s.session_allow.push(p); } } }
@@ -228,6 +267,9 @@ pub async fn run_turn(mgr: Arc<AgentManager>, h: Arc<SessionHandle>, mut req: Se
         if iterations >= max_iter { let m = ChatMessage::new(MessageRole::Assistant); let mid = m.id.clone(); { h.session.lock().messages.push(m.clone()); } mgr.emit(AgentEvent::MessageStart { session_id: session_id.clone(), message: m }); end_message(&mgr, &h, &mid, MessageStatus::Error, Some(format!("Stopped after {max_iter} tool iterations. Send a message to continue.")), std::time::Instant::now()); break; }
         iterations += 1;
 
+        // Steered messages: inject whatever the user said mid-turn before the model sees this round.
+        drain_steer(&mgr, &h, &env, &session_id, &turn_id, &mode.id).await;
+
         // Compaction
         let ctx_tokens = { let s = h.session.lock(); s.estimate_context_tokens() };
         if ctx_tokens as f32 > settings.agent.summarize_threshold_ratio * resolved.model.context_window as f32 && ctx_tokens > 20_000 {
@@ -323,6 +365,7 @@ pub async fn run_turn(mgr: Arc<AgentManager>, h: Arc<SessionHandle>, mut req: Se
         let usage = Usage::from_delta(&turn.usage, cost);
         let (session_usage, ctx_tokens) = { let mut s = h.session.lock(); s.usage.add(&usage); if let Some(m) = s.message_mut(&message_id) { m.usage = Some(usage.clone()); if let Some(sm) = &served { m.model_id = Some(sm.id.clone()); if m.routing.is_none() { m.routing = Some(routing_info_from(None, None, None, None, &sm.id, &assignment)); } } } s.context_tokens = turn.usage.input_tokens + turn.usage.cache_read_tokens + turn.usage.cache_write_tokens + turn.usage.output_tokens; (s.usage.clone(), s.context_tokens) };
         mgr.emit(AgentEvent::Usage { session_id: session_id.clone(), message_id: message_id.clone(), usage, context_tokens: ctx_tokens, session_usage });
+        crate::ai::usage::record(&settings, crate::ai::usage::UsageEntry::new("agent", &turn.usage, Some(cost)).model(served.as_ref().unwrap_or(&resolved.model)).agent("caret").session(&session_id).workspace(root.as_deref()).duration(started.elapsed().as_millis() as u64));
 
         let tool_uses = turn.tool_uses();
         for (id, _, input) in &tool_uses { update_tool(&mgr, &h, &message_id, id, |r| { r.input = input.clone(); r.summary = tool_map.get(&r.name).and_then(|t| t.label(input)); }); }
@@ -339,6 +382,8 @@ pub async fn run_turn(mgr: Arc<AgentManager>, h: Arc<SessionHandle>, mut req: Se
 
             // after-response hooks / lint fix / stop hook
             let _ = hooks::run(root.as_deref(), HookEvent::AfterAgentResponse, json!({ "text": final_text, "session_id": session_id })).await;
+            // The user steered while the model was answering: the turn is not over, run another round with the new message.
+            if mgr.steer_pending(&h) && !cancel.is_cancelled() { continue 'outer; }
             if settings.agent.auto_fix_lints && !edited_files.is_empty() && lint_rounds < 3 && !cancel.is_cancelled() {
                 tokio::time::sleep(std::time::Duration::from_millis(1500)).await;
                 let paths: Vec<String> = edited_files.iter().cloned().collect();
@@ -403,7 +448,7 @@ pub async fn run_turn(mgr: Arc<AgentManager>, h: Arc<SessionHandle>, mut req: Se
     }
     // Title
     let needs_title = { let s = h.session.lock(); !s.title_generated && !s.is_subagent && s.messages.iter().filter(|m| m.role == MessageRole::Assistant).count() >= 1 };
-    if needs_title { let (mgr3, h3, r3) = (mgr.clone(), h.clone(), resolved.clone()); tauri::async_runtime::spawn(async move { generate_title(mgr3, h3, r3).await; }); }
+    if needs_title { let (mgr3, h3, r3) = (mgr.clone(), h.clone(), resolved.clone()); tauri::async_runtime::spawn(async move { let _ = generate_title(mgr3, h3, r3).await; }); }
     Ok(final_text)
 }
 
@@ -422,17 +467,19 @@ pub async fn compact_now(mgr: &AgentManager, h: &SessionHandle, resolved: &Resol
     Ok(())
 }
 
-async fn generate_title(mgr: Arc<AgentManager>, h: Arc<SessionHandle>, resolved: ResolvedModel) {
+/// Ask the model for a short title from the first user/assistant exchange. Returns the current title untouched when
+/// `title_generated` is already set by the time the model answers; `chat_regenerate_title` clears the flag first.
+pub(crate) async fn generate_title(mgr: Arc<AgentManager>, h: Arc<SessionHandle>, resolved: ResolvedModel) -> Result<String> {
     let (sid, user, assistant) = { let s = h.session.lock(); let u = s.messages.iter().find(|m| m.role == MessageRole::User).map(|m| m.preview(1500)).unwrap_or_default(); let a = s.messages.iter().find(|m| m.role == MessageRole::Assistant).map(|m| m.preview(800)).unwrap_or_default(); (s.id.clone(), u, a) };
-    if user.trim().is_empty() { return; }
+    if user.trim().is_empty() { return Err(CaretError::invalid("The chat has no user message to title")); }
     let req = LlmRequest::new(resolved.model.clone()).system("Generate a concise 3-6 word title for this coding chat. Reply with the title only — no quotes, no trailing punctuation.").user(format!("User: {user}\n\nAssistant: {assistant}")).no_thinking().max_tokens(40).purpose("title");
-    if let Ok((t, _)) = llm::complete_text(&resolved, req, CancellationToken::new()).await {
-        let title = sanitize_title(&t).unwrap_or_else(|| user.split_whitespace().take(6).collect::<Vec<_>>().join(" "));
-        if title.is_empty() { return; }
-        { let mut s = h.session.lock(); if s.title_generated { return; } s.title = title.clone(); s.title_generated = true; }
-        mgr.emit(AgentEvent::Title { session_id: sid, title });
-        mgr.persist(&h);
-    }
+    let (t, _) = llm::complete_text(&resolved, req, CancellationToken::new()).await?;
+    let title = sanitize_title(&t).unwrap_or_else(|| user.split_whitespace().take(6).collect::<Vec<_>>().join(" "));
+    if title.is_empty() { return Err(CaretError::internal("the model returned an empty title")); }
+    { let mut s = h.session.lock(); if s.title_generated { return Ok(s.title.clone()); } s.title = title.clone(); s.title_generated = true; }
+    mgr.emit(AgentEvent::Title { session_id: sid, title: title.clone() });
+    mgr.persist(&h);
+    Ok(title)
 }
 
 /// Pick a clean one-line title from model output: skips proxy/router banner lines (e.g. `*[Lynkr] … → …*`),

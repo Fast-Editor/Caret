@@ -105,6 +105,7 @@ export const DEFAULT_KEYBINDINGS: Keybinding[] = [
   d('alt+mod+i', 'app.devtools', { global: true }), d('mod+r', 'app.reload', { global: true }),
   d('mod+shift+c', 'terminal.new', { global: true }),
   d('mod+alt+b', 'editor.toggleBlame', { global: true }), d('f8', 'editor.nextProblem', { global: true }),
+  d('ctrl+alt+]', 'chat.nextThread', { global: true }), d('ctrl+alt+[', 'chat.prevThread', { global: true }),
 ]
 
 // ───────────── registry / dispatch ─────────────

@@ -13,6 +13,8 @@ const apiBase = {
     showInFolder: (path: string) => invoke<void>('app_show_in_folder', { path }),
     openDevtools: () => invoke<void>('app_open_devtools'),
     log: (level: 'debug' | 'info' | 'warn' | 'error', message: string) => invoke<void>('app_log', { level, message }),
+    /** OS desktop notification (tauri-plugin-notification). Gated by settings.notifications in src/lib/desktopNotifications.ts. */
+    notifyDesktop: (title: string, body: string) => invoke<void>('app_notify_desktop', { title, body }),
   },
 
   workspace: {
@@ -154,6 +156,33 @@ const apiBase = {
     contextPreview: (items: T.ContextItem[]) => invoke<{ totalTokens: number; items: { id: string; tokens: number; truncated: boolean }[] }>('chat_context_preview', { items }),
     mentionCandidates: (kind: T.ContextItemKind, query: string, limit = 30) => invoke<T.ContextItem[]>('chat_mention_candidates', { kind, query, limit }),
     toolCatalog: () => invoke<{ name: string; displayName: string; description: string; group: string; readonly: boolean }[]>('chat_tool_catalog'),
+    /** Inject into the running turn (built-in agent) or send-now (ACP agents); idle sessions behave like `send`. */
+    steer: (req: T.SendMessageRequest) => invoke<void>('chat_steer', { req }),
+    queueUpdate: (sessionId: string, queuedId: string, text: string, context?: T.ContextItem[]) => invoke<void>('chat_queue_update', { sessionId, queuedId, text, context }),
+    queueMove: (sessionId: string, queuedId: string, index: number) => invoke<void>('chat_queue_move', { sessionId, queuedId, index }),
+    // thread lifecycle, title regeneration, message search (docs/THREADS.md)
+    /** `until` in unix ms; null un-snoozes. */
+    snoozeSession: (sessionId: string, until: number | null) => invoke<T.ChatSessionSummary>('chat_snooze_session', { sessionId, until }),
+    settleSession: (sessionId: string, settled: boolean) => invoke<T.ChatSessionSummary>('chat_settle_session', { sessionId, settled }),
+    /** Summaries from every workspace's session store (each carries `workspaceRoot`). */
+    listSessionsAll: (includeArchived = false) => invoke<T.ChatSessionSummary[]>('chat_list_sessions_all', { includeArchived }),
+    regenerateTitle: (sessionId: string) => invoke<string>('chat_regenerate_title', { sessionId }),
+    searchMessages: (query: string, opts?: { includeArchived?: boolean; allWorkspaces?: boolean; limit?: number }) => invoke<T.MessageSearchHit[]>('chat_search_messages', { query, includeArchived: opts?.includeArchived ?? false, allWorkspaces: opts?.allWorkspaces ?? false, limit: opts?.limit ?? 50 }),
+    /** Clone a thread; with `messageId` the fork keeps history up to and including that message. */
+    forkSession: (sessionId: string, messageId?: string) => invoke<T.ChatSession>('chat_fork_session', { sessionId, messageId }),
+    /** Move an idle thread to another agent and/or model; the conversation is transferred within `chat.handoffBudgetTokens`. */
+    handoffSession: (sessionId: string, target: { agentId?: string; modelId?: string }) => invoke<T.ChatSession>('chat_handoff_session', { sessionId, agentId: target.agentId, modelId: target.modelId }),
+    /** Send one prompt to several models at once (one session per model, same `fanOutGroup`). Returns the session ids. */
+    fanOut: (req: T.FanOutRequest) => invoke<string[]>('chat_fan_out', { ...req }),
+    /** Per-thread permission mode; `null` returns the thread to the settings default. Live ACP sessions get the mapped mode. */
+    setPermissionMode: (sessionId: string, mode: T.PermissionMode | null) => invoke<T.ChatSession>('chat_set_permission_mode', { sessionId, mode }),
+    worktreeStatus: (sessionId: string) => invoke<T.WorktreeStatus>('chat_worktree_status', { sessionId }),
+    worktreeCleanupPreview: () => invoke<T.WorktreeCleanupCandidate[]>('chat_worktree_cleanup_preview'),
+    worktreeCleanup: (sessionIds: string[]) => invoke<T.WorktreeCleanupReport>('chat_worktree_cleanup', { sessionIds }),
+    /** Scratch thread: its own git repo under ~/.caret/scratch/<id>; works with no folder open. */
+    createScratchSession: (opts?: { mode?: T.ModeId; modelId?: string; title?: string; agentId?: string }) => invoke<T.ChatSession>('chat_create_scratch_session', { ...opts }),
+    /** Move a scratch thread's folder to `targetDir` (new or empty) and re-home the session there. */
+    promoteScratch: (sessionId: string, targetDir: string) => invoke<T.ChatSession>('chat_promote_scratch', { sessionId, targetDir }),
   },
 
   ai: {
@@ -353,8 +382,43 @@ export const apiWave1 = {
     nlSearch: (query: string, limit = 50) => invoke<T.HistoryNlResult>('terminal_history_nl_search', { query, limit }),
     clear: () => invoke<void>('terminal_history_clear'),
   },
+  /** Caret as an MCP server for other agents (loopback, bearer token). */
+  orchestrator: {
+    status: () => invoke<T.OrchestratorStatus>('orchestrator_status'),
+    rotateToken: () => invoke<T.OrchestratorStatus>('orchestrator_rotate_token'),
+    snippets: () => invoke<T.OrchestratorSnippets>('orchestrator_snippets'),
+  },
 }
 export type ApiWave1 = typeof apiWave1
+
+// ═══════════════════════════ remote access (`caret serve`) ═══════════════════════════
+export const apiRemote = {
+  /** Browser access to this Caret over the LAN / Tailscale, relayed through the desktop webview (docs/REMOTE.md). */
+  remote: {
+    status: () => invoke<T.RemoteStatus>('remote_status'),
+    /** Issue a fresh six digit pairing code (valid five minutes, one use). */
+    pairingCode: () => invoke<T.RemotePairingCode>('remote_pairing_code'),
+    revokeDevice: (id: string) => invoke<T.RemoteStatus>('remote_revoke_device', { id }),
+    /** Per-process executor secret for the desktop webview; refused when asked from a remote session. */
+    executorSecret: () => invoke<string>('remote_executor_secret'),
+    isServing: () => invoke<boolean>('remote_is_serving'),
+    /** Persist `remote.enabled` and start or stop the server. */
+    setEnabled: (enabled: boolean) => invoke<T.RemoteStatus>('remote_set_enabled', { enabled }),
+    /** Restart on the current host/port settings. */
+    restart: () => invoke<T.RemoteStatus>('remote_restart'),
+  },
+}
 /** Full command surface: base domains plus wave-1 additions. */
-export const api = { ...apiBase, ...apiWave1, pty: { ...apiBase.pty, ...apiWave1.pty } }
+export const api = {
+  ...apiBase, ...apiWave1, ...apiRemote, pty: { ...apiBase.pty, ...apiWave1.pty },
+  /** Usage ledger (`~/.caret/usage/YYYY-MM.jsonl`) and external agent histories; see docs/USAGE.md. */
+  usage: {
+    summary: (range: T.UsageRange, groupBy: T.UsageGroupBy) => invoke<T.UsageSummary>('usage_summary', { range, groupBy }),
+    daily: (range: T.UsageRange) => invoke<T.UsageDailyPoint[]>('usage_daily', { range }),
+    recent: (limit = 50) => invoke<T.UsageEntry[]>('usage_recent', { limit }),
+    exportCsv: (range: T.UsageRange) => invoke<string>('usage_export_csv', { range }),
+    external: (range: T.UsageRange = '30d') => invoke<T.UsageExternalReport>('usage_external', { range }),
+    dir: () => invoke<string>('usage_dir'),
+  },
+}
 export type Api = typeof api

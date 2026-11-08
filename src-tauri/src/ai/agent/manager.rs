@@ -29,9 +29,12 @@ pub struct SessionHandle {
     pub cancel: Mutex<CancellationToken>,
     pub running: AtomicBool,
     pub last_used: Mutex<Instant>,
+    /// Messages steered into the running turn; the runner drains them at the top of each round. Transient (a turn
+    /// does not survive a restart, so neither does its steer buffer); anything left when the turn ends is queued.
+    pub steer: Mutex<Vec<QueuedMessage>>,
 }
 impl SessionHandle {
-    pub fn new(s: Session) -> Arc<Self> { Arc::new(Self { session: Mutex::new(s), cancel: Mutex::new(CancellationToken::new()), running: AtomicBool::new(false), last_used: Mutex::new(Instant::now()) }) }
+    pub fn new(s: Session) -> Arc<Self> { Arc::new(Self { session: Mutex::new(s), cancel: Mutex::new(CancellationToken::new()), running: AtomicBool::new(false), last_used: Mutex::new(Instant::now()), steer: Mutex::new(vec![]) }) }
     pub fn id(&self) -> String { self.session.lock().id.clone() }
     pub fn is_running(&self) -> bool { self.running.load(Ordering::SeqCst) }
     pub fn touch(&self) { *self.last_used.lock() = Instant::now(); }
@@ -43,6 +46,8 @@ pub struct AgentManager {
     app: OnceCell<AppHandle>,
     sessions: DashMap<String, Arc<SessionHandle>>,
     channel: RwLock<Option<Channel<AgentEvent>>>,
+    /// In-process fan-out of every `AgentEvent` (orchestrator MCP server, tests). Lagging receivers skip events.
+    events: tokio::sync::broadcast::Sender<AgentEvent>,
     approvals: DashMap<String, oneshot::Sender<ApprovalOption>>,
     questions: DashMap<String, oneshot::Sender<String>>,
     pub store: SessionStore,
@@ -57,7 +62,8 @@ impl Default for AgentManager { fn default() -> Self { Self::new() } }
 
 impl AgentManager {
     pub fn new() -> Self {
-        Self { app: OnceCell::new(), sessions: DashMap::new(), channel: RwLock::new(None), approvals: DashMap::new(), questions: DashMap::new(), store: SessionStore::default(), registry: ToolRegistry::builtin(), file_cache: Mutex::new(None), fallback_root: Mutex::new(None), #[cfg(test)] test_events: Mutex::new(vec![]) }
+        let (events, _) = tokio::sync::broadcast::channel(1024);
+        Self { app: OnceCell::new(), sessions: DashMap::new(), channel: RwLock::new(None), events, approvals: DashMap::new(), questions: DashMap::new(), store: SessionStore::default(), registry: ToolRegistry::builtin(), file_cache: Mutex::new(None), fallback_root: Mutex::new(None), #[cfg(test)] test_events: Mutex::new(vec![]) }
     }
     pub fn attach(&self, app: AppHandle) { let _ = self.app.set(app); }
     pub fn app(&self) -> AppHandle { self.app.get().expect("AgentManager not attached").clone() }
@@ -67,12 +73,16 @@ impl AgentManager {
     pub fn settings(&self) -> Arc<Settings> { Arc::new(self.app_opt().map(|a| a.state::<SettingsState>().effective()).unwrap_or_else(|| SettingsState::load().effective())) }
     pub fn workspace_root(&self) -> Option<PathBuf> { match self.app_opt() { Some(a) => a.state::<WorkspaceState>().root(), None => self.fallback_root.lock().clone() } }
     pub fn ws_key(&self) -> String { workspace_key(self.workspace_root().as_deref()) }
-    pub fn ws_key_of(&self, s: &Session) -> String { workspace_key(s.root().as_deref()) }
+    /// Scratch threads always live under the "global" key so they are reachable from any (or no) workspace.
+    pub fn ws_key_of(&self, s: &Session) -> String { if s.scratch { "global".into() } else { workspace_key(s.root().as_deref()) } }
 
     // ───────── events ─────────
     pub fn subscribe(&self, ch: Channel<AgentEvent>) { *self.channel.write() = Some(ch); }
+    /// Subscribe to every event the manager emits (independent of the UI channel).
+    pub fn subscribe_events(&self) -> tokio::sync::broadcast::Receiver<AgentEvent> { self.events.subscribe() }
     pub fn emit(&self, ev: AgentEvent) {
         #[cfg(test)] { self.test_events.lock().push(ev.clone()); }
+        if self.events.receiver_count() > 0 { let _ = self.events.send(ev.clone()); }
         if let Some(ch) = self.channel.read().as_ref() { if let Err(e) = ch.send(ev) { tracing::debug!(error = %e, "agent event send failed"); } }
     }
     pub fn set_status(&self, h: &SessionHandle, status: SessionStatus) {
@@ -99,7 +109,17 @@ impl AgentManager {
             if let Some((_, h)) = self.sessions.remove(&id) { let s = h.session.lock(); let _ = self.store.save_now(&self.ws_key_of(&s), &s); }
         }
     }
+    /// Register a session handle built elsewhere (forks, fan-out) so it is live immediately; persists and evicts idle handles.
+    /// Register a session built elsewhere (fork, fan-out, scratch), persist it and announce it (`SessionCreated`).
+    pub fn adopt(&self, h: Arc<SessionHandle>) -> Arc<SessionHandle> {
+        self.sessions.insert(h.id(), h.clone());
+        self.persist_now(&h);
+        self.emit(AgentEvent::SessionCreated { session: h.session.lock().summary_view() });
+        self.evict_idle();
+        h
+    }
     pub fn persist(&self, h: &SessionHandle) { let s = h.session.lock(); self.store.save(&self.ws_key_of(&s), &s); }
+    /// Register a session built elsewhere (scratch threads): persist, announce, keep the loaded set bounded.
     pub fn persist_now(&self, h: &SessionHandle) { let s = h.session.lock(); let _ = self.store.save_now(&self.ws_key_of(&s), &s); }
     /// Record the latest verification report for a session (verify engine) and refresh listeners.
     pub fn set_last_verification(&self, session_id: &str, report_id: &str) {
@@ -123,8 +143,9 @@ impl AgentManager {
         if let Some((pid, _)) = parent { s.parent_session_id = Some(pid.to_string()); s.is_subagent = true; }
         if use_worktree {
             let root = root.clone().ok_or_else(CaretError::no_workspace)?;
-            let (path, branch) = create_worktree(&root, &s.title, &s.id).await?;
-            s.worktree_path = Some(path.to_string_lossy().to_string()); s.branch = Some(branch); s.cwd = path.to_string_lossy().to_string();
+            let model = s.model_id.clone().or_else(|| settings.default_model().map(|m| m.id.clone()));
+            let (path, branch, base) = create_worktree(&root, &settings.worktrees, &s.title, &s.id, model.as_deref()).await?;
+            s.worktree_path = Some(path.to_string_lossy().to_string()); s.branch = Some(branch); s.worktree_base = base; s.cwd = path.to_string_lossy().to_string();
         }
         let h = SessionHandle::new(s);
         let id = h.id();
@@ -138,21 +159,94 @@ impl AgentManager {
     pub fn list_sessions(&self, include_archived: bool) -> Vec<SessionSummary> {
         let key = self.ws_key();
         let mut list = self.store.read_index(&key);
+        // Scratch threads are workspace-independent: list them everywhere.
+        if key != "global" { list.extend(self.store.read_index("global").into_iter().filter(|s| s.scratch == Some(true))); }
+        self.merge_loaded(&mut list, &key);
+        self.apply_lifecycle(&mut list, self.settings().chat.auto_settle_days);
+        Self::finish_list(list, include_archived)
+    }
+    /// Summaries from every workspace's session store ("group by project"); each summary carries `workspace_root`.
+    pub fn list_sessions_all(&self, include_archived: bool) -> Vec<SessionSummary> {
+        let days = self.settings().chat.auto_settle_days;
+        let mut all = vec![];
+        for key in crate::core::sessions::all_workspace_keys() {
+            let mut list = self.store.read_index(&key);
+            self.merge_loaded(&mut list, &key);
+            self.apply_lifecycle(&mut list, days);
+            all.extend(list);
+        }
+        Self::finish_list(all, include_archived)
+    }
+    fn merge_loaded(&self, list: &mut Vec<SessionSummary>, key: &str) {
         for e in self.sessions.iter() {
             let s = e.value().session.lock();
-            if self.ws_key_of(&s) != key { continue; }
+            if self.ws_key_of(&s) != key && !s.scratch { continue; }
             let sv = s.summary_view();
             if let Some(x) = list.iter_mut().find(|x| x.id == sv.id) { *x = sv; } else { list.push(sv); }
         }
+    }
+    fn finish_list(mut list: Vec<SessionSummary>, include_archived: bool) -> Vec<SessionSummary> {
         list.retain(|s| include_archived || s.archived != Some(true));
         list.sort_by(|a, b| b.pinned.unwrap_or(false).cmp(&a.pinned.unwrap_or(false)).then(b.updated_at.cmp(&a.updated_at)));
         list
     }
 
+    // ───────── thread lifecycle (docs/THREADS.md) ─────────
+    /// Listing-time maintenance: wake threads whose snooze expired and, when `auto_settle_days > 0`, settle idle,
+    /// unpinned, unarchived, unsnoozed threads older than that. Changes are persisted and announced with `SessionUpdated`.
+    pub fn apply_lifecycle(&self, list: &mut [SessionSummary], auto_settle_days: u32) {
+        let now = now_ms();
+        let settle_before = if auto_settle_days > 0 { now.saturating_sub(auto_settle_days as u64 * 86_400_000) } else { 0 };
+        for sv in list.iter_mut() {
+            let wake = sv.snoozed_until.map(|t| t <= now).unwrap_or(false);
+            let settle = settle_before > 0 && !sv.settled && !sv.pinned.unwrap_or(false) && sv.archived != Some(true) && sv.snoozed_until.is_none() && sv.status == SessionStatus::Idle && sv.updated_at < settle_before;
+            if !wake && !settle { continue; }
+            match self.mutate_session(&sv.id, Some(&sv.workspace_root), |s| { if wake { s.snoozed_until = None; } if settle { s.settled = true; } }) {
+                Ok(fresh) => *sv = fresh,
+                Err(e) => tracing::warn!(error=%e, id=%sv.id, "lifecycle update failed"),
+            }
+        }
+    }
+    /// Apply `f` to a session (loaded, or on disk in this or another workspace), persist immediately and emit `SessionUpdated`.
+    pub fn mutate_session(&self, id: &str, root: Option<&str>, f: impl FnOnce(&mut Session)) -> Result<SessionSummary> {
+        if let Some(h) = self.get_loaded(id) {
+            let sv = { let mut s = h.session.lock(); f(&mut s); s.summary_view() };
+            self.persist_now(&h);
+            self.emit(AgentEvent::SessionUpdated { session: sv.clone() });
+            return Ok(sv);
+        }
+        let key = self.locate_key(id, root)?;
+        let mut s = self.store.load(&key, id)?;
+        f(&mut s);
+        self.store.save_now(&self.ws_key_of(&s), &s)?;
+        let sv = s.summary_view();
+        self.emit(AgentEvent::SessionUpdated { session: sv.clone() });
+        Ok(sv)
+    }
+    /// Workspace key holding `<id>.json`: current workspace, then global, then the hinted root, then every store.
+    fn locate_key(&self, id: &str, root: Option<&str>) -> Result<String> {
+        let ws = self.ws_key();
+        if self.store.exists(&ws, id) { return Ok(ws); }
+        if self.store.exists("global", id) { return Ok("global".into()); }
+        if let Some(r) = root.filter(|r| !r.is_empty()) { let k = workspace_key(Some(Path::new(r))); if self.store.exists(&k, id) { return Ok(k); } }
+        self.store.find_workspace_key(id).ok_or_else(|| CaretError::not_found(format!("session {id}")))
+    }
+    pub fn set_pinned(&self, id: &str, pinned: bool) -> Result<SessionSummary> { self.mutate_session(id, None, |s| { s.pinned = pinned; s.pinned_at = if pinned { Some(now_ms()) } else { None }; }) }
+    pub fn set_archived(&self, id: &str, archived: bool) -> Result<SessionSummary> { self.mutate_session(id, None, |s| { s.archived = archived; s.archived_at = if archived { Some(now_ms()) } else { None }; }) }
+    /// `None` (or a time in the past) un-snoozes.
+    pub fn set_snoozed(&self, id: &str, until: Option<u64>) -> Result<SessionSummary> { let now = now_ms(); self.mutate_session(id, None, |s| { s.snoozed_until = until.filter(|t| *t > now); }) }
+    pub fn set_settled(&self, id: &str, settled: bool) -> Result<SessionSummary> { self.mutate_session(id, None, |s| { s.settled = settled; }) }
+
     pub async fn delete_session(&self, id: &str) -> Result<()> {
         self.stop(id);
-        let (worktree, root, ws_key) = match self.handle(id) { Ok(h) => { let s = h.session.lock(); (s.worktree_path.clone(), s.root(), self.ws_key_of(&s)) } Err(_) => (None, self.workspace_root(), self.ws_key()) };
-        if let (Some(wt), Some(root)) = (worktree, root) { let _ = tokio::process::Command::new("git").args(["worktree", "remove", "--force", &wt]).current_dir(&root).output().await; }
+        let (worktree, branch, root, ws_key, scratch_dir) = match self.handle(id) { Ok(h) => { let s = h.session.lock(); (s.worktree_path.clone(), s.branch.clone(), s.root(), self.ws_key_of(&s), if s.scratch { Some(PathBuf::from(&s.workspace_root)) } else { None }) } Err(_) => (None, None, self.workspace_root(), self.ws_key(), None) };
+        if let (Some(wt), Some(root)) = (worktree, root) {
+            let _ = tokio::process::Command::new("git").args(["worktree", "remove", "--force", &wt]).current_dir(&root).output().await;
+            // Branch follows the worktree when the policy says so; `-d` keeps branches with unmerged commits.
+            if let Some(b) = branch { if self.settings().worktrees.delete_branch_with_worktree { let _ = tokio::process::Command::new("git").args(["branch", "-d", &b]).current_dir(&root).output().await; } }
+        }
+        // A deleted scratch thread takes its throwaway repository with it.
+        if let Some(dir) = scratch_dir { if dir.starts_with(crate::ai::agent::scratch::scratch_root()) { let _ = std::fs::remove_dir_all(&dir); } }
         self.sessions.remove(id);
         self.store.delete(&ws_key, id)?;
         checkpoints::remove_session(&ws_key, id);
@@ -163,8 +257,11 @@ impl AgentManager {
     // ───────── run / queue / stop ─────────
     pub async fn submit(self: &Arc<Self>, req: SendMessageRequest) -> Result<()> {
         let h = self.handle(&req.session_id)?;
+        // New activity wakes a snoozed thread and re-opens a settled one.
+        let woke = { let mut s = h.session.lock(); let w = s.snoozed_until.is_some() || s.settled; s.snoozed_until = None; s.settled = false; w };
+        if woke { let sv = h.session.lock().summary_view(); self.emit(AgentEvent::SessionUpdated { session: sv }); }
         if h.is_running() {
-            let q = QueuedMessage { id: new_id(), text: req.text.clone(), context: req.context.clone(), images: req.images.clone(), mode: Some(req.mode.clone()), request: Some(req) };
+            let q = QueuedMessage::from_request(req);
             let queued = { let mut s = h.session.lock(); s.queued.push(q); s.queued.clone() };
             self.emit(AgentEvent::Queue { session_id: h.id(), queued });
             self.persist(&h);
@@ -172,6 +269,25 @@ impl AgentManager {
         }
         self.spawn_drive(h, req, None);
         Ok(())
+    }
+    /// Steer: hand a message to the running turn so the runner injects it before its next model round (instead of
+    /// waiting for the turn to finish like `submit`). Not running: identical to `submit`.
+    pub async fn steer(self: &Arc<Self>, req: SendMessageRequest) -> Result<()> {
+        let h = self.handle(&req.session_id)?;
+        if h.is_running() {
+            let pending = { let mut st = h.steer.lock(); st.push(QueuedMessage::from_request(req)); st.clone() };
+            self.emit(AgentEvent::Steer { session_id: h.id(), pending });
+            return Ok(());
+        }
+        self.spawn_drive(h, req, None);
+        Ok(())
+    }
+    pub fn steer_pending(&self, h: &SessionHandle) -> bool { !h.steer.lock().is_empty() }
+    /// Take every pending steer message (oldest first) and tell the UI the buffer is empty.
+    pub fn take_steer(&self, h: &SessionHandle) -> Vec<QueuedMessage> {
+        let items: Vec<QueuedMessage> = std::mem::take(&mut *h.steer.lock());
+        if !items.is_empty() { self.emit(AgentEvent::Steer { session_id: h.id(), pending: vec![] }); }
+        items
     }
     pub fn spawn_drive(self: &Arc<Self>, h: Arc<SessionHandle>, req: SendMessageRequest, mode_override: Option<ModeSpec>) {
         h.running.store(true, Ordering::SeqCst);
@@ -181,11 +297,14 @@ impl AgentManager {
             while let Some(r) = next.take() {
                 let cancel = h.reset_token();
                 if let Err(e) = crate::ai::agent::runner::run_turn(mgr.clone(), h.clone(), r, mode_override.clone(), cancel).await { tracing::warn!(error=%e, "turn failed"); }
+                // Steer messages that arrived after the runner's last drain (or while the turn was failing) run next.
+                let leftover = mgr.take_steer(&h);
+                if !leftover.is_empty() { let mut s = h.session.lock(); for (i, q) in leftover.into_iter().enumerate() { s.queued.insert(i, q); } }
                 // Dequeue next message unless cancelled explicitly with an empty queue.
                 let q = { let mut s = h.session.lock(); if s.queued.is_empty() { None } else { Some(s.queued.remove(0)) } };
                 if let Some(q) = q {
                     mgr.emit(AgentEvent::Queue { session_id: h.id(), queued: h.session.lock().queued.clone() });
-                    next = Some(q.request.unwrap_or(SendMessageRequest { session_id: h.id(), text: q.text, context: q.context, images: q.images, mode: q.mode.unwrap_or_else(|| h.session.lock().mode.clone()), ..Default::default() }));
+                    next = Some({ let s = h.session.lock(); q.into_request(&s) });
                 }
             }
             h.running.store(false, Ordering::SeqCst);
@@ -197,6 +316,35 @@ impl AgentManager {
         if let Some(h) = self.get_loaded(id) { h.token().cancel(); }
         // Drop pending waiters for this session so the turn unblocks.
         self.approvals.retain(|_, _| true);
+    }
+    /// Edit a queued message in place (text and, optionally, context); the stored request is kept in sync so the item
+    /// still runs with the model/thinking/agent it was submitted with.
+    pub fn queue_update(&self, session_id: &str, queued_id: &str, text: String, context: Option<Vec<ContextItem>>) -> Result<Vec<QueuedMessage>> {
+        let h = self.handle(session_id)?;
+        let queued = {
+            let mut s = h.session.lock();
+            let item = s.queued.iter_mut().find(|q| q.id == queued_id).ok_or_else(|| CaretError::not_found("queued message"))?;
+            item.text = text.clone();
+            if let Some(c) = &context { item.context = c.clone(); }
+            if let Some(r) = item.request.as_mut() { r.text = text; if let Some(c) = context { r.context = c; } }
+            s.touch(); s.queued.clone()
+        };
+        self.emit(AgentEvent::Queue { session_id: session_id.to_string(), queued: queued.clone() }); self.persist(&h);
+        Ok(queued)
+    }
+    /// Move a queued message to `index` (clamped); the queue drains in order.
+    pub fn queue_move(&self, session_id: &str, queued_id: &str, index: usize) -> Result<Vec<QueuedMessage>> {
+        let h = self.handle(session_id)?;
+        let queued = {
+            let mut s = h.session.lock();
+            let from = s.queued.iter().position(|q| q.id == queued_id).ok_or_else(|| CaretError::not_found("queued message"))?;
+            let item = s.queued.remove(from);
+            let to = index.min(s.queued.len());
+            s.queued.insert(to, item);
+            s.touch(); s.queued.clone()
+        };
+        self.emit(AgentEvent::Queue { session_id: session_id.to_string(), queued: queued.clone() }); self.persist(&h);
+        Ok(queued)
     }
 
     // ───────── approvals / questions ─────────
@@ -378,15 +526,34 @@ pub fn slugify(s: &str) -> String {
     out.trim_matches('-').chars().take(32).collect()
 }
 
-/// Create a git worktree under <root>/.caret/worktrees/<slug> on branch caret/<slug>.
-pub async fn create_worktree(root: &Path, title: &str, id: &str) -> Result<(PathBuf, String)> {
-    let mut slug = slugify(title); if slug.is_empty() || slug == "new-chat" { slug = format!("agent-{}", &id[..8]); } else { slug = format!("{}-{}", slug, &id[..4]); }
-    let dir = root.join(".caret").join("worktrees"); std::fs::create_dir_all(&dir)?;
-    // keep worktrees out of git status
-    let exclude = root.join(".git").join("info").join("exclude");
-    if let Ok(cur) = std::fs::read_to_string(&exclude) { if !cur.contains(".caret/worktrees") { let _ = std::fs::write(&exclude, format!("{cur}\n.caret/worktrees/\n")); } } else if root.join(".git").is_dir() { let _ = std::fs::create_dir_all(exclude.parent().unwrap()); let _ = std::fs::write(&exclude, ".caret/worktrees/\n"); }
-    let path = dir.join(&slug); let branch = format!("caret/{slug}");
-    let out = tokio::process::Command::new("git").args(["worktree", "add", "-b", &branch, path.to_str().unwrap_or("")]).current_dir(root).output().await.map_err(|e| CaretError::io(format!("git: {e}")))?;
+/// Create a git worktree at `<worktrees.location>/<slug>` on a branch rendered from `worktrees.branchTemplate`.
+/// Returns `(path, branch, base commit)`; the base lets cleanup tell "no commits" from "merged" later.
+pub async fn create_worktree(root: &Path, cfg: &crate::core::settings::WorktreeSettings, title: &str, id: &str, model: Option<&str>) -> Result<(PathBuf, String, Option<String>)> {
+    use crate::ai::agent::worktrees;
+    let slug = worktrees::worktree_slug(title, id);
+    let dir = worktrees::resolve_location(root, &cfg.location); std::fs::create_dir_all(&dir)?;
+    // keep in-repo worktree folders out of git status
+    if let Ok(rel) = dir.strip_prefix(root) {
+        let rel = rel.to_string_lossy().trim_matches('/').to_string();
+        if !rel.is_empty() {
+            let exclude = root.join(".git").join("info").join("exclude");
+            let line = format!("{rel}/");
+            if let Ok(cur) = std::fs::read_to_string(&exclude) { if !cur.lines().any(|l| l.trim() == line) { let _ = std::fs::write(&exclude, format!("{cur}\n{line}\n")); } } else if root.join(".git").is_dir() { let _ = std::fs::create_dir_all(exclude.parent().unwrap()); let _ = std::fs::write(&exclude, format!("{line}\n")); }
+        }
+    }
+    let path = dir.join(&slug);
+    let mut branch = worktrees::render_branch_template(&cfg.branch_template, &slug, model, id, &worktrees::today());
+    let mut out = worktree_add(root, &path, &branch).await?;
+    if !out.status.success() && String::from_utf8_lossy(&out.stderr).contains("already exists") {
+        // Template without a unique placeholder (e.g. `{model}` alone): disambiguate with part of the id.
+        branch = format!("{branch}-{}", &id[..4.min(id.len())]);
+        out = worktree_add(root, &path, &branch).await?;
+    }
     if !out.status.success() { return Err(CaretError::new("git", format!("git worktree add failed: {}", String::from_utf8_lossy(&out.stderr)))); }
-    Ok((path, branch))
+    let base = tokio::process::Command::new("git").args(["rev-parse", "HEAD"]).current_dir(&path).output().await.ok().filter(|o| o.status.success()).map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string()).filter(|s| !s.is_empty());
+    Ok((path, branch, base))
+}
+
+async fn worktree_add(root: &Path, path: &Path, branch: &str) -> Result<std::process::Output> {
+    tokio::process::Command::new("git").args(["worktree", "add", "-b", branch, path.to_str().unwrap_or("")]).current_dir(root).output().await.map_err(|e| CaretError::io(format!("git: {e}")))
 }

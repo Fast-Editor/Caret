@@ -9,23 +9,25 @@ import { SummaryPart } from './messages/Parts'
 import { classifyChange, followAction, isNearBottom, type FollowReason } from './scrollFollow'
 import './chat.css'
 
-const Row = memo(function Row({ message, sessionId, isLast, entering }: { message: ChatMessage; sessionId: string; isLast: boolean; version: number; entering: boolean }) {
+const Row = memo(function Row({ message, sessionId, isLast, entering, readOnly }: { message: ChatMessage; sessionId: string; isLast: boolean; version: number; entering: boolean; readOnly?: boolean }) {
   // Captured once per row instance: a message fades up when it arrives and never again (streaming deltas re-render the
   // same instance; restored transcripts mount with `entering=false`).
   const [enter] = useState(entering)
   const cls = enter ? 'animate-fade-up' : undefined
-  if (message.role === 'user') return <div className={cls}><UserMessage message={message} sessionId={sessionId} isLast={isLast} /></div>
-  if (message.role === 'system') return <div className={`px-3 py-1 ${cls ?? ''}`}>{message.parts.map((p, i) => (p.type === 'summary' ? <SummaryPart key={i} text={p.text} /> : p.type === 'text' ? <div key={i} className="text-[11.5px] text-faint italic">{p.text}</div> : null))}</div>
-  return <div className={cls}><AssistantMessage message={message} sessionId={sessionId} isLast={isLast} /></div>
-}, (a, b) => a.message.id === b.message.id && a.version === b.version && a.isLast === b.isLast)
+  if (message.role === 'user') return <div className={cls} data-message-id={message.id}><UserMessage message={message} sessionId={sessionId} isLast={isLast} readOnly={readOnly} /></div>
+  // System notes (handoff, lint follow-ups) render as a muted divider; compaction summaries keep their expandable card.
+  if (message.role === 'system') return <div className={`px-3 py-1 ${cls ?? ''}`} data-message-id={message.id}>{message.parts.map((p, i) => (p.type === 'summary' ? <SummaryPart key={i} text={p.text} /> : p.type === 'text' ? <div key={i} className="flex items-center gap-2 my-1 text-[11px] text-faint" data-testid="system-note"><span className="flex-1 h-px bg-border" /><span className="truncate-1 max-w-[80%]" title={p.text}>{p.text}</span><span className="flex-1 h-px bg-border" /></div> : null))}</div>
+  return <div className={cls} data-message-id={message.id}><AssistantMessage message={message} sessionId={sessionId} isLast={isLast} readOnly={readOnly} /></div>
+}, (a, b) => a.message.id === b.message.id && a.version === b.version && a.isLast === b.isLast && a.readOnly === b.readOnly)
 
 /**
  * Renders the transcript with auto-follow (glide on new messages, instant on streaming deltas, anchored when older
  * messages are revealed), a "jump to latest" pill with an unread count, and a windowed tail for very long sessions.
  */
-export function MessageList({ sessionId, messages, header }: { sessionId: string; messages: ChatMessage[]; header?: React.ReactNode }) {
+export function MessageList({ sessionId, messages, header, readOnly }: { sessionId: string; messages: ChatMessage[]; header?: React.ReactNode; readOnly?: boolean }) {
   const versions = useChat((s) => s.versions)
   const streamingId = useChat((s) => s.streaming[sessionId])
+  const reveal = useChat((s) => s.revealTarget)
   const ref = useRef<HTMLDivElement>(null)
   const [stick, setStick] = useState(true)
   const [unread, setUnread] = useState(0)
@@ -75,6 +77,20 @@ export function MessageList({ sessionId, messages, header }: { sessionId: string
   // Viewport resizes (pane drag, keyboard) re-pin instantly.
   useEffect(() => { const el = ref.current; if (!el || typeof ResizeObserver === 'undefined') return; const ro = new ResizeObserver(() => apply('resize')); ro.observe(el); return () => ro.disconnect() }, [apply])
 
+  // Message search: reveal a message (widen the window if it is hidden), scroll it into view, flash it, then clear the request.
+  useEffect(() => {
+    if (!reveal || reveal.sessionId !== sessionId) return
+    const idx = messages.findIndex((m) => m.id === reveal.messageId)
+    if (idx === -1) return
+    if (idx < start) { setWindow(messages.length - idx + 20); return } // re-runs once the window has grown
+    const el = ref.current?.querySelector<HTMLElement>(`[data-message-id="${reveal.messageId}"]`)
+    if (!el) return
+    setStick(false); stickRef.current = false
+    el.scrollIntoView({ block: 'center' })
+    el.classList.add('chat-msg-flash'); window.setTimeout(() => el.classList.remove('chat-msg-flash'), 1800)
+    useChat.getState().clearReveal()
+  }, [reveal, sessionId, messages, start])
+
   const [pillMounted, pillVisible] = usePresence(!stick)
   const jump = () => { const el = ref.current; if (el) scrollTo(el, el.scrollHeight); setStick(true); setUnread(0) }
   return (
@@ -83,7 +99,7 @@ export function MessageList({ sessionId, messages, header }: { sessionId: string
         <div key={sessionId} className="animate-fade">
           {header}
           {start > 0 && <button type="button" onClick={() => setWindow((w) => w + 120)} className="w-full py-2 text-[11px] text-muted hover:text-fg">Show {Math.min(120, start)} earlier messages ({start} hidden)</button>}
-          {shown.map((m, i) => <Row key={m.id} message={m} sessionId={sessionId} isLast={start + i === messages.length - 1} version={versions[m.id] ?? 0} entering={isEntering(m.id)} />)}
+          {shown.map((m, i) => <Row key={m.id} message={m} sessionId={sessionId} isLast={start + i === messages.length - 1} version={versions[m.id] ?? 0} entering={isEntering(m.id)} readOnly={readOnly} />)}
           <div className="h-3" />
         </div>
       </div>

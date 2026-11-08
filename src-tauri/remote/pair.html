@@ -1,0 +1,78 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Pair with Caret</title>
+<style>
+  :root { color-scheme: dark; }
+  html, body { height: 100%; margin: 0; }
+  body { display: flex; align-items: center; justify-content: center; background: #161618; color: #e7e7ea; font: 14px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; }
+  .card { width: min(360px, calc(100vw - 32px)); padding: 28px 24px; border: 1px solid #2a2a2e; border-radius: 10px; background: #1c1c1f; box-shadow: 0 12px 40px rgba(0,0,0,.4); }
+  h1 { margin: 0 0 4px; font-size: 18px; font-weight: 600; }
+  p { margin: 0 0 18px; color: #9a9aa3; font-size: 13px; }
+  label { display: block; font-size: 11px; color: #9a9aa3; margin: 12px 0 4px; text-transform: uppercase; letter-spacing: .04em; }
+  input { width: 100%; box-sizing: border-box; height: 38px; padding: 0 12px; border-radius: 8px; border: 1px solid #333338; background: #121214; color: #fff; font-size: 14px; outline: none; }
+  input:focus { border-color: #7c8cff; }
+  #code { font: 600 26px/1 ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: .35em; text-align: center; height: 52px; }
+  button { margin-top: 18px; width: 100%; height: 38px; border: 0; border-radius: 8px; background: #7c8cff; color: #0b0b12; font-weight: 600; font-size: 14px; cursor: pointer; }
+  button:disabled { opacity: .6; cursor: default; }
+  .err { color: #ff7b7b; font-size: 12px; min-height: 18px; margin-top: 10px; }
+  .hint { margin-top: 16px; font-size: 11px; color: #6f6f78; }
+</style>
+</head>
+<body>
+  <form class="card" id="form" autocomplete="off">
+    <h1>Pair with Caret</h1>
+    <p>Open Settings &rarr; Remote on the Mac running Caret and press <b>Show pairing code</b>.</p>
+    <label for="code">Pairing code</label>
+    <input id="code" inputmode="numeric" pattern="[0-9]*" maxlength="6" placeholder="000000" autofocus required />
+    <label for="device">This device</label>
+    <input id="device" maxlength="80" placeholder="e.g. Laptop, iPad" />
+    <button id="go" type="submit">Pair</button>
+    <div class="err" id="err"></div>
+    <div class="hint">Anyone holding this browser's token can control the paired machine. Pair only devices you own and revoke them from Settings &rarr; Remote when done.</div>
+  </form>
+<script>
+(function () {
+  var params = new URLSearchParams(location.search);
+  var retried = params.get('r') === '1';
+  var stored = null;
+  try { stored = localStorage.getItem('caret_token'); } catch (e) { /* ignore */ }
+  var hasCookie = /(?:^|;\s*)caret_token=/.test(document.cookie);
+  // A token in localStorage but no cookie (cookie cleared): restore it once; if the server still shows this page
+  // the token was revoked, so forget it.
+  if (stored && !hasCookie && !retried) {
+    document.cookie = 'caret_token=' + encodeURIComponent(stored) + '; Path=/; SameSite=Lax; Max-Age=31536000';
+    location.replace('/?r=1');
+    return;
+  }
+  if (retried) { try { localStorage.removeItem('caret_token'); } catch (e) { /* ignore */ } document.cookie = 'caret_token=; Path=/; Max-Age=0'; }
+
+  var ua = navigator.userAgent || '';
+  var guess = /iPad/.test(ua) ? 'iPad' : /iPhone/.test(ua) ? 'iPhone' : /Android/.test(ua) ? 'Android' : /Windows/.test(ua) ? 'Windows PC' : /Mac/.test(ua) ? 'Mac' : /Linux/.test(ua) ? 'Linux' : 'Browser';
+  var browser = /Firefox\//.test(ua) ? 'Firefox' : /Edg\//.test(ua) ? 'Edge' : /Chrome\//.test(ua) ? 'Chrome' : /Safari\//.test(ua) ? 'Safari' : '';
+  document.getElementById('device').value = (guess + (browser ? ' ' + browser : '')).trim();
+
+  var form = document.getElementById('form'), code = document.getElementById('code'), err = document.getElementById('err'), go = document.getElementById('go');
+  code.addEventListener('input', function () { code.value = code.value.replace(/\D/g, '').slice(0, 6); });
+  form.addEventListener('submit', function (ev) {
+    ev.preventDefault();
+    err.textContent = '';
+    if (code.value.length !== 6) { err.textContent = 'Enter the six digit code.'; return; }
+    go.disabled = true;
+    fetch('/pair', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ code: code.value, device: document.getElementById('device').value }) })
+      .then(function (r) { return r.json().then(function (j) { return { ok: r.ok, status: r.status, body: j }; }); })
+      .then(function (r) {
+        if (!r.ok) { err.textContent = (r.body && r.body.error) || ('Pairing failed (' + r.status + ')'); go.disabled = false; return; }
+        var token = r.body.token;
+        try { localStorage.setItem('caret_token', token); } catch (e) { /* ignore */ }
+        document.cookie = 'caret_token=' + encodeURIComponent(token) + '; Path=/; SameSite=Lax; Max-Age=31536000';
+        location.replace('/');
+      })
+      .catch(function (e) { err.textContent = 'Could not reach Caret: ' + e; go.disabled = false; });
+  });
+})();
+</script>
+</body>
+</html>

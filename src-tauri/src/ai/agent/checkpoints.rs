@@ -51,6 +51,17 @@ pub fn restore_turn(ws_key: &str, session_id: &str, turn_id: &str) -> Result<Vec
 
 pub fn remove_session(ws_key: &str, session_id: &str) { let _ = std::fs::remove_dir_all(paths::sub_dir("checkpoints").join(ws_key).join(session_id)); }
 
+/// Move a session's checkpoints to another workspace key (scratch thread promoted to a project).
+pub fn move_session(from_key: &str, to_key: &str, session_id: &str) -> Result<()> {
+    let from = paths::sub_dir("checkpoints").join(from_key).join(session_id);
+    if !from.exists() { return Ok(()); }
+    let to = paths::sub_dir("checkpoints").join(to_key).join(session_id);
+    if let Some(p) = to.parent() { std::fs::create_dir_all(p)?; }
+    if to.exists() { let _ = std::fs::remove_dir_all(&to); }
+    std::fs::rename(&from, &to)?;
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -1,12 +1,14 @@
 import { useEffect, useMemo, useState } from 'react'
-import { Check, ChevronDown, ChevronRight, FileDiff, LayoutPanelLeft, ListChecks, Undo2, X } from 'lucide-react'
-import { useChat } from '@/store/chat'
+import { Check, ChevronDown, ChevronRight, Columns3, FileDiff, LayoutPanelLeft, ListChecks, Undo2, X } from 'lucide-react'
+import { isSessionBusy, resolveModel, useChat } from '@/store/chat'
 import { ChatPane } from '@/components/chat/ChatPane'
 import { AgentsSidebar } from '@/components/chat/AgentsSidebar'
 import { DiffView } from '@/components/chat/DiffView'
+import { MessageList } from '@/components/chat/MessageList'
 import { TodoList } from '@/components/chat/TodoList'
+import { compareColumns } from '@/components/chat/composer/compareModels'
 import { runCommand, hasCommand } from '@/lib/commands'
-import { fmtRelative } from '@/components/chat/util'
+import { fmtCost, fmtRelative, fmtTokens } from '@/components/chat/util'
 import type { PendingChange } from '@/types'
 
 function ChangeRow({ sessionId, changeId }: { sessionId: string; changeId: string }) {
@@ -72,17 +74,82 @@ function ChangesColumn({ sessionId }: { sessionId: string }) {
   )
 }
 
-/** Chat-centric workbench: sessions · transcript · changes. */
+/** One model's thread in the Compare view: read-only transcript, model header, usage footer, "Continue here". */
+function CompareColumn({ sessionId, active, onContinue }: { sessionId: string; active: boolean; onContinue: () => void }) {
+  const session = useChat((s) => s.loaded[sessionId])
+  const summary = useChat((s) => s.sessions.find((x) => x.id === sessionId))
+  const loadSession = useChat((s) => s.loadSession)
+  useEffect(() => { if (!session) void loadSession(sessionId) }, [sessionId, session, loadSession])
+  const modelId = session?.modelId ?? summary?.modelId
+  const model = resolveModel(modelId)
+  const status = session?.status ?? summary?.status
+  const busy = isSessionBusy(status)
+  const pending = session?.pendingChanges.filter((c) => c.status === 'pending').length ?? summary?.pendingChangeCount ?? 0
+  const usage = session?.usage
+  return (
+    <div className={`h-full flex flex-col min-w-0 bg-sidebar border-r border-border last:border-r-0 ${active ? 'ring-1 ring-inset ring-accent/40' : ''}`} data-testid="compare-column">
+      <div className="flex items-center gap-2 px-3 h-9 border-b border-border text-[12px]">
+        <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${busy ? 'bg-accent animate-breathe' : status === 'error' ? 'bg-danger' : status === 'awaiting-approval' || status === 'awaiting-input' ? 'bg-warning' : 'bg-border-strong'}`} title={status ?? 'idle'} />
+        <span className="font-medium truncate-1 flex-1" title={session?.title ?? summary?.title}>{model?.displayName ?? modelId ?? 'Model'}</span>
+        <button type="button" onClick={onContinue} className="px-1.5 h-6 rounded border border-border hover:bg-hover text-[11px] press" title="Make this the active thread and keep chatting with this model">Continue here</button>
+      </div>
+      <div className="flex-1 min-h-0 flex flex-col">
+        {session ? (session.messages.length > 0 ? <MessageList sessionId={sessionId} messages={session.messages} readOnly /> : <div className="flex-1 flex items-center justify-center text-faint text-[11.5px]">Waiting for the first reply…</div>) : <div className="flex-1 flex items-center justify-center text-faint text-[11.5px]">Loading…</div>}
+      </div>
+      <div className="h-7 shrink-0 flex items-center gap-2 px-3 border-t border-border text-[10.5px] text-faint">
+        {usage && (usage.inputTokens > 0 || usage.outputTokens > 0) ? <span title="Session usage">{fmtTokens(usage.inputTokens)} in · {fmtTokens(usage.outputTokens)} out{usage.costUsd !== undefined ? ` · ${fmtCost(usage.costUsd)}` : ''}</span> : <span>{busy ? 'Running…' : 'No usage yet'}</span>}
+        <span className="flex-1" />
+        {pending > 0 && <span>{pending} pending change{pending === 1 ? '' : 's'}</span>}
+      </div>
+    </div>
+  )
+}
+
+/** Side-by-side answers of one fan-out batch (2 to 4 columns). */
+function CompareView({ group, onClose }: { group: string; onClose: () => void }) {
+  const activeId = useChat((s) => s.activeSessionId)
+  const sessions = useChat((s) => s.sessions)
+  const selectSession = useChat((s) => s.selectSession)
+  const members = useMemo(() => sessions.filter((x) => x.fanOutGroup === group), [sessions, group])
+  const cols = useMemo(() => compareColumns(members, activeId), [members, activeId])
+  const base = members[0]?.title.split(' · ')[0] ?? 'Compare'
+  if (cols.length === 0) return null
+  return (
+    <div className="h-full flex flex-col min-w-0">
+      <div className="flex items-center gap-2 px-3 h-9 border-b border-border text-[12px] bg-sidebar">
+        <Columns3 size={13} className="text-accent" /><span className="font-medium truncate-1">{base}</span><span className="text-faint">comparing {cols.length} of {members.length} models</span>
+        <span className="flex-1" />
+        <button type="button" onClick={onClose} className="text-[11px] text-muted hover:text-fg">Close compare</button>
+      </div>
+      <div className="flex-1 min-h-0 grid" style={{ gridTemplateColumns: `repeat(${cols.length}, minmax(0, 1fr))` }}>
+        {cols.map((c) => <CompareColumn key={c.id} sessionId={c.id} active={c.id === activeId} onContinue={() => { void selectSession(c.id); onClose() }} />)}
+      </div>
+    </div>
+  )
+}
+
+/** Chat-centric workbench: sessions · transcript · changes. Fan-out batches open as a side-by-side Compare view. */
 export function AgentsLayout() {
   const activeId = useChat((s) => s.activeSessionId)
+  const group = useChat((s) => (s.activeSessionId ? s.loaded[s.activeSessionId]?.fanOutGroup ?? s.sessions.find((x) => x.id === s.activeSessionId)?.fanOutGroup : undefined))
+  const groupSize = useChat((s) => (group ? s.sessions.filter((x) => x.fanOutGroup === group).length : 0))
+  // "Continue here" / "Close compare" dismiss the view for this group; the Compare button brings it back.
+  const [dismissed, setDismissed] = useState<string | null>(null)
+  const showCompare = !!group && groupSize >= 2 && dismissed !== group
   return (
     <div className="h-full w-full flex min-w-0 bg-app">
       <div className="w-[260px] shrink-0 border-r border-border bg-sidebar flex flex-col">
-        <div className="flex items-center gap-2 px-3 h-9 border-b border-border text-[12px]"><LayoutPanelLeft size={13} className="text-muted" /><span className="font-medium flex-1">Agents</span><button type="button" onClick={() => void runCommand('chat.toggleAgentsLayout')} title="Back to editor layout" className="text-[11px] text-muted hover:text-fg">Editor →</button></div>
+        <div className="flex items-center gap-2 px-3 h-9 border-b border-border text-[12px]"><LayoutPanelLeft size={13} className="text-muted" /><span className="font-medium flex-1">Agents</span>{group && groupSize >= 2 && !showCompare && <button type="button" onClick={() => setDismissed(null)} title="Show this fan-out side by side" className="inline-flex items-center gap-1 text-[11px] text-muted hover:text-fg"><Columns3 size={11} /> Compare</button>}<button type="button" onClick={() => void runCommand('chat.toggleAgentsLayout')} title="Back to editor layout" className="text-[11px] text-muted hover:text-fg">Editor →</button></div>
         <div className="flex-1 min-h-0"><AgentsSidebar onOpen={() => {}} /></div>
       </div>
-      <div className="flex-1 min-w-0 flex justify-center bg-app"><div className="w-full max-w-[900px] h-full border-x border-border"><ChatPane embedded /></div></div>
-      <div className="w-[380px] shrink-0 min-w-0">{activeId ? <ChangesColumn sessionId={activeId} /> : null}</div>
+      {showCompare && group ? (
+        <div className="flex-1 min-w-0"><CompareView group={group} onClose={() => setDismissed(group)} /></div>
+      ) : (
+        <>
+          <div className="flex-1 min-w-0 flex justify-center bg-app"><div className="w-full max-w-[900px] h-full border-x border-border"><ChatPane embedded /></div></div>
+          <div className="w-[380px] shrink-0 min-w-0">{activeId ? <ChangesColumn sessionId={activeId} /> : null}</div>
+        </>
+      )}
     </div>
   )
 }

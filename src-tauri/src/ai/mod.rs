@@ -10,4 +10,5 @@ pub mod commit;
 pub mod review;
 pub mod single_shot_commands;
 pub mod router;
+pub mod usage;
 // REGISTER:ai-modules (agent, tab, inline_edit, commit, review, apply, ...)

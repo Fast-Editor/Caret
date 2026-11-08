@@ -8,6 +8,7 @@ caret .                # open the current folder as the workspace
 caret src/app.ts       # open a file (its folder becomes the workspace when none is open)
 caret -g app.ts:12:4   # open at line 12, column 4 — a bare app.ts:12:4 works too
 caret -v | -h          # version / help
+caret serve            # run Caret and serve its UI to browsers on your LAN / Tailscale (docs/REMOTE.md)
 ```
 
 `-n/--new-window`, `-r/--reuse-window`, `-w/--wait` and `-a/--add` are accepted for muscle-memory compatibility and
@@ -50,7 +51,36 @@ at startup.
 
 `CARET_CLI_DRY_RUN=1 caret . a.ts:3` prints the `open` commands instead of running them (used by the Rust tests).
 
+## `caret serve`
+
+```sh
+caret serve [--host 127.0.0.1|0.0.0.0] [--port N] [--no-window] [--print-url] [paths...]
+```
+
+Starts Caret and serves its UI to browsers (see [REMOTE.md](REMOTE.md)). Unlike plain `caret`, which hands paths to
+the running app through LaunchServices, `serve` **execs the app binary directly**
+(`Caret.app/Contents/MacOS/caret serve …`) so the URL and pairing code print in your terminal and Ctrl-C stops the
+server together with the app:
+
+```
+Caret remote: http://192.168.1.20:17430  pairing code: 482913 (valid 5 min)
+Caret remote: http://100.101.102.103:17430  pairing code: 482913 (valid 5 min)
+Caret remote: http://127.0.0.1:17430  pairing code: 482913 (valid 5 min)
+```
+
+* `--host` binds `127.0.0.1` (default, this Mac only) or `0.0.0.0` (every interface: LAN and Tailscale);
+  `--port` defaults to 17430. Both override `Settings.remote` for this process only.
+* `--no-window` hides the desktop window after start-up. The webview keeps running hidden (the relay needs it), so
+  the window still exists; show it again from the Dock.
+* `--print-url` prints just the URL(s), one per line, without a pairing code (pair from Settings → Remote).
+* Any other arguments are paths and open like `caret <path>`; the app's own `parse_open_args` skips `serve` and its
+  options. If Caret is already running, `caret serve` starts a second instance; quit the first one first.
+
+In the app, `remote::strip_serve_args` (src-tauri/src/remote/mod.rs) parses the options at start-up and
+`remote::init` starts the server during setup.
+
 Command ids: `cli.install`, `cli.uninstall`, `cli.status` (hidden), `cli.open` (hidden; `{ path, line?, col? }`).
+Remote commands (`api.remote.*`) are listed in [REMOTE.md](REMOTE.md).
 
 Limitations: macOS only for now (Linux/Windows fall back to starting the binary with the paths as arguments);
 positions are honoured for files that exist; a brand-new file name is not created.

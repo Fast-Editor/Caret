@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useState } from 'react'
 import { DropdownMenu, Popover } from 'radix-ui'
-import { Bot, Brain, Bug, Check, ChevronDown, Gauge, ListChecks, MessageCircle, Search, Sparkles, Star, WandSparkles, Zap } from 'lucide-react'
+import { Bot, Brain, Bug, Check, ChevronDown, Columns3, Gauge, ListChecks, MessageCircle, Search, Sparkles, Star, WandSparkles, Zap } from 'lucide-react'
 import type { Effort, ModeId, ThinkingPref } from '@/types'
-import { AUTO_MODEL, useChat, useModelGroups, type ModeDescriptor } from '@/store/chat'
+import { AUTO_MODEL, isSessionBusy, useChat, useModelGroups, type ModeDescriptor } from '@/store/chat'
+import { isFanOut, pruneCompare } from './compareModels'
 import { runCommand } from '@/lib/commands'
 import { autoSummary, initRouterStore, useRouter } from '@/store/router'
 import { fmtTokens } from '../util'
@@ -41,14 +42,23 @@ export function ModeSelector({ sessionId }: { sessionId: string }) {
   )
 }
 
+const NO_COMPARE: string[] = []
+
 export function ModelPicker({ sessionId }: { sessionId: string }) {
   const groups = useModelGroups()
   const modelId = useChat((s) => s.draft(sessionId).modelId)
+  const agentId = useChat((s) => s.draft(sessionId).agentId ?? 'caret')
+  const compare = useChat((s) => s.draft(sessionId).compareModelIds ?? NO_COMPARE)
+  const session = useChat((s) => s.loaded[sessionId])
   const setModel = useChat((s) => s.setModel)
+  const handoff = useChat((s) => s.handoffSession)
+  const toggleCompare = useChat((s) => s.toggleCompareModel)
+  const clearCompare = useChat((s) => s.clearCompare)
   const favs = useChat((s) => s.favoriteModels)
   const toggleFav = useChat((s) => s.toggleFavoriteModel)
   const [q, setQ] = useState('')
   const [open, setOpen] = useState(false)
+  const [compareMode, setCompareMode] = useState(false)
   const routerStatus = useRouter((s) => s.status)
   useEffect(() => { initRouterStore() }, [])
   const auto = autoSummary(routerStatus)
@@ -57,40 +67,57 @@ export function ModelPicker({ sessionId }: { sessionId: string }) {
   const filtered = useMemo(() => (q ? all.filter((m) => `${m.displayName} ${m.model} ${m.providerName}`.toLowerCase().includes(q.toLowerCase())) : all), [all, q])
   const favList = filtered.filter((m) => favs.includes(m.id))
   const byProvider = groups.map((g) => ({ ...g, models: filtered.filter((m) => m.providerId === g.providerId) })).filter((g) => g.models.length)
-  const pick = (id: string) => { void setModel(sessionId, id); setOpen(false); setQ('') }
+  const selectedCompare = useMemo(() => pruneCompare(compare, all.map((m) => m.id)), [compare, all])
+  const comparing = selectedCompare.length > 0 || compareMode
+  // Picking a different model on a thread that already has messages is a handoff (thinking blocks of the old model
+  // are dropped, a note is left in the thread). Empty, busy or external-agent threads just update the draft.
+  const pick = (id: string, e?: { shiftKey?: boolean }) => {
+    if (compareMode || e?.shiftKey) { if (id !== AUTO_MODEL) toggleCompare(sessionId, id); return }
+    const hasMessages = (session?.messages.length ?? 0) > 0
+    if (id !== AUTO_MODEL && id !== modelId && hasMessages && agentId === 'caret' && !isSessionBusy(session?.status)) {
+      void handoff(sessionId, { modelId: id }).catch((err) => { void setModel(sessionId, id); void runCommand('app.notify', { level: 'warn', title: 'Model switched without handoff', message: err instanceof Error ? err.message : String(err) }) })
+    } else void setModel(sessionId, id)
+    setOpen(false); setQ('')
+  }
+  const triggerLabel = isFanOut(selectedCompare) ? `${selectedCompare.length} models` : modelId === AUTO_MODEL ? 'Auto' : cur?.displayName ?? modelId
   return (
-    <Popover.Root open={open} onOpenChange={setOpen}>
+    <Popover.Root open={open} onOpenChange={(o) => { setOpen(o); if (!o && selectedCompare.length === 0) setCompareMode(false) }}>
       <Popover.Trigger asChild>
-        <button type="button" title="Model" className="flex items-center gap-1 h-6 px-1.5 rounded hover:bg-hover text-[11.5px] max-w-[180px] cursor-pointer">
-          {cur?.isFast && <Zap size={11} className="text-warning" />}<span className="truncate-1">{modelId === AUTO_MODEL ? 'Auto' : cur?.displayName ?? modelId}</span><ChevronDown size={11} className="text-faint" />
+        <button type="button" title={isFanOut(selectedCompare) ? `Compare: ${selectedCompare.map((id) => all.find((m) => m.id === id)?.displayName ?? id).join(', ')}` : 'Model (shift-click a model to compare)'} className="flex items-center gap-1 h-6 px-1.5 rounded hover:bg-hover text-[11.5px] max-w-[180px] cursor-pointer" data-testid="model-picker">
+          {isFanOut(selectedCompare) ? <Columns3 size={11} className="text-accent" /> : cur?.isFast && <Zap size={11} className="text-warning" />}<span className="truncate-1">{triggerLabel}</span><ChevronDown size={11} className="text-faint" />
         </button>
       </Popover.Trigger>
       <Popover.Portal>
         <Popover.Content data-caret-pop side="top" align="start" sideOffset={6} className={`${contentCls} w-[300px] p-0`}>
-          <div className="flex items-center gap-1.5 px-2 h-8 border-b border-border"><Search size={12} className="text-faint" /><input autoFocus value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search models…" className="flex-1 bg-transparent outline-none text-[12px]" /></div>
+          <div className="flex items-center gap-1.5 px-2 h-8 border-b border-border"><Search size={12} className="text-faint" /><input autoFocus value={q} onChange={(e) => setQ(e.target.value)} placeholder={comparing ? 'Pick models to compare…' : 'Search models…'} className="flex-1 bg-transparent outline-none text-[12px]" /></div>
+          {comparing && <div className="flex items-center gap-2 px-2 h-7 border-b border-border text-[11px] text-muted bg-app/40"><Columns3 size={11} className="text-accent" /><span className="flex-1">{selectedCompare.length} selected · Send runs each model in its own thread</span>{selectedCompare.length > 0 && <button type="button" onClick={() => { clearCompare(sessionId); setCompareMode(false) }} className="hover:text-fg">Clear</button>}</div>}
           <div className="max-h-80 overflow-y-auto p-1">
-            <button type="button" onClick={() => pick(AUTO_MODEL)} className={`${itemCls} w-full hover:bg-selected`}><WandSparkles size={13} className="text-accent" /><div className="flex-1 text-left"><div>Auto{auto.routed && <span className="ml-1 text-[10px] text-success">● routed</span>}</div><div className="text-[10.5px] text-faint">{auto.text}</div></div>{modelId === AUTO_MODEL && <Check size={12} className="text-accent" />}</button>
+            {!comparing && <button type="button" onClick={() => pick(AUTO_MODEL)} className={`${itemCls} w-full hover:bg-selected`}><WandSparkles size={13} className="text-accent" /><div className="flex-1 text-left"><div>Auto{auto.routed && <span className="ml-1 text-[10px] text-success">● routed</span>}</div><div className="text-[10.5px] text-faint">{auto.text}</div></div>{modelId === AUTO_MODEL && <Check size={12} className="text-accent" />}</button>}
             {favList.length > 0 && <div className="px-2 pt-1.5 pb-0.5 text-[10.5px] text-faint">Favorites</div>}
-            {favList.map((m) => <ModelRow key={`fav-${m.id}`} m={m} selected={m.id === modelId} fav onPick={pick} onFav={toggleFav} />)}
+            {favList.map((m) => <ModelRow key={`fav-${m.id}`} m={m} selected={m.id === modelId} fav onPick={pick} onFav={toggleFav} compare={comparing ? selectedCompare.includes(m.id) : undefined} />)}
             {byProvider.map((g) => (
-              <div key={g.providerId}><div className="px-2 pt-1.5 pb-0.5 text-[10.5px] text-faint">{g.providerName}</div>{g.models.map((m) => <ModelRow key={m.id} m={{ ...m, providerName: g.providerName }} selected={m.id === modelId} fav={favs.includes(m.id)} onPick={pick} onFav={toggleFav} />)}</div>
+              <div key={g.providerId}><div className="px-2 pt-1.5 pb-0.5 text-[10.5px] text-faint">{g.providerName}</div>{g.models.map((m) => <ModelRow key={m.id} m={{ ...m, providerName: g.providerName }} selected={m.id === modelId} fav={favs.includes(m.id)} onPick={pick} onFav={toggleFav} compare={comparing ? selectedCompare.includes(m.id) : undefined} />)}</div>
             ))}
             {all.length === 0 && <div className="px-2 py-3 text-faint text-center text-[11.5px]">No models enabled</div>}
           </div>
-          <div className="border-t border-border p-1"><button type="button" onClick={() => { setOpen(false); void runCommand('settings.open', { page: 'models' }) }} className={`${itemCls} w-full hover:bg-selected text-accent`}>Add or configure models…</button></div>
+          <div className="border-t border-border p-1 flex items-center gap-1">
+            <button type="button" onClick={() => { setOpen(false); void runCommand('settings.open', { page: 'models' }) }} className={`${itemCls} flex-1 hover:bg-selected text-accent`}>Add or configure models…</button>
+            <button type="button" onClick={() => setCompareMode((c) => !c)} title="Select several models; Send then runs the prompt on each in parallel threads (or shift-click models)" className={`${itemCls} hover:bg-selected ${comparing ? 'text-accent' : 'text-muted'}`} data-testid="compare-toggle"><Columns3 size={13} /> Compare models</button>
+          </div>
         </Popover.Content>
       </Popover.Portal>
     </Popover.Root>
   )
 }
 
-function ModelRow({ m, selected, fav, onPick, onFav }: { m: { id: string; displayName: string; model: string; contextWindow: number; inputPricePerM?: number; outputPricePerM?: number; supportsThinking: boolean; supportsVision: boolean; isFast?: boolean; providerName: string }; selected: boolean; fav: boolean; onPick: (id: string) => void; onFav: (id: string) => void }) {
+function ModelRow({ m, selected, fav, onPick, onFav, compare }: { m: { id: string; displayName: string; model: string; contextWindow: number; inputPricePerM?: number; outputPricePerM?: number; supportsThinking: boolean; supportsVision: boolean; isFast?: boolean; providerName: string }; selected: boolean; fav: boolean; onPick: (id: string, e?: { shiftKey?: boolean }) => void; onFav: (id: string) => void; compare?: boolean }) {
   return (
-    <div className={`${itemCls} group/row hover:bg-selected`} onClick={() => onPick(m.id)} role="option" aria-selected={selected}>
+    <div className={`${itemCls} group/row hover:bg-selected`} onClick={(e) => onPick(m.id, e)} role="option" aria-selected={compare ?? selected}>
+      {compare !== undefined && <span className={`flex items-center justify-center w-3.5 h-3.5 rounded-sm border ${compare ? 'bg-accent border-accent text-accent-fg' : 'border-border-strong'}`}>{compare && <Check size={10} />}</span>}
       <div className="flex-1 min-w-0"><div className="flex items-center gap-1 truncate-1">{m.displayName}{m.isFast && <Zap size={10} className="text-warning" />}{m.supportsThinking && <Brain size={10} className="text-faint" />}</div>
         <div className="text-[10.5px] text-faint truncate-1">{fmtTokens(m.contextWindow)} ctx{m.inputPricePerM !== undefined ? ` · $${m.inputPricePerM}/$${m.outputPricePerM ?? '?'} per M` : ''}{m.supportsVision ? ' · vision' : ''}</div></div>
       <button type="button" onClick={(e) => { e.stopPropagation(); onFav(m.id) }} title={fav ? 'Unfavorite' : 'Favorite'} className={`${fav ? 'text-warning' : 'opacity-0 group-hover/row:opacity-100 text-faint'}`}><Star size={11} fill={fav ? 'currentColor' : 'none'} /></button>
-      {selected && <Check size={12} className="text-accent" />}
+      {compare === undefined && selected && <Check size={12} className="text-accent" />}
     </div>
   )
 }

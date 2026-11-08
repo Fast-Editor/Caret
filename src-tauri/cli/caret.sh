@@ -16,6 +16,7 @@ Open folders and files in Caret.
   caret .                open the current folder as the workspace
   caret src/app.ts       open a file (its folder becomes the workspace if none is open)
   caret -g app.ts:12:4   open a file at line 12, column 4 (a bare app.ts:12:4 works too)
+  caret serve            run Caret and serve its UI to browsers on your LAN or over Tailscale
 
 Options:
   -g, --goto <file:line[:col]>   open a file at a position
@@ -24,8 +25,27 @@ Options:
   -w, --wait                     accepted for compatibility (does not wait)
   -v, --version                  print the version
   -h, --help                     show this help
+
+Serve (caret serve [options] [paths...]; prints the URL and a pairing code, Ctrl-C stops):
+  --host <addr>                  bind address: 127.0.0.1 (default, this Mac only) or 0.0.0.0 (LAN / Tailscale)
+  --port <n>                     port (default 17430)
+  --no-window                    hide the desktop window (the app keeps running; the window still exists)
+  --print-url                    print only the URL(s), no pairing code
 USAGE
 }
+
+# `caret serve …` runs the app binary directly so its stdout (URL + pairing code) lands in this terminal.
+serve_app() {
+  bin="$APP_PATH/Contents/MacOS/caret"
+  if [ -f "$APP_PATH" ] && [ -x "$APP_PATH" ]; then bin=$APP_PATH; fi
+  for a in "$@"; do case "$a" in -h|--help) usage; exit 0 ;; esac; done
+  if [ -n "$CARET_CLI_DRY_RUN" ]; then
+    printf 'exec %s serve' "$bin"; for x in "$@"; do printf ' %s' "$x"; done; printf '\n'; exit 0
+  fi
+  if [ ! -x "$bin" ]; then echo "caret: cannot find the Caret binary at $bin" >&2; exit 1; fi
+  exec "$bin" serve "$@"
+}
+if [ "$1" = "serve" ]; then shift; serve_app "$@"; fi
 
 is_num() { case "$1" in ''|*[!0-9]*) return 1 ;; esac; return 0; }
 

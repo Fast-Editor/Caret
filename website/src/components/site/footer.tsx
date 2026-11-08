@@ -11,6 +11,7 @@ export function Footer() {
         </div>
         <nav className="flex flex-wrap gap-x-5 gap-y-2">
           <Link href="/docs" className="hover:text-foreground">Docs</Link>
+          <Link href="/compare" className="hover:text-foreground">Compare</Link>
           <Link href="/changelog" className="hover:text-foreground">Changelog</Link>
           <Link href="/download" className="hover:text-foreground">Download</Link>
           <a href={site.repo} className="hover:text-foreground" target="_blank" rel="noopener noreferrer">GitHub</a>

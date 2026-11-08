@@ -16,6 +16,8 @@
 
 ## Install
 
+Every channel, with its publication status, is in [docs/INSTALL.md](docs/INSTALL.md).
+
 **macOS** (Apple Silicon and Intel) — one line, no Gatekeeper dialog:
 
 ```bash
@@ -37,6 +39,15 @@ xattr -dr com.apple.quarantine /Applications/Caret.app
 **Windows** (`.msi` / `-setup.exe`) and **Linux** (`.deb`, `.rpm`, `.AppImage`) installers are attached to every release too. They are built
 by the same workflow but have not been exercised at runtime yet; expect rough edges and please report them. The Windows installer
 is unsigned, so SmartScreen shows *More info → Run anyway* once.
+
+Package managers (manifests in [`packaging/`](packaging) and [`flake.nix`](flake.nix); winget, scoop and the AUR are awaiting first publication):
+
+```bash
+winget install FastEditor.Caret                                                                   # Windows (pending winget-pkgs)
+scoop install https://raw.githubusercontent.com/Fast-Editor/Caret/main/packaging/scoop/caret.json  # Windows
+yay -S caret-bin                                                                                  # Arch Linux (pending AUR)
+nix run github:Fast-Editor/Caret                                                                  # Nix, macOS Apple Silicon or Linux x86_64
+```
 
 ## Why Caret
 

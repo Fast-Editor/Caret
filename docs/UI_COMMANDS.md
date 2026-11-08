@@ -47,9 +47,31 @@ into `block-start` / `block-command` / `block-end` / `status` PTY events (`PtyBl
 Bus topics: `terminal.status` and `agents.terminalStatus` carry the same `TerminalStatusSummary` whenever any
 terminal's status changes. `settings.terminal.aiEnabled=false` hides ⌘K, explain and add-to-chat entries.
 
+## Queue, steer and background threads (`src/lib/chatBridge.ts`)
+
+| Id | Args | Notes |
+|---|---|---|
+| `chat.steer` | `{ text?, sessionId? }` | Inject the draft (or `text`) into the running turn before the agent's next step; idle sessions send normally; ACP agents fall back to send now. Composer: `Alt+Enter` (or `Enter` when Steer is the default) |
+| `chat.sendInNewThread` | `{ text?, sessionId? }` | Send the draft in a new background session with the same agent/model/mode, stay on the current thread, toast with **Open**. Composer: `Cmd+Shift+Enter` |
+
+The Queue/Steer default for `Enter` while a turn runs lives in the ui store (`steerByDefault`, persisted). See docs/THREADS.md.
+
 ## Agents (ACP)
 
 - `chat.new` accepts `{ mode?, agentId? }` — `agentId` is `caret` (built-in) or an ACP agent id (`claude-code`, `codex`, `gemini`, `pi`, `glm`, or a custom id). Returns the session id.
+- `chat.newScratch` ("Chat: New Scratch Thread") accepts `{ mode?, agentId?, title? }` and works with no folder open: the thread gets its own throwaway git repository under `~/.caret/scratch/<id>`; the chat pane banner offers "Make it a project..." (moves the folder, opens it as the workspace). Returns the session id.
+- `chat.newBackground` (mod+e) starts a thread in a git worktree; `settings.worktrees.perThreadDefault` makes every new thread do that. Source Control > Worktrees has "Clean up agent worktrees" (preview + remove per the cleanup policies).
 - `settings.open` with `{ page: 'agents' }` opens the external agents page.
 - Bus topics: `chat:agent-status` (per-session `AcpAgentStatus` fan-out of the `agent-status` agent event), `chat:agent-changed` (composer picker changed `{ sessionId, agentId }`), `acp:changed` (install/toggle/probe finished; pickers reload).
 - Automation: `window.__caret.stores.chat` exposes the chat store for `scripts/e2e.mjs`.
+
+## Threads (docs/THREADS.md)
+
+| Id | Args | Notes |
+|---|---|---|
+| `chat.nextThread` / `chat.prevThread` | – | `ctrl+alt+]` / `ctrl+alt+[`; walks the visible grouped order of the history list (collapsed sections skipped, current workspace only) |
+| `chat.searchMessages` | `{ query? }` | opens the history popover focused on the search box; 3+ characters also search message text across session files |
+| `chat.regenerateTitle` | `{ sessionId? }` | regenerates the title of the given (default: active) thread; needs one assistant reply |
+
+Row-menu actions (pin, snooze presets, settle, archive with 5 s undo) go through the chat store, not commands. The
+backend announces every lifecycle change with the `session-updated` agent event.

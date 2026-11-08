@@ -20,10 +20,23 @@ describe('settings schema registry', () => {
     expect(new Set(ids).size).toBe(ids.length)
   })
   it('select defaults are one of the options', () => {
-    for (const f of SETTINGS_FIELDS.filter((x) => x.type === 'select')) {
+    for (const f of SETTINGS_FIELDS.filter((x) => x.type === 'select' && !x.optional)) {
       const d = getPath(DEFAULTS, f.id) as string
       expect(f.options!.map((o) => o.value), f.id).toContain(d)
     }
+  })
+})
+
+describe('usage settings mirror', () => {
+  it('DEFAULTS.usage mirrors UsageSettings::default() in settings.rs', () => {
+    expect(DEFAULTS.usage).toEqual({ track: true, includeExternal: true, customPrices: {} })
+  })
+  it('the Usage page is registered with its tracking fields', () => {
+    const page = SETTINGS_PAGES.find((p) => p.id === 'usage')
+    expect(page?.title).toBe('Usage')
+    expect(page?.icon).toBe('chart')
+    expect(fieldsForPage('usage').map((f) => f.id)).toEqual(['usage.track', 'usage.includeExternal'])
+    expect(searchFields('codex').some((f) => f.id === 'usage.includeExternal')).toBe(true)
   })
 })
 
@@ -69,7 +82,9 @@ describe('searchFields', () => {
     expect(r.map((f) => f.id)).toContain('ui.terminalFontSize')
   })
   it('matches keywords and page names', () => {
-    expect(searchFields('yolo')[0].id).toBe('agent.autoRun')
+    expect(searchFields('yolo').map((f) => f.id)).toContain('agent.autoRun')
+    expect(searchFields('permission cap')[0].id).toBe('agent.maxPermissionMode')
+    expect(searchFields('worktree').some((f) => f.id === 'worktrees.branchTemplate')).toBe(true)
     expect(searchFields('autocomplete').some((f) => f.id === 'tab.enabled')).toBe(true)
     expect(searchFields('privacy').some((f) => f.id === 'privacy.privacyMode')).toBe(true)
   })

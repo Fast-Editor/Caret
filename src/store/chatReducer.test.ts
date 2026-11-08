@@ -108,3 +108,55 @@ describe('routed events', () => {
     expect(st.versions.m1).toBeGreaterThanOrEqual(2)
   })
 })
+
+describe('steer and queue events', () => {
+  const item = (id: string, text: string) => ({ id, text, context: [], images: [] })
+  it('tracks pending steer messages per session and clears them when drained', () => {
+    let st = applyAgentEvent(withSession(), { type: 'steer', sessionId: 's1', pending: [item('q1', 'also rename it')] })
+    expect(st.steering.s1).toEqual([item('q1', 'also rename it')])
+    expect(st.loaded.s1.queuedMessages).toEqual([])
+    st = applyAgentEvent(st, { type: 'steer', sessionId: 's1', pending: [] })
+    expect(st.steering.s1).toBeUndefined()
+  })
+  it('drops stale steer rows when the turn ends and when the session is deleted', () => {
+    let st = applyAgentEvent(withSession(), { type: 'steer', sessionId: 's1', pending: [item('q1', 'x')] })
+    st = applyAgentEvent(st, { type: 'session-status', sessionId: 's1', status: 'running' })
+    expect(st.steering.s1).toHaveLength(1)
+    st = applyAgentEvent(st, { type: 'session-status', sessionId: 's1', status: 'idle' })
+    expect(st.steering.s1).toBeUndefined()
+    st = applyAgentEvent(st, { type: 'steer', sessionId: 's1', pending: [item('q2', 'y')] })
+    st = applyAgentEvent(st, { type: 'session-deleted', sessionId: 's1' })
+    expect(st.steering).toEqual({})
+  })
+  it('replaces the queue wholesale and keeps the persisted request on items', () => {
+    const req = { sessionId: 's1', text: 'later', context: [], images: [], mode: 'agent' as const, modelId: 'gpt-5', thinking: 'on' as const }
+    const st = applyAgentEvent(withSession(), { type: 'queue', sessionId: 's1', queued: [{ ...item('q1', 'later'), request: req }] })
+    expect(st.loaded.s1.queuedMessages[0].request?.modelId).toBe('gpt-5')
+    expect(st.steering).toEqual({})
+  })
+})
+
+describe('session-updated (thread lifecycle)', () => {
+  it('patches the summary and mirrors lifecycle fields onto the loaded session', () => {
+    const st0 = withSession()
+    const st = applyAgentEvent(st0, { type: 'session-updated', session: { ...st0.sessions[0], pinned: true, pinnedAt: 5, snoozedUntil: 99, settled: true, title: 'Renamed' } })
+    expect(st.sessions[0]).toMatchObject({ pinned: true, pinnedAt: 5, snoozedUntil: 99, settled: true, title: 'Renamed' })
+    expect(st.loaded.s1).toMatchObject({ pinned: true, pinnedAt: 5, snoozedUntil: 99, settled: true, title: 'Renamed' })
+    // an unknown session leaves state untouched
+    expect(applyAgentEvent(st, { type: 'session-updated', session: { ...st.sessions[0], id: 'other' } })).toBe(st)
+    // lifecycle fields survive later message events (summaries are rebuilt from the loaded session)
+    const after = applyAgentEvents(st, [start, { type: 'message-end', sessionId: 's1', messageId: 'm1', status: 'done', durationMs: 1 }])
+    expect(after.sessions[0]).toMatchObject({ snoozedUntil: 99, settled: true, pinned: true })
+    // un-snooze / un-settle clear the fields
+    const cleared = applyAgentEvent(after, { type: 'session-updated', session: { ...after.sessions[0], snoozedUntil: undefined, settled: false } })
+    expect(cleared.sessions[0].snoozedUntil).toBeUndefined()
+    expect(cleared.sessions[0].settled).toBe(false)
+    expect(cleared.loaded.s1.settled).toBe(false)
+  })
+  it('patches a summary that has no loaded session', () => {
+    const st0: ChatCoreState = { ...emptyCoreState(), sessions: [{ id: 's2', title: 'T', workspaceRoot: '/w', createdAt: 1, updatedAt: 1, mode: 'agent', status: 'idle', messageCount: 0, lastMessagePreview: '', pendingChangeCount: 0 }] }
+    const st = applyAgentEvent(st0, { type: 'session-updated', session: { ...st0.sessions[0], archived: true, archivedAt: 7 } })
+    expect(st.sessions[0]).toMatchObject({ archived: true, archivedAt: 7 })
+    expect(st.loaded).toEqual({})
+  })
+})

@@ -56,9 +56,9 @@ pub fn chat_duplicate_session(mgr: Mgr<'_>, session_id: String) -> Result<ChatSe
 }
 
 #[tauri::command]
-pub fn chat_pin_session(mgr: Mgr<'_>, session_id: String, pinned: bool) -> Result<()> { let h = mgr.handle(&session_id)?; { h.session.lock().pinned = pinned; } mgr.persist_now(&h); Ok(()) }
+pub fn chat_pin_session(mgr: Mgr<'_>, session_id: String, pinned: bool) -> Result<()> { mgr.set_pinned(&session_id, pinned).map(|_| ()) }
 #[tauri::command]
-pub fn chat_archive_session(mgr: Mgr<'_>, session_id: String, archived: bool) -> Result<()> { let h = mgr.handle(&session_id)?; { h.session.lock().archived = archived; } mgr.persist_now(&h); Ok(()) }
+pub fn chat_archive_session(mgr: Mgr<'_>, session_id: String, archived: bool) -> Result<()> { mgr.set_archived(&session_id, archived).map(|_| ()) }
 
 #[tauri::command(async)]
 pub fn chat_export_session(mgr: Mgr<'_>, session_id: String, format: String) -> Result<String> {
@@ -110,7 +110,7 @@ pub async fn chat_queue_send_now(mgr: Mgr<'_>, session_id: String, queued_id: St
     let q = h.session.lock().queued.clone();
     mgr.emit(AgentEvent::Queue { session_id: session_id.clone(), queued: q });
     if h.is_running() { mgr.stop(&session_id); } // current turn cancels; the queue drains next
-    else { let req = item.request.unwrap_or(SendMessageRequest { session_id, text: item.text, context: item.context, images: item.images, mode: item.mode.unwrap_or_default(), ..Default::default() }); { h.session.lock().queued.retain(|q| q.id != queued_id); } mgr.inner().submit(req).await?; }
+    else { let req = { let mut s = h.session.lock(); s.queued.retain(|q| q.id != queued_id); item.into_request(&s) }; mgr.inner().submit(req).await?; }
     Ok(())
 }
 
@@ -240,4 +240,164 @@ pub async fn start_plan_build(app: &AppHandle, plan_path: &str, session_id: Opti
     let sid = h.id();
     mgr.submit(SendMessageRequest { session_id: sid.clone(), text: format!("Implement the following plan completely. Work through the steps in order, verify as you go, and report what was done.\n\nPlan file: {plan_path}\n\n{content}"), mode: "agent".into(), context: vec![ContextItem { id: format!("plan:{plan_path}"), kind: "plan".into(), label: title, path: Some(plan_path.to_string()), ..Default::default() }], ..Default::default() }).await?;
     Ok(sid)
+}
+
+// ───────────────────────── steer / editable queue ─────────────────────────
+
+/// Steer: inject a message into the running turn instead of waiting for it to finish.
+/// Built-in agent: buffered on the handle and drained by the runner before its next model round. External (ACP)
+/// agents have no mid-turn injection, so steer falls back to "send now": front of the queue plus cancel the current
+/// turn. Idle sessions behave exactly like `chat_send`.
+#[tauri::command]
+pub async fn chat_steer(app: AppHandle, mgr: Mgr<'_>, req: SendMessageRequest) -> Result<()> {
+    if req.session_id.is_empty() { return Err(CaretError::invalid("sessionId is required")); }
+    let h = mgr.handle(&req.session_id)?;
+    let agent = {
+        let mut s = h.session.lock();
+        if let Some(a) = req.agent_id.as_deref().filter(|a| !a.is_empty()) { let next = if a == "caret" { None } else { Some(a.to_string()) }; if s.agent_id != next { s.agent_id = next; } }
+        s.agent_id.clone()
+    };
+    if agent.filter(|a| a != "caret").is_some() {
+        let st = app.state::<crate::acp::AcpState>();
+        if h.is_running() {
+            let session_id = req.session_id.clone();
+            let queued = { let mut s = h.session.lock(); s.queued.insert(0, QueuedMessage::from_request(req)); s.queued.clone() };
+            mgr.emit(AgentEvent::Queue { session_id: session_id.clone(), queued });
+            mgr.persist(&h);
+            crate::acp::bridge::stop(&st.inner, &session_id); mgr.stop(&session_id); // the queue drains as soon as the turn cancels
+            return Ok(());
+        }
+        return crate::acp::bridge::submit(st.inner.clone(), mgr.inner().clone(), Some(app.clone()), req).await;
+    }
+    mgr.inner().steer(req).await
+}
+
+/// Edit a queued message in place (text and, optionally, its context). The stored request is updated too so the
+/// item still runs with the model/thinking/agent it was submitted with.
+#[tauri::command]
+pub fn chat_queue_update(mgr: Mgr<'_>, session_id: String, queued_id: String, text: String, context: Option<Vec<ContextItem>>) -> Result<()> { mgr.queue_update(&session_id, &queued_id, text, context).map(|_| ()) }
+
+/// Move a queued message to `index` (clamped to the queue bounds); the queue drains in order.
+#[tauri::command]
+pub fn chat_queue_move(mgr: Mgr<'_>, session_id: String, queued_id: String, index: usize) -> Result<()> { mgr.queue_move(&session_id, &queued_id, index).map(|_| ()) }
+// ───────── thread lifecycle, title regeneration, message search (docs/THREADS.md) ─────────
+/// Snooze until `until` (unix ms); `None` or a past time un-snoozes. Emits `session-updated`.
+#[tauri::command]
+pub fn chat_snooze_session(mgr: Mgr<'_>, session_id: String, until: Option<u64>) -> Result<SessionSummary> { mgr.set_snoozed(&session_id, until) }
+
+#[tauri::command]
+pub fn chat_settle_session(mgr: Mgr<'_>, session_id: String, settled: bool) -> Result<SessionSummary> { mgr.set_settled(&session_id, settled) }
+
+/// Summaries from every workspace's session store (summaries carry `workspaceRoot`).
+#[tauri::command(async)]
+pub fn chat_list_sessions_all(mgr: Mgr<'_>, include_archived: Option<bool>) -> Result<Vec<SessionSummary>> { Ok(mgr.list_sessions_all(include_archived.unwrap_or(false))) }
+
+/// Re-run title generation; the `title` event updates the UI. Needs at least one assistant reply.
+#[tauri::command]
+pub async fn chat_regenerate_title(app: AppHandle, mgr: Mgr<'_>, session_id: String) -> Result<String> {
+    let h = mgr.handle(&session_id)?;
+    let model_id = {
+        let mut s = h.session.lock();
+        if !s.messages.iter().any(|m| m.role == MessageRole::Assistant) { return Err(CaretError::invalid("Send a message and wait for a reply before regenerating the title")); }
+        s.title_generated = false;
+        s.model_id.clone()
+    };
+    let settings = mgr.settings();
+    let resolved = crate::ai::llm::resolve_model(&settings, &app.state::<SettingsState>(), model_id.as_deref())?;
+    runner::generate_title(mgr.inner().clone(), h, resolved).await
+}
+
+/// Case-insensitive substring search over message text in session files (this workspace or all), newest first.
+#[tauri::command(async)]
+pub fn chat_search_messages(mgr: Mgr<'_>, query: String, include_archived: Option<bool>, all_workspaces: Option<bool>, limit: Option<usize>) -> Result<Vec<MessageSearchHit>> {
+    let keys = if all_workspaces.unwrap_or(false) { crate::core::sessions::all_workspace_keys() } else { vec![mgr.ws_key()] };
+    Ok(mgr.store.search_messages(&keys, &query, include_archived.unwrap_or(false), limit.unwrap_or(50).min(500)))
+}
+
+// ───────── forks, provider handoff and multi-model fan-out (logic in agent/handoff.rs) ─────────
+
+/// Clone a session; with `message_id` the fork keeps history up to and including that message.
+#[tauri::command(async)]
+pub fn chat_fork_session(mgr: Mgr<'_>, session_id: String, message_id: Option<String>) -> Result<ChatSessionView> {
+    let h = mgr.handle(&session_id)?;
+    let budget = mgr.settings().chat.handoff_budget_tokens as usize;
+    let nh = crate::ai::agent::handoff::fork_session(&mgr, &h, message_id.as_deref().filter(|m| !m.is_empty()), budget)?;
+    let v = nh.session.lock().view(); Ok(v)
+}
+
+/// Move an idle thread to another agent (`caret` or an ACP agent id) and/or model, transferring the conversation
+/// within `chat.handoffBudgetTokens`. Leaves a muted system note and emits `SessionReset`.
+#[tauri::command]
+pub async fn chat_handoff_session(app: AppHandle, mgr: Mgr<'_>, session_id: String, agent_id: Option<String>, model_id: Option<String>) -> Result<ChatSessionView> {
+    let h = mgr.handle(&session_id)?;
+    let settings = mgr.settings();
+    let secrets = app.state::<SettingsState>();
+    let resolve = |m: Option<&str>| crate::ai::llm::resolve_model(&settings, &secrets, m);
+    let previous_agent = { let s = h.session.lock(); s.agent_id.clone().filter(|a| a != "caret") };
+    crate::ai::agent::handoff::handoff_session(&mgr, &h, agent_id.as_deref(), model_id.as_deref(), &settings, &resolve).await?;
+    // Leaving an external agent: drop its live session so a later return starts fresh with the transferred history.
+    let now_agent = { let s = h.session.lock(); s.agent_id.clone().filter(|a| a != "caret") };
+    if previous_agent.is_some() && previous_agent != now_agent {
+        let st = app.state::<crate::acp::AcpState>();
+        crate::acp::bridge::stop(&st.inner, &session_id);
+        st.inner.links.remove(&session_id);
+    }
+    let v = h.session.lock().view(); Ok(v)
+}
+
+// ───────────────────────── permission modes ─────────────────────────
+
+/// Per-thread permission mode override (`None` = back to the settings default). Live external-agent sessions get
+/// the mapped mode pushed immediately.
+#[tauri::command]
+pub async fn chat_set_permission_mode(app: AppHandle, mgr: Mgr<'_>, session_id: String, mode: Option<crate::ai::agent::policy::PermissionMode>) -> Result<ChatSessionView> {
+    let h = mgr.handle(&session_id)?;
+    { let mut s = h.session.lock(); s.permission_mode = mode; s.touch(); }
+    mgr.persist_now(&h);
+    let settings = mgr.settings();
+    let eff = { let s = h.session.lock(); crate::ai::agent::policy::effective_permission_mode(&settings, &s) };
+    let st = app.state::<crate::acp::AcpState>();
+    if let Some(link) = st.inner.links.get(&session_id).map(|l| l.clone()) {
+        if let Some(conn) = st.inner.conns.get(&link.conn_key).map(|c| c.clone()).filter(|c| c.alive()) {
+            if crate::acp::bridge::apply_permission_mode(&st.inner, &link, &conn, eff).await {
+                let status = crate::acp::bridge::status_for_link(&conn, &link);
+                mgr.emit(AgentEvent::AgentStatus { session_id: session_id.clone(), agent_id: link.agent_id.clone(), status });
+            }
+        }
+    }
+    let v = h.session.lock().view(); Ok(v)
+}
+
+/// Send one prompt to several models at once: one session per model (forks of `session_id` when it has messages),
+/// all sharing a `fan_out_group`. Returns the session ids in `model_ids` order.
+#[tauri::command]
+pub async fn chat_fan_out(mgr: Mgr<'_>, session_id: Option<String>, text: String, model_ids: Vec<String>, use_worktree: Option<bool>, mode: Option<String>, context: Option<Vec<ContextItem>>, images: Option<Vec<ImageAttachment>>, thinking: Option<String>, effort: Option<String>) -> Result<Vec<String>> {
+    let settings = mgr.settings();
+    let req = crate::ai::agent::handoff::FanOutRequest { session_id: session_id.filter(|s| !s.is_empty()), text, model_ids, use_worktree: use_worktree.unwrap_or(false), mode, context: context.unwrap_or_default(), images: images.unwrap_or_default(), thinking, effort };
+    crate::ai::agent::handoff::fan_out(mgr.inner(), &settings, req).await
+}
+
+// ───────────────────────── worktree policies ─────────────────────────
+
+#[tauri::command]
+pub async fn chat_worktree_status(mgr: Mgr<'_>, session_id: String) -> Result<crate::ai::agent::worktrees::WorktreeStatus> { crate::ai::agent::worktrees::status_for_session(mgr.inner(), &session_id).await }
+
+#[tauri::command]
+pub async fn chat_worktree_cleanup_preview(mgr: Mgr<'_>) -> Result<Vec<crate::ai::agent::worktrees::WorktreeCleanupCandidate>> { crate::ai::agent::worktrees::cleanup_preview(mgr.inner()).await }
+
+#[tauri::command]
+pub async fn chat_worktree_cleanup(mgr: Mgr<'_>, session_ids: Vec<String>) -> Result<crate::ai::agent::worktrees::WorktreeCleanupReport> { crate::ai::agent::worktrees::cleanup(mgr.inner(), session_ids).await }
+
+// ───────────────────────── scratch threads ─────────────────────────
+
+#[tauri::command]
+pub async fn chat_create_scratch_session(mgr: Mgr<'_>, mode: Option<String>, model_id: Option<String>, title: Option<String>, agent_id: Option<String>) -> Result<ChatSessionView> {
+    let h = crate::ai::agent::scratch::create_scratch_session(mgr.inner(), mode, model_id, title, agent_id).await?;
+    let v = h.session.lock().view(); Ok(v)
+}
+
+#[tauri::command]
+pub async fn chat_promote_scratch(mgr: Mgr<'_>, session_id: String, target_dir: String) -> Result<ChatSessionView> {
+    let h = crate::ai::agent::scratch::promote_scratch(mgr.inner(), &session_id, &target_dir).await?;
+    let v = h.session.lock().view(); Ok(v)
 }
