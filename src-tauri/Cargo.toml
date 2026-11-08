@@ -1,6 +1,6 @@
 [package]
 name = "caret"
-version = "0.1.0"
+version = "0.2.0"
 description = "Caret — a memory-efficient, Rust-powered AI code editor"
 authors = ["Caret contributors"]
 license = "MIT"

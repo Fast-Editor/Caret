@@ -1,8 +1,8 @@
 {
   "name": "caret",
   "productName": "Caret",
-  "version": "0.1.0",
-  "description": "Caret \u2014 a memory-efficient, Rust-powered AI code editor (Tauri + Monaco)",
+  "version": "0.2.0",
+  "description": "Caret — a memory-efficient, Rust-powered AI code editor (Tauri + Monaco)",
   "private": true,
   "type": "module",
   "license": "MIT",

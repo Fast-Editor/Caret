@@ -4,6 +4,10 @@ All notable changes to Caret. The version here must match `package.json`, `src-t
 
 ## Unreleased
 
+_Nothing yet._
+
+## 0.2.0 — 2026-11-08
+
 - Usage page: the ledger is backfilled once from your saved chat sessions (and on demand with **Import past sessions**), so
   history from before this release is counted; when every request is priced at $0 the page says so and the chart shows
   tokens per day instead of an empty box; external agent histories are scanned newest first with a 1 GB cap (was 200 MB,
