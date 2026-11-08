@@ -39,6 +39,7 @@ asked; set `CARET_INSTALL_DIR` to choose) and removes the quarantine attribute, 
 
 ```bash
 brew tap fast-editor/caret
+brew trust fast-editor/caret   # Homebrew 7 refuses untrusted third-party taps until you confirm once
 brew install --cask caret
 ```
 

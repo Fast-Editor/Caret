@@ -6,7 +6,7 @@ top-level [README](../README.md) has the overview, install instructions and the 
 ## Install and update
 
 - **macOS one-liner:** `curl -fsSL https://raw.githubusercontent.com/Fast-Editor/Caret/main/scripts/install.sh | sh`
-- **Homebrew:** `brew tap fast-editor/caret && brew install --cask caret`
+- **Homebrew:** `brew tap fast-editor/caret && brew trust fast-editor/caret && brew install --cask caret` (Homebrew 7 asks you to trust third-party taps once)
 - **DMG:** download from the [latest release](https://github.com/Fast-Editor/Caret/releases/latest); builds are ad-hoc
   signed, so after dragging to Applications run `xattr -dr com.apple.quarantine /Applications/Caret.app` once (or use
   System Settings → Privacy & Security → *Open Anyway*).
