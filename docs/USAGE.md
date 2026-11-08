@@ -27,6 +27,14 @@ Recording is cheap and never blocks the agent loop: `ai::usage::record` hands th
 through a channel; write errors are logged with `tracing::warn` and otherwise ignored. Turn it off with Settings → Usage
 → *Record usage* (`usage.track`); existing entries stay visible.
 
+## Older sessions
+
+The ledger only exists from the release that introduced it, so on first start Caret imports the usage stored on the
+assistant messages of every saved chat session (`~/.caret/sessions/<workspace>/<id>.json`) into the ledger once
+(marker file `~/.caret/usage/.sessions-backfilled-v1`). Messages that carried no cost are priced from the current
+model prices. **Import past sessions** on the Usage page runs the same import again; it is idempotent (an entry
+with the same session and timestamp is skipped), so it is safe after restoring sessions from a backup.
+
 ## Where things live on disk
 
 - `~/.caret/usage/YYYY-MM.jsonl`: the ledger, one file per calendar month (local time), append-only. `CARET_HOME`
@@ -71,7 +79,7 @@ Add or fix prices under *Model prices* on the page (USD per million tokens; cach
 ## External agents
 
 Scanning is read-only and bounded: only files modified inside the selected range are opened where the format allows
-it, at most 200 MB of history is read per agent (a note says when the cap was hit), and results are cached for 60
+it, at most 1 GB of history is read per agent (a note says when the cap was hit), and results are cached for 60
 seconds per range. Turn it off with *Include external agents* (`usage.includeExternal`).
 
 | Agent | Files read | Fields used | Limits |

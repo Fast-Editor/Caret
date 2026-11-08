@@ -95,6 +95,7 @@ pub fn run() {
             { let m = mcp::McpManager::new(handle.clone()); app.manage(m.clone()); m.install(); }
             { let b = browser::BrowserManager::new(handle.clone()); b.install(); app.manage(b); }
             orchestrator::init(&handle);
+            { let s = app.state::<core::settings::SettingsState>().effective(); std::thread::spawn(move || { ai::usage::backfill_once(&s, false); }); }
             remote::init(&handle);
             if let Some(w) = app.get_webview_window("main") {
                 #[cfg(debug_assertions)]
@@ -144,7 +145,7 @@ pub fn run() {
             ai::agent::chat_commands::chat_snooze_session, ai::agent::chat_commands::chat_settle_session, ai::agent::chat_commands::chat_list_sessions_all, ai::agent::chat_commands::chat_regenerate_title, ai::agent::chat_commands::chat_search_messages,
             ai::agent::chat_commands::chat_fork_session, ai::agent::chat_commands::chat_handoff_session, ai::agent::chat_commands::chat_fan_out,
             // REGISTER:commands:usage
-            ai::usage::usage_summary, ai::usage::usage_daily, ai::usage::usage_recent, ai::usage::usage_export_csv, ai::usage::usage_external, ai::usage::usage_dir,
+            ai::usage::usage_summary, ai::usage::usage_daily, ai::usage::usage_recent, ai::usage::usage_export_csv, ai::usage::usage_external, ai::usage::usage_dir, ai::usage::usage_backfill,
             ai::agent::chat_commands::chat_set_permission_mode, ai::agent::chat_commands::chat_worktree_status, ai::agent::chat_commands::chat_worktree_cleanup_preview, ai::agent::chat_commands::chat_worktree_cleanup, ai::agent::chat_commands::chat_create_scratch_session, ai::agent::chat_commands::chat_promote_scratch,
             // REGISTER:commands:ai
             ai::single_shot_commands::ai_complete, ai::single_shot_commands::ai_next_edit, ai::single_shot_commands::ai_inline_edit, ai::single_shot_commands::ai_cancel, ai::single_shot_commands::ai_terminal_command, ai::single_shot_commands::ai_terminal_fix, ai::single_shot_commands::ai_terminal_suggest, ai::single_shot_commands::ai_apply, ai::single_shot_commands::ai_commit_message, ai::single_shot_commands::ai_review, ai::single_shot_commands::ai_review_list, ai::single_shot_commands::ai_review_dismiss, ai::single_shot_commands::ai_review_dismiss_finding, ai::single_shot_commands::models_list_remote, ai::single_shot_commands::models_test,

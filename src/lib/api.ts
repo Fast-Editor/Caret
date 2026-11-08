@@ -419,6 +419,8 @@ export const api = {
     exportCsv: (range: T.UsageRange) => invoke<string>('usage_export_csv', { range }),
     external: (range: T.UsageRange = '30d') => invoke<T.UsageExternalReport>('usage_external', { range }),
     dir: () => invoke<string>('usage_dir'),
+    /** Import usage from saved sessions into the ledger (idempotent). */
+    backfill: () => invoke<T.UsageBackfillReport>('usage_backfill'),
   },
 }
 export type Api = typeof api
