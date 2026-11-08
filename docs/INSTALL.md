@@ -8,7 +8,7 @@ the release tag ([RELEASING.md](RELEASING.md)); after the first install, Caret u
 | Channel | Platform | Status |
 | --- | --- | --- |
 | Install script | macOS | published |
-| Homebrew cask | macOS | published, tap `fast-editor/lynkr` |
+| Homebrew cask | macOS | published, tap `fast-editor/caret` |
 | Direct downloads (`.dmg`, `-setup.exe`, `.msi`, `.deb`, `.rpm`, `.AppImage`) | all | published on every [release](https://github.com/Fast-Editor/Caret/releases) |
 | In-app updater | all | published |
 | Nix flake | macOS (Apple Silicon), Linux x86_64 | in this repository; works from `main`, not in nixpkgs |
@@ -38,11 +38,12 @@ asked; set `CARET_INSTALL_DIR` to choose) and removes the quarantine attribute, 
 ### Homebrew
 
 ```bash
-brew install --cask fast-editor/lynkr/caret
+brew tap fast-editor/caret
+brew install --cask caret
 ```
 
 Homebrew 7 or later no longer quarantines cask downloads, so the app opens straight away. The cask lives in the
-[Fast-Editor/homebrew-lynkr](https://github.com/Fast-Editor/homebrew-lynkr) tap and is bumped after each release.
+[Fast-Editor/homebrew-caret](https://github.com/Fast-Editor/homebrew-caret) tap and is bumped after each release. The copy in the older `fast-editor/lynkr` tap is deprecated and points here; `brew upgrade` keeps working there, but new installs should use `fast-editor/caret`.
 
 ### DMG
 

@@ -63,7 +63,7 @@ maintainer side.
 
 ### Homebrew cask
 
-`Casks/caret.rb` in the `Fast-Editor/homebrew-lynkr` tap points at the latest DMG; bump `version` and `sha256` (from
+`Casks/caret.rb` in the `Fast-Editor/homebrew-caret` tap (`brew tap fast-editor/caret`) points at the latest DMG; bump `version` and `sha256` (from
 `SHA256SUMS.txt`) after each release, or let `bump.sh` there do it. This is the one manifest that lives outside this
 repository.
 

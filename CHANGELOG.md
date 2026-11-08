@@ -4,7 +4,8 @@ All notable changes to Caret. The version here must match `package.json`, `src-t
 
 ## Unreleased
 
-_Nothing yet._
+- Homebrew: Caret has its own tap, `brew tap fast-editor/caret && brew install --cask caret`. The cask in the
+  `fast-editor/lynkr` tap is deprecated and points to the new one.
 
 ## 0.2.0 — 2026-11-08
 

@@ -14,7 +14,7 @@ export const site = {
   productHuntBadge:
     "https://api.producthunt.com/widgets/embed-image/v1/featured.svg?post_id=1296357&theme=dark&t=1793218129641",
   installCommand: "curl -fsSL https://raw.githubusercontent.com/Fast-Editor/Caret/main/scripts/install.sh | sh",
-  brewCommand: "brew install --cask fast-editor/lynkr/caret",
+  brewCommand: "brew install --cask fast-editor/caret/caret",
   quarantineCommand: "xattr -dr com.apple.quarantine /Applications/Caret.app",
   wingetCommand: "winget install FastEditor.Caret",
   scoopCommand: "scoop install https://raw.githubusercontent.com/Fast-Editor/Caret/main/packaging/scoop/caret.json",
