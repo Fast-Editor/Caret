@@ -63,9 +63,7 @@ maintainer side.
 
 ### Homebrew cask
 
-`Casks/caret.rb` in the `Fast-Editor/homebrew-caret` tap (`brew tap fast-editor/caret`) points at the latest DMG; bump `version` and `sha256` (from
-`SHA256SUMS.txt`) after each release, or let `bump.sh` there do it. This is the one manifest that lives outside this
-repository.
+`Casks/caret.rb` in the [Fast-Editor/homebrew-caret](https://github.com/Fast-Editor/homebrew-caret) tap is updated automatically: that repository's `bump-caret.yml` workflow runs every 30 minutes (and on demand), reads the latest *published* release's `SHA256SUMS.txt` and rewrites the version and both DMG checksums, so the cask follows a release within half an hour of publishing. To bump immediately: `gh workflow run bump-caret.yml --repo Fast-Editor/homebrew-caret -f tag=vX.Y.Z`. No secrets are involved (the org disables deploy keys, so the tap pulls instead of the Caret workflow pushing)
 
 ### Manifests in this repository
 

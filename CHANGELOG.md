@@ -6,6 +6,8 @@ All notable changes to Caret. The version here must match `package.json`, `src-t
 
 - Homebrew: Caret has its own tap, `brew tap fast-editor/caret && brew trust fast-editor/caret && brew install --cask caret`.
   The cask was removed from the `fast-editor/lynkr` tap; reinstall from the new tap if you used the old one.
+- Release: the Homebrew cask bumps itself. A workflow in the tap repository follows the latest published release
+  (every 30 minutes or on demand), so publishing a GitHub release is the only manual step for Homebrew users.
 
 ## 0.2.0 — 2026-11-08
 
