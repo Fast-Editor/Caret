@@ -6,6 +6,10 @@ All notable changes to Caret. The version here must match `package.json`, `src-t
 
 - Homebrew: Caret has its own tap, `brew tap fast-editor/caret && brew trust fast-editor/caret && brew install --cask caret`.
   The cask was removed from the `fast-editor/lynkr` tap; reinstall from the new tap if you used the old one.
+- Website: search and sharing basics. Canonical URLs on every page, per-page Open Graph and Twitter cards with a
+  1200x630 share image, robots.txt and sitemap.xml, JSON-LD (SoftwareApplication, FAQPage, Organization, WebSite on the
+  home page; TechArticle and breadcrumbs on docs), a web manifest, favicon.ico, llms.txt, and a redirect from the
+  secondary Vercel alias to the canonical host.
 - Release: the Homebrew cask bumps itself. A workflow in the tap repository follows the latest published release
   (every 30 minutes or on demand), so publishing a GitHub release is the only manual step for Homebrew users.
 

@@ -1,4 +1,6 @@
 import type { Metadata } from "next";
+import { pageMeta } from "@/lib/seo";
+import { JsonLd } from "@/components/site/json-ld";
 import Link from "next/link";
 import { ArrowRight, Check, Download, Minus, X, type LucideIcon } from "lucide-react";
 import { GithubIcon } from "@/components/site/github-icon";
@@ -7,10 +9,11 @@ import { Card, CardContent } from "@/components/ui/card";
 import { parity, site, stats, type ParityRow, type ParityStatus } from "@/lib/site";
 import { cn } from "@/lib/utils";
 
-export const metadata: Metadata = {
-  title: "Compare",
+export const metadata: Metadata = pageMeta({
+  title: "Caret vs T3 Code vs Cursor",
   description: "Feature by feature: Caret next to T3 Code and Cursor. Editor, agents and subscriptions, threads, safety, remote access and footprint.",
-};
+  path: "/compare",
+});
 
 const STATUS: Record<ParityStatus, { label: string; icon: LucideIcon; className: string }> = {
   yes: { label: "Yes", icon: Check, className: "bg-emerald-500/10 text-emerald-700 dark:text-emerald-400" },
@@ -73,6 +76,8 @@ function ParityTable({ group, rows }: { group: string; rows: ParityRow[] }) {
 export default function ComparePage() {
   const groups = Array.from(new Set(parity.map((r) => r.group)));
   return (
+    <>
+    <JsonLd data={{ "@context": "https://schema.org", "@type": "BreadcrumbList", itemListElement: [{ "@type": "ListItem", position: 1, name: "Home", item: `${site.url}/` }, { "@type": "ListItem", position: 2, name: "Compare", item: `${site.url}/compare` }] }} />
     <div className="mx-auto max-w-6xl px-4 py-10 sm:px-6">
       <div className="max-w-3xl">
         <h1 className="text-3xl font-semibold tracking-tight">Caret, T3 Code and Cursor</h1>
@@ -146,5 +151,6 @@ export default function ComparePage() {
         </Card>
       </section>
     </div>
+    </>
   );
 }

@@ -1,11 +1,12 @@
 import type { Metadata } from "next";
+import { pageMeta } from "@/lib/seo";
 import Link from "next/link";
 import { ArrowRight } from "lucide-react";
 import { Card, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { listDocs, readRepoFile } from "@/lib/docs";
 import { renderMarkdown } from "@/lib/markdown";
 
-export const metadata: Metadata = { title: "Documentation", description: "Caret reference documentation: architecture, providers, auto routing, external agents, sandbox, terminal, debugging, CLI and releasing." };
+export const metadata: Metadata = pageMeta({ title: "Documentation", description: "Caret reference documentation: architecture, providers, auto routing, external agents, sandbox, terminal, debugging, CLI and releasing.", path: "/docs" });
 
 export default async function DocsIndex() {
   const docs = await listDocs();

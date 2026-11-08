@@ -11,12 +11,37 @@ import { DownloadGrid } from "@/components/site/download-grid";
 import { FeatureIcon } from "@/components/site/feature-icon";
 import { getLatestRelease } from "@/lib/release";
 import { comparison, faq, features, site, stats } from "@/lib/site";
+import { JsonLd } from "@/components/site/json-ld";
+import { plain } from "@/lib/seo";
 
 export default async function Home() {
   const release = await getLatestRelease();
   const mac = release.downloads.macArm;
+  const version = release.tag.startsWith("v") ? release.tag.slice(1) : undefined;
+  const jsonLd = {
+    "@context": "https://schema.org",
+    "@graph": [
+      { "@type": "Organization", "@id": `${site.url}/#org`, name: site.name, url: site.url, logo: `${site.url}/icon.png`, sameAs: [site.repo] },
+      { "@type": "WebSite", "@id": `${site.url}/#website`, name: site.name, url: site.url, publisher: { "@id": `${site.url}/#org` }, inLanguage: "en" },
+      {
+        "@type": "SoftwareApplication", "@id": `${site.url}/#app`, name: site.name, description: site.seoDescription, url: site.url,
+        applicationCategory: "DeveloperApplication", applicationSubCategory: "Code editor", operatingSystem: "macOS, Windows, Linux",
+        ...(version ? { softwareVersion: version } : {}), downloadUrl: `${site.url}/download`, installUrl: `${site.url}/download`,
+        license: "https://opensource.org/licenses/MIT", isAccessibleForFree: true,
+        offers: { "@type": "Offer", price: "0", priceCurrency: "USD" },
+        screenshot: `${site.url}/og.png`, image: `${site.url}/icon.png`,
+        author: { "@id": `${site.url}/#org` }, sameAs: [site.repo],
+        featureList: features.map((f) => f.title).join(", "),
+      },
+      {
+        "@type": "FAQPage", "@id": `${site.url}/#faq`,
+        mainEntity: faq.map((f) => ({ "@type": "Question", name: plain(f.q), acceptedAnswer: { "@type": "Answer", text: plain(f.a) } })),
+      },
+    ],
+  };
   return (
     <div className="mx-auto max-w-6xl px-4 sm:px-6">
+      <JsonLd data={jsonLd} />
       {/* Hero */}
       <section className="flex flex-col items-center gap-6 pb-16 pt-20 text-center sm:pt-28">
         <Badge variant="secondary" className="gap-2 rounded-full px-3 py-1 font-normal">

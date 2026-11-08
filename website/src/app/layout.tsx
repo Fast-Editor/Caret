@@ -5,17 +5,27 @@ import { ThemeProvider } from "@/components/site/theme-provider";
 import { Header } from "@/components/site/header";
 import { Footer } from "@/components/site/footer";
 import { site } from "@/lib/site";
+import { pageMeta } from "@/lib/seo";
 
 const geistSans = Geist({ variable: "--font-geist-sans", subsets: ["latin"] });
 const geistMono = Geist_Mono({ variable: "--font-geist-mono", subsets: ["latin"] });
 
+const home = pageMeta({ description: site.seoDescription, path: "/" });
+
 export const metadata: Metadata = {
   metadataBase: new URL(site.url),
-  title: { default: `${site.name}: ${site.tagline}`, template: `%s · ${site.name}` },
-  description: site.description,
-  icons: { icon: "/icon.png", apple: "/caret.png" },
-  openGraph: { title: `${site.name}: ${site.tagline}`, description: site.description, url: site.url, siteName: site.name, images: [{ url: "/caret.png", width: 256, height: 256 }], type: "website" },
-  twitter: { card: "summary", title: `${site.name}: ${site.tagline}`, description: site.description, images: ["/caret.png"] },
+  title: { default: site.seoTitle, template: `%s · ${site.name}` },
+  description: site.seoDescription,
+  applicationName: site.name,
+  keywords: ["AI code editor", "open source Cursor alternative", "Rust code editor", "Tauri", "Claude Code", "Codex", "Agent Client Protocol", "local LLM editor", "Ollama"],
+  authors: [{ name: "Caret contributors", url: site.repo }],
+  creator: "Caret contributors",
+  manifest: "/manifest.webmanifest",
+  icons: { icon: [{ url: "/favicon.ico", sizes: "48x48" }, { url: "/icon.png", type: "image/png", sizes: "512x512" }], apple: "/apple-touch-icon.png" },
+  robots: { index: true, follow: true, googleBot: { index: true, follow: true, "max-image-preview": "large", "max-snippet": -1 } },
+  verification: process.env.NEXT_PUBLIC_GOOGLE_SITE_VERIFICATION ? { google: process.env.NEXT_PUBLIC_GOOGLE_SITE_VERIFICATION } : undefined,
+  // Home page share card and canonical; `title` keeps the template so child pages get the " · Caret" suffix.
+  alternates: home.alternates, openGraph: home.openGraph, twitter: home.twitter,
 };
 
 export default function RootLayout({ children }: LayoutProps<"/">) {

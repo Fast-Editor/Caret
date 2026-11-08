@@ -3,7 +3,13 @@ export const site = {
   tagline: "A Cursor-class AI code editor with a Rust core.",
   description:
     "Tauri 2 + Rust on the backend, React 19 + Monaco in the system WebView. No bundled Chromium, no Node at run time. Bring your own keys; nothing leaves your machine except model calls.",
-  url: process.env.NEXT_PUBLIC_SITE_URL ?? "https://caret-lynkrteam.vercel.app",
+  url: process.env.NEXT_PUBLIC_SITE_URL ?? "https://caret-ochre.vercel.app",
+  /** <title> and share-card title for the home page (the hero keeps `tagline`). */
+  seoTitle: "Caret: open-source AI code editor with a Rust core (Cursor alternative)",
+  /** Meta description for the home page; under 160 characters. */
+  seoDescription:
+    "Free, open-source AI code editor with a Rust core: Tab completions, inline edit, sandboxed agents, local models, and your Claude Code, Codex or Cursor subscription.",
+  twitter: "@LynkrDev",
   repo: "https://github.com/Fast-Editor/Caret",
   releases: "https://github.com/Fast-Editor/Caret/releases",
   latest: "https://github.com/Fast-Editor/Caret/releases/latest",

@@ -54,3 +54,15 @@ only the rewrites in `vercel.json` are Vercel-specific.
   (remark + rehype, Shiki highlighting, repository links rewritten to site routes).
 - `src/app/download`, `src/app/changelog`.
 - `src/components/site/*` header, footer, theme toggle, install command, download grid; `src/components/ui/*` shadcn.
+
+## SEO
+
+`src/lib/seo.ts` (`pageMeta`) builds the full per-page metadata: title, description, canonical URL, Open Graph and Twitter
+card (`public/og.png`, 1200x630, rendered from `/tmp/og.html`-style HTML with headless Chrome). `src/app/robots.ts` and
+`src/app/sitemap.ts` are static routes (every page plus one entry per doc, `lastModified` from file mtimes). Structured
+data: the home page emits Organization, WebSite, SoftwareApplication and FAQPage JSON-LD; doc pages emit TechArticle and
+BreadcrumbList; the compare page a BreadcrumbList. `public/llms.txt` summarises the project for AI crawlers,
+`public/manifest.webmanifest`, `favicon.ico` and `apple-touch-icon.png` are generated from `public/icon.png`
+(`magick icon.png -define icon:auto-resize=16,32,48 favicon.ico`). The canonical host is `site.url`
+(`NEXT_PUBLIC_SITE_URL`); the root `vercel.json` redirects the secondary `caret-lynkrteam.vercel.app` alias to it. Set
+`NEXT_PUBLIC_GOOGLE_SITE_VERIFICATION` in Vercel to add the Search Console meta tag.

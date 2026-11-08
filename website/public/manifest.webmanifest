@@ -1,0 +1,26 @@
+{
+  "name": "Caret",
+  "short_name": "Caret",
+  "description": "Open-source AI code editor with a Rust core.",
+  "start_url": "/",
+  "display": "browser",
+  "background_color": "#141414",
+  "theme_color": "#141414",
+  "icons": [
+    {
+      "src": "/icon.png",
+      "sizes": "512x512",
+      "type": "image/png"
+    },
+    {
+      "src": "/caret.png",
+      "sizes": "256x256",
+      "type": "image/png"
+    },
+    {
+      "src": "/apple-touch-icon.png",
+      "sizes": "180x180",
+      "type": "image/png"
+    }
+  ]
+}

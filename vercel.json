@@ -7,17 +7,70 @@
   "cleanUrls": true,
   "trailingSlash": false,
   "rewrites": [
-    { "source": "/install.sh", "destination": "https://raw.githubusercontent.com/Fast-Editor/Caret/main/scripts/install.sh" },
-    { "source": "/latest.json", "destination": "https://github.com/Fast-Editor/Caret/releases/latest/download/latest.json" }
+    {
+      "source": "/install.sh",
+      "destination": "https://raw.githubusercontent.com/Fast-Editor/Caret/main/scripts/install.sh"
+    },
+    {
+      "source": "/latest.json",
+      "destination": "https://github.com/Fast-Editor/Caret/releases/latest/download/latest.json"
+    }
   ],
   "redirects": [
-    { "source": "/github", "destination": "https://github.com/Fast-Editor/Caret", "permanent": false },
-    { "source": "/releases", "destination": "https://github.com/Fast-Editor/Caret/releases", "permanent": false },
-    { "source": "/download/latest", "destination": "https://github.com/Fast-Editor/Caret/releases/latest", "permanent": false },
-    { "source": "/issues", "destination": "https://github.com/Fast-Editor/Caret/issues", "permanent": false }
+    {
+      "source": "/:path*",
+      "has": [
+        {
+          "type": "host",
+          "value": "caret-lynkrteam.vercel.app"
+        }
+      ],
+      "destination": "https://caret-ochre.vercel.app/:path*",
+      "permanent": true
+    },
+    {
+      "source": "/github",
+      "destination": "https://github.com/Fast-Editor/Caret",
+      "permanent": false
+    },
+    {
+      "source": "/releases",
+      "destination": "https://github.com/Fast-Editor/Caret/releases",
+      "permanent": false
+    },
+    {
+      "source": "/download/latest",
+      "destination": "https://github.com/Fast-Editor/Caret/releases/latest",
+      "permanent": false
+    },
+    {
+      "source": "/issues",
+      "destination": "https://github.com/Fast-Editor/Caret/issues",
+      "permanent": false
+    }
   ],
   "headers": [
-    { "source": "/install.sh", "headers": [{ "key": "Content-Type", "value": "text/x-shellscript; charset=utf-8" }, { "key": "Cache-Control", "value": "public, max-age=300" }] },
-    { "source": "/_next/static/(.*)", "headers": [{ "key": "Cache-Control", "value": "public, max-age=31536000, immutable" }] }
+    {
+      "source": "/install.sh",
+      "headers": [
+        {
+          "key": "Content-Type",
+          "value": "text/x-shellscript; charset=utf-8"
+        },
+        {
+          "key": "Cache-Control",
+          "value": "public, max-age=300"
+        }
+      ]
+    },
+    {
+      "source": "/_next/static/(.*)",
+      "headers": [
+        {
+          "key": "Cache-Control",
+          "value": "public, max-age=31536000, immutable"
+        }
+      ]
+    }
   ]
 }

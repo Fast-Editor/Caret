@@ -1,0 +1,29 @@
+# Caret
+
+> Caret is a free, open-source (MIT) AI code editor with a Rust core: Tauri 2 + Rust backend, React 19 + Monaco in the system WebView, no bundled Chromium and no Node at run time. It gives a Cursor-class experience with Tab completions, inline edit, an agent with sandboxed shell commands and verified diffs, local models through Ollama or any OpenAI-compatible server, and external agents (Claude Code, Codex, Cursor, Grok Build, Gemini CLI, OpenCode, Pi) through the Agent Client Protocol using the subscriptions users already have.
+
+Site: https://caret-ochre.vercel.app
+Source: https://github.com/Fast-Editor/Caret
+Downloads: https://caret-ochre.vercel.app/download (macOS, Windows, Linux; Homebrew: brew tap fast-editor/caret && brew install --cask caret)
+
+## Docs
+
+- [Architecture](https://caret-ochre.vercel.app/docs/architecture): Rust core, IPC contracts, module map.
+- [Providers](https://caret-ochre.vercel.app/docs/providers): model providers, keys, local models.
+- [Auto routing](https://caret-ochre.vercel.app/docs/auto-routing): Lynkr sidecar routing across your models.
+- [ACP agents](https://caret-ochre.vercel.app/docs/acp): Claude Code, Codex, Cursor, Grok and other agents, sign-in, extra accounts.
+- [Threads](https://caret-ochre.vercel.app/docs/threads): lifecycle, queue and steer, forks, handoff, fan-out, worktrees.
+- [Sandbox](https://caret-ochre.vercel.app/docs/sandbox): command classifier, permission modes, Seatbelt and bubblewrap.
+- [Verified diff](https://caret-ochre.vercel.app/docs/verified-diff): checks after every agent turn.
+- [Usage](https://caret-ochre.vercel.app/docs/usage): token and cost ledger, external agent histories.
+- [Orchestrator](https://caret-ochre.vercel.app/docs/orchestrator): Caret as an MCP server for other agents.
+- [Remote](https://caret-ochre.vercel.app/docs/remote): caret serve, the full UI in a browser over LAN or Tailscale.
+- [Terminal](https://caret-ochre.vercel.app/docs/terminal), [Debugging](https://caret-ochre.vercel.app/docs/debugging), [CLI](https://caret-ochre.vercel.app/docs/cli), [Install](https://caret-ochre.vercel.app/docs/install), [Releasing](https://caret-ochre.vercel.app/docs/releasing), [Performance](https://caret-ochre.vercel.app/docs/performance), [UI commands](https://caret-ochre.vercel.app/docs/ui-commands).
+
+## Compare
+
+- [Caret vs T3 Code vs Cursor](https://caret-ochre.vercel.app/compare)
+
+## Changelog
+
+- https://caret-ochre.vercel.app/changelog
