@@ -23,7 +23,8 @@ export const metadata: Metadata = {
   manifest: "/manifest.webmanifest",
   icons: { icon: [{ url: "/favicon.ico", sizes: "48x48" }, { url: "/icon.png", type: "image/png", sizes: "512x512" }], apple: "/apple-touch-icon.png" },
   robots: { index: true, follow: true, googleBot: { index: true, follow: true, "max-image-preview": "large", "max-snippet": -1 } },
-  verification: process.env.NEXT_PUBLIC_GOOGLE_SITE_VERIFICATION ? { google: process.env.NEXT_PUBLIC_GOOGLE_SITE_VERIFICATION } : undefined,
+  // Search Console HTML-tag verification. The token is public (it ships in the page head); the env var lets a fork override it.
+  verification: { google: process.env.NEXT_PUBLIC_GOOGLE_SITE_VERIFICATION ?? "jynfImKAjk_mqiBYUOb0cG17HydMoKjP-U6-WJ-4cC4" },
   // Home page share card and canonical; `title` keeps the template so child pages get the " · Caret" suffix.
   alternates: home.alternates, openGraph: home.openGraph, twitter: home.twitter,
 };
