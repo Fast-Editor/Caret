@@ -15,7 +15,7 @@ use tauri::{AppHandle, Manager, State};
 type Mgr<'a> = State<'a, Arc<AgentManager>>;
 
 #[tauri::command]
-pub fn chat_subscribe(mgr: Mgr<'_>, on_event: Channel<AgentEvent>) -> Result<()> { mgr.subscribe(on_event); Ok(()) }
+pub fn chat_subscribe(mgr: Mgr<'_>, on_event: Channel<AgentEvent>, client: Option<String>) -> Result<()> { mgr.subscribe(client.as_deref().unwrap_or("default"), on_event); Ok(()) }
 
 #[tauri::command(async)]
 pub fn chat_list_sessions(mgr: Mgr<'_>, include_archived: Option<bool>) -> Result<Vec<SessionSummary>> { Ok(mgr.list_sessions(include_archived.unwrap_or(false))) }

@@ -325,6 +325,15 @@ export const useChat = create<ChatState>((set, get) => ({
     } catch (e) {
       // restore draft on failure
       set((s) => ({ drafts: { ...s.drafts, [sessionId]: { ...d } } }))
+      // The thread may have been deleted by another client (orchestrator, remote browser, another window): refresh the
+      // list, drop the stale selection so the pane picks a live thread, and say so instead of surfacing the raw id.
+      if (/session .* not found/i.test(String((e as { message?: string })?.message ?? e))) {
+        await get().loadSessions().catch(() => {})
+        if (!get().sessions.some((x) => x.id === sessionId)) {
+          set((s) => { const loaded = { ...s.loaded }; delete loaded[sessionId]; return { loaded, activeSessionId: s.activeSessionId === sessionId ? null : s.activeSessionId } })
+          throw new Error('This thread no longer exists; it was deleted elsewhere. The thread list has been refreshed.')
+        }
+      }
       throw e
     }
   },

@@ -12,6 +12,7 @@ use crate::error::{CaretError, Result};
 use dashmap::DashMap;
 use once_cell::sync::OnceCell;
 use parking_lot::{Mutex, RwLock};
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -45,7 +46,9 @@ impl SessionHandle {
 pub struct AgentManager {
     app: OnceCell<AppHandle>,
     sessions: DashMap<String, Arc<SessionHandle>>,
-    channel: RwLock<Option<Channel<AgentEvent>>>,
+    /// UI event channels keyed by client id (the desktop webview, each remote browser page). A client that
+    /// re-subscribes replaces its own channel; a channel whose webview is gone is dropped on the first failed send.
+    channels: RwLock<HashMap<String, Channel<AgentEvent>>>,
     /// In-process fan-out of every `AgentEvent` (orchestrator MCP server, tests). Lagging receivers skip events.
     events: tokio::sync::broadcast::Sender<AgentEvent>,
     approvals: DashMap<String, oneshot::Sender<ApprovalOption>>,
@@ -63,7 +66,7 @@ impl Default for AgentManager { fn default() -> Self { Self::new() } }
 impl AgentManager {
     pub fn new() -> Self {
         let (events, _) = tokio::sync::broadcast::channel(1024);
-        Self { app: OnceCell::new(), sessions: DashMap::new(), channel: RwLock::new(None), events, approvals: DashMap::new(), questions: DashMap::new(), store: SessionStore::default(), registry: ToolRegistry::builtin(), file_cache: Mutex::new(None), fallback_root: Mutex::new(None), #[cfg(test)] test_events: Mutex::new(vec![]) }
+        Self { app: OnceCell::new(), sessions: DashMap::new(), channels: RwLock::new(HashMap::new()), events, approvals: DashMap::new(), questions: DashMap::new(), store: SessionStore::default(), registry: ToolRegistry::builtin(), file_cache: Mutex::new(None), fallback_root: Mutex::new(None), #[cfg(test)] test_events: Mutex::new(vec![]) }
     }
     pub fn attach(&self, app: AppHandle) { let _ = self.app.set(app); }
     pub fn app(&self) -> AppHandle { self.app.get().expect("AgentManager not attached").clone() }
@@ -77,13 +80,14 @@ impl AgentManager {
     pub fn ws_key_of(&self, s: &Session) -> String { if s.scratch { "global".into() } else { workspace_key(s.root().as_deref()) } }
 
     // ───────── events ─────────
-    pub fn subscribe(&self, ch: Channel<AgentEvent>) { *self.channel.write() = Some(ch); }
+    pub fn subscribe(&self, client: &str, ch: Channel<AgentEvent>) { self.channels.write().insert(client.to_string(), ch); }
     /// Subscribe to every event the manager emits (independent of the UI channel).
     pub fn subscribe_events(&self) -> tokio::sync::broadcast::Receiver<AgentEvent> { self.events.subscribe() }
     pub fn emit(&self, ev: AgentEvent) {
         #[cfg(test)] { self.test_events.lock().push(ev.clone()); }
         if self.events.receiver_count() > 0 { let _ = self.events.send(ev.clone()); }
-        if let Some(ch) = self.channel.read().as_ref() { if let Err(e) = ch.send(ev) { tracing::debug!(error = %e, "agent event send failed"); } }
+        let dead: Vec<String> = { let chans = self.channels.read(); chans.iter().filter_map(|(id, ch)| ch.send(ev.clone()).err().map(|e| { tracing::debug!(client = %id, error = %e, "agent event send failed; dropping subscriber"); id.clone() })).collect() };
+        if !dead.is_empty() { let mut chans = self.channels.write(); for id in dead { chans.remove(&id); } }
     }
     pub fn set_status(&self, h: &SessionHandle, status: SessionStatus) {
         let id = { let mut s = h.session.lock(); if s.status == status { return; } s.status = status; s.id.clone() };

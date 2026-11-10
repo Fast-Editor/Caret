@@ -35,8 +35,10 @@ function onAgentEvent(e: AgentEvent) {
   if (frame === null) frame = requestAnimationFrame(flush)
 }
 
+/** One id per page load: the backend keeps a channel per client, so a remote browser never displaces the desktop. */
+const CLIENT_ID = uid('ui')
 async function subscribe() {
-  try { await api.chat.subscribe(onAgentEvent) } catch (e) { console.error('chat subscribe failed', e) }
+  try { await api.chat.subscribe(onAgentEvent, CLIENT_ID) } catch (e) { console.error('chat subscribe failed', e) }
 }
 
 export interface ActiveFileInfo { path: string; language?: string; text?: string }

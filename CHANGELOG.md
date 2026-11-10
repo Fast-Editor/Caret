@@ -4,6 +4,11 @@ All notable changes to Caret. The version here must match `package.json`, `src-t
 
 ## Unreleased
 
+- Fixed: agent events now reach every connected UI. The event stream had a single subscriber, so a remote browser (or a
+  second window) connecting through `caret serve` silently took the desktop's channel and the desktop stopped updating
+  (deleted threads lingered, streaming stalled) until it re-subscribed. Each page now has its own channel.
+- Fixed: sending to a thread that was deleted elsewhere refreshes the list, drops the stale selection and says so,
+  instead of surfacing a raw "session <id> not found".
 - Homebrew: Caret has its own tap, `brew tap fast-editor/caret && brew trust fast-editor/caret && brew install --cask caret`.
   The cask was removed from the `fast-editor/lynkr` tap; reinstall from the new tap if you used the old one.
 - Website: search and sharing basics. Canonical URLs on every page, per-page Open Graph and Twitter cards with a

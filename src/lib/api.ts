@@ -124,7 +124,8 @@ const apiBase = {
 
   chat: {
     /** Register the single agent event stream. Call once at startup (re-call after HMR). */
-    subscribe: (onEvent: (e: T.AgentEvent) => void) => invoke<void>('chat_subscribe', { onEvent: channel(onEvent) }),
+    /** `client` identifies this page (desktop webview or a remote browser) so several UIs receive events at once. */
+    subscribe: (onEvent: (e: T.AgentEvent) => void, client?: string) => invoke<void>('chat_subscribe', { onEvent: channel(onEvent), client }),
     listSessions: (includeArchived = false) => invoke<T.ChatSessionSummary[]>('chat_list_sessions', { includeArchived }),
     createSession: (opts?: { mode?: T.ModeId; modelId?: string; title?: string; useWorktree?: boolean; agentId?: string }) => invoke<T.ChatSession>('chat_create_session', { ...opts }),
     getSession: (sessionId: string) => invoke<T.ChatSession>('chat_get_session', { sessionId }),
