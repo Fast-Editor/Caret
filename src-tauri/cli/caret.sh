@@ -81,14 +81,41 @@ urlencode() {
   done
 }
 
-# open_with_app <documents or URLs...> — hands them to Caret via LaunchServices; falls back to the app path.
+# running_app: bundle path of the Caret that is running right now, or nothing.
+# Several copies of Caret.app can share one bundle id (a hand-copied /Applications/Caret.app next to the Homebrew
+# cask in ~/Applications, a build under target/). `open -b` then lets LaunchServices pick a copy, and that copy may
+# not be the running one: a cold start and a second window instead of an open event to the window you work in.
+# CARET_CLI_RUNNING_APP (set, possibly empty) pins the answer so dry runs and tests never ask LaunchServices.
+running_app() {
+  if [ -n "${CARET_CLI_RUNNING_APP+set}" ]; then printf '%s' "$CARET_CLI_RUNNING_APP"; return 0; fi
+  p=""
+  if command -v lsappinfo >/dev/null 2>&1; then
+    p=$(lsappinfo info -only bundlepath "$BUNDLE_ID" 2>/dev/null | sed -n 's/^"LSBundlePath"="\(.*\)"$/\1/p' | head -n 1)
+  fi
+  if [ -z "$p" ] && command -v pgrep >/dev/null 2>&1; then
+    p=$(pgrep -fl "Caret.app/Contents/MacOS/caret" 2>/dev/null | sed -n 's|^[0-9][0-9]* \(.*\.app\)/Contents/MacOS/caret.*$|\1|p' | head -n 1)
+  fi
+  if [ -n "$p" ] && [ -d "$p" ]; then printf '%s' "$p"; fi
+  return 0
+}
+
+# open_with_app <documents or URLs...>: hands them to Caret through LaunchServices.
+# Target order: the running copy (`open -a <bundle>`, so the event reaches the window you already have), then the
+# copy this script was rendered for while it is still an app bundle, then the bundle id (first run after a fresh
+# build; dev builds, whose APP_PATH is a bare binary). The dry run prints exactly the command that would run.
 open_with_app() {
+  running=$(running_app)
+  if [ -n "$running" ]; then how=-a; who=$running
+  elif [ -d "$APP_PATH" ]; then how=-a; who=$APP_PATH
+  else how=-b; who=$BUNDLE_ID; fi
   if [ -n "$CARET_CLI_DRY_RUN" ]; then
-    printf 'open -b %s' "$BUNDLE_ID"; for x in "$@"; do printf ' %s' "$x"; done; printf '\n'; return 0
+    printf 'open %s %s' "$how" "$who"; for x in "$@"; do printf ' %s' "$x"; done; printf '\n'; return 0
   fi
   if command -v open >/dev/null 2>&1; then
-    open -b "$BUNDLE_ID" "$@" 2>/dev/null && return 0
-    if [ -d "$APP_PATH" ]; then open -a "$APP_PATH" "$@" 2>/dev/null && return 0; fi
+    open "$how" "$who" "$@" 2>/dev/null && return 0
+    # The preferred copy did not take it (moved, half-installed): try the other selectors before giving up.
+    if [ "$how" != -b ]; then open -b "$BUNDLE_ID" "$@" 2>/dev/null && return 0; fi
+    if [ "$who" != "$APP_PATH" ] && [ -d "$APP_PATH" ]; then open -a "$APP_PATH" "$@" 2>/dev/null && return 0; fi
     echo "caret: could not launch Caret (bundle $BUNDLE_ID, app $APP_PATH). Launch Caret once from Finder and retry." >&2
     return 1
   fi

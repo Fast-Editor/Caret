@@ -29,18 +29,32 @@ What it does, exactly what VS Code does:
    `/usr/local/bin/caret` (what VS Code does). Uninstall removes every such link and keeps the script.
 
 The script is rewritten on every Caret start when its content is stale, so moving or updating the app never breaks
-the command. **Uninstall** removes the symlink and keeps the script.
+the command. "Stale" means the file differs byte-for-byte from the template rendered by the build that is starting
+(there is no version gate), so a launcher fix in a newer Caret reaches `~/.caret/bin/caret` the first time that build
+starts, and a dev build (`cargo tauri dev`) rewrites it with its own `APP_PATH` (the bare `target/debug/caret`
+binary) until a bundled Caret starts again. **Uninstall** removes the symlink and keeps the script.
 
 ## How it works
 
-The script resolves each argument to an absolute, symlink-resolved path and hands it to LaunchServices:
+The script resolves each argument to an absolute, symlink-resolved path and hands it to LaunchServices with `open`:
 
-* plain paths → `open -b dev.caret.editor <paths…>` (Apple's open-documents event; the bundle declares folders and
-  text/source documents in `src-tauri/Info.plist`),
-* positions → `open -b dev.caret.editor "caret://open?path=<url-encoded>&line=N&col=M"` (the bundle registers the
-  `caret` URL scheme).
+* plain paths → `open <target> <paths…>` (Apple's open-documents event; the bundle declares folders and text/source
+  documents in `src-tauri/Info.plist`),
+* positions → `open <target> "caret://open?path=<url-encoded>&line=N&col=M"` (the bundle registers the `caret` URL
+  scheme).
 
-If the bundle is not registered yet (first run after a fresh build), it falls back to `open -a <app path>`.
+`<target>` picks the copy of Caret that receives the event, in this order:
+
+1. `-a <bundle of the running Caret>`: the script asks LaunchServices which copy owns the bundle id right now
+   (`lsappinfo info -only bundlepath dev.caret.editor`, with `pgrep -fl "Caret.app/Contents/MacOS/caret"` as the
+   fallback). A running copy always wins, so the paths land in the window you already have.
+2. `-a <APP_PATH>`: nothing is running, so the copy this script was rendered for starts, when it is still an app
+   bundle on disk.
+3. `-b dev.caret.editor`: the bundle id, for a first run after a fresh build or a dev-rendered script whose
+   `APP_PATH` is a bare binary. If the chosen target fails, the other two are tried before the script gives up.
+
+`CARET_CLI_RUNNING_APP=/path/Caret.app` pins step 1 (an empty value means "nothing running"); the Rust tests use it so
+dry runs never depend on LaunchServices.
 
 In the app, `tauri::RunEvent::Opened` (`src-tauri/src/core/cli.rs::on_opened`) parses the URLs into
 `OpenRequest { path, line?, col? }`, pushes them on the `OpenQueue` and emits `caret://open-paths`. The UI
@@ -49,7 +63,32 @@ same: a folder becomes the workspace; a file opens in the editor, opening its fo
 none is open. Arguments passed directly to the binary (`Caret.app/Contents/MacOS/caret .`) are parsed the same way
 at startup.
 
-`CARET_CLI_DRY_RUN=1 caret . a.ts:3` prints the `open` commands instead of running them (used by the Rust tests).
+`CARET_CLI_DRY_RUN=1 caret . a.ts:3` prints the `open` commands instead of running them, including the target that
+would be chosen on this machine right now (used by the Rust tests together with `CARET_CLI_RUNNING_APP`).
+
+## Two copies of Caret
+
+macOS lets several app bundles register the same bundle id. That happens easily with Caret: a copy dragged from the DMG
+to `/Applications`, the Homebrew cask in `~/Applications`, a `cargo tauri build` under `src-tauri/target*/`, and
+LaunchServices also remembers every mounted DMG (`mdfind "kMDItemCFBundleIdentifier == 'dev.caret.editor'"` and
+`lsregister -dump | grep Caret.app` list them). With plain `open -b dev.caret.editor`, LaunchServices chooses one of
+those copies by its own rules, and when it picks a copy that is not running you wait for a cold start and get a second
+Caret next to the one you were working in, even though Caret is single-window (File → New Window is not available).
+
+The launcher therefore prefers the running copy (step 1 above), whichever path it lives at; `caret .` then arrives as an
+open event in that window. To stop the ambiguity for Finder and other apps as well, keep one copy:
+
+* Installed with Homebrew and also copied by hand: remove the hand-copied one (`rm -rf /Applications/Caret.app`,
+  after quitting it) and keep `~/Applications/Caret.app`, which `brew upgrade --cask caret` maintains; or run
+  `brew uninstall --cask caret` and keep the one in `/Applications` (your `~/.caret` data is untouched either way;
+  only `brew zap` removes it).
+* Stale registrations for ejected DMGs and deleted build directories only vanish when the LaunchServices database is
+  rebuilt: `/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister -kill -r -domain local -domain system -domain user`
+  (safe; it re-scans the standard folders), or unregister one path with `lsregister -u <path/to/Caret.app>`. An old
+  build still on disk (`src-tauri/target*/release/bundle/macos/Caret.app`) stays registered until you trash it.
+
+`lsappinfo info -only bundlepath,pid dev.caret.editor` shows which copy is running at the moment, and
+`CARET_CLI_DRY_RUN=1 caret .` shows the `open` command the launcher would run against it.
 
 ## `caret serve`
 

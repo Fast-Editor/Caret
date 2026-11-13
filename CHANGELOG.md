@@ -4,6 +4,12 @@ All notable changes to Caret. The version here must match `package.json`, `src-t
 
 ## Unreleased
 
+- Fixed: `caret <path>` from the terminal now reaches the Caret you are working in. With two or more copies of
+  Caret.app registered for the same bundle id (a hand-copied `/Applications/Caret.app` next to the Homebrew cask in
+  `~/Applications`, or an old build directory), `open -b dev.caret.editor` could pick a copy that was not running and
+  cold-start a second Caret. The launcher now asks LaunchServices which copy is running and targets it by path, then
+  the copy it was installed from, then the bundle id. The installed `~/.caret/bin/caret` is refreshed on the next
+  start of a Caret that carries the fix. docs/CLI.md has a "Two copies of Caret" note on removing a stray copy.
 - Fixed: agent events now reach every connected UI. The event stream had a single subscriber, so a remote browser (or a
   second window) connecting through `caret serve` silently took the desktop's channel and the desktop stopped updating
   (deleted threads lingered, streaming stalled) until it re-subscribed. Each page now has its own channel.
