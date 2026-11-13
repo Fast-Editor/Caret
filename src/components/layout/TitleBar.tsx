@@ -37,7 +37,7 @@ export function TitleBar() {
       <div data-tauri-drag-region className="flex-1 flex items-center justify-center gap-1 min-w-0">
         <button type="button" className={navCls} disabled={!canBack} onClick={() => void runCommand('go.back')} title="Go Back (⌃-)" aria-label="Go back"><ChevronLeft className="size-4" /></button>
         <button type="button" className={navCls} disabled={!canForward} onClick={() => void runCommand('go.forward')} title="Go Forward (⌃⇧-)" aria-label="Go forward"><ChevronRight className="size-4" /></button>
-        <button type="button" onClick={() => ui.openPalette('files')} className="flex items-center gap-2 h-[26px] w-[min(560px,44vw)] rounded-md bg-input hover:bg-active px-2.5 text-[11.5px] text-muted" aria-label="Open command center" title="Search files and commands">
+        <button type="button" onClick={() => ui.openPalette('files')} className="flex items-center gap-2 h-[26px] w-[min(560px,44vw)] rounded-md bg-input hover:bg-active px-2.5 text-[11.5px] text-muted" aria-label="Open command center" title={ws ? `${ws.name} — ${ws.root}` : 'Search files and commands'}>
           <Search className="size-3.5 shrink-0" /><span className="truncate flex-1 text-center">{ws ? ws.name : 'Search files and commands'}</span><Kbd keys="mod+p" />
         </button>
       </div>

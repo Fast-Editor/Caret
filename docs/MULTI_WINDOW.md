@@ -1,6 +1,9 @@
 # Multiple windows
 
-Status: phase 0 (foundation) done 2026-11-13 — window registry and `RootRefs`, `window_new/list/focus/close`,
+Status: phase 1E (frontend polish) done 2026-11-13 — closing a window with unsaved files asks Save All / Don't Save /
+Cancel, "Open in New Window" on explorer folders and recent folders (Alt-click inverts the setting), `window.switch`
+/ `window.closeOthers` palette commands, `document.title` mirrors the native title, the confirm-close dialog is
+mounted at the layout root. Phase 0 (foundation) done 2026-11-13 — window registry and `RootRefs`, `window_new/list/focus/close`,
 per-window `workspace_open/current/close`, window creation (cascaded, same options as `main`), Window menu with the
 open-window list, native menu events routed to the focused window, macOS keep-alive after the last window closes plus
 Dock-click reopen, per-window editor sessions, `window.openFoldersIn`, `events::emit_to` / `emit_for_root` /
@@ -13,22 +16,40 @@ behaviour.
 
 ## Behaviour
 
-- **File → New Window** (Cmd+Shift+N) opens an empty window (Welcome + recent folders). *done* — Every window is a
-  full Caret: explorer, editor, terminals, chat, git, search, LSP, Quick Open, all scoped to the folder that window has
-  open (per-root scoping of the Rust services: phase 1).
+- **File → New Window** (Cmd+Shift+N) opens an empty window: the Welcome view with Open Folder…, a "New window" link,
+  the shortcut list and the recent folders (the explorer sidebar shows its own Open Folder + Recent list; the chat pane
+  works without a folder). *done* — Every window is a full Caret: explorer, editor, terminals, chat, git, search, LSP,
+  Quick Open, all scoped to the folder that window has open (per-root scoping of the Rust services: phase 1).
 - **Open Folder / Open Recent** in a window that already has a folder: the folder opens in a *new* window when
   `window.openFoldersIn` is `"new"` (default) and replaces the current one when it is `"current"`. An empty window
-  always opens the folder in place. *done* — Holding Alt while choosing a recent folder does the opposite of the
-  setting (pending: the recent picker does not report modifiers yet).
+  always opens the folder in place. *done* — The Welcome tab's Recent list follows the setting on click and does the
+  opposite on **Alt-click** (its tooltip says which); every recent row (Welcome view and Welcome tab) has a hover
+  "Open in New Window" action that always opens a new window. *done* — The Open Recent… picker still reports no
+  modifiers, so Alt does nothing there.
+- **Explorer → right-click a folder (or the empty area) → Open in New Window** opens that folder as its own window
+  (`workspace.openInNewWindow`). *done*
+- **Closing a window** (red button, File → Close Window, `window_close` from another window) with unsaved files shows
+  one dialog listing every dirty file: **Save All** saves them (untitled buffers get a Save As each) and closes the
+  window, **Don't Save** closes it, **Cancel** keeps it; a failed or cancelled save keeps the window. The window's
+  terminals (PTYs) are killed before it is destroyed. A window with nothing dirty closes at once. The frontend always
+  vetoes Tauri's close request and destroys the window itself (`src/lib/windowClose.ts`), so the Rust `Destroyed`
+  handler sees exactly one close. *done*
+- **Window: Switch Window…** (palette, `window.switch`) lists the open windows — folder name (or "Empty window"), the
+  folder path, the label and a "current" marker, current window last — and focuses the chosen one; **Window: Close
+  Other Windows** (`window.closeOthers`) asks each other window to close, each running its own unsaved-files dialog.
+  *done*
 - **`caret <path>`, Finder "Open with", `caret://open?…`**: a folder that is already open in a window focuses that
   window; a file inside an open folder opens there; anything else goes to an empty window if one is focused, or to a
   new window (folders) or the focused window (loose files). Phase 1; today the request goes to the focused window (a
   new one is created when none exists).
 - **Window menu** lists the open windows (folder name, checkmark on the focused one) plus Minimize / Zoom /
-  Bring All to Front. *done* — Cmd+` cycles windows (macOS standard).
+  Bring All to Front. *done* — Cmd+` cycles windows (macOS's own "move focus to next window" shortcut; Caret binds
+  nothing for it, so a user binding of `mod+backtick` would not conflict with anything Caret-side).
 - Closing the last window keeps Caret running on macOS (Dock click or Cmd+Shift+N reopens a window), quits elsewhere. *done*
 - Two windows may show the same folder; they share the watcher, the index and the language servers for it.
-- Window titles are `<folder> — Caret` (just `Caret` when empty); traffic lights stay in the overlay title bar. *done*
+- Window titles are `<folder> — Caret` (just `Caret` when empty); traffic lights stay in the overlay title bar, the
+  title bar's command center shows the folder name (tooltip: name and path) and `document.title` mirrors the native
+  title for assistive tech (`windowTitle` in src/lib/windowing.ts). *done*
 
 ## Architecture
 

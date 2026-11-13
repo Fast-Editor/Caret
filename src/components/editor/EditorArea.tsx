@@ -2,7 +2,6 @@ import { useEffect } from 'react'
 import { Group, Panel, Separator } from 'react-resizable-panels'
 import { useEditor } from '@/store/editor'
 import { EditorGroupView } from './EditorGroup'
-import { ConfirmCloseDialog } from './ConfirmCloseDialog'
 import { SymbolPicker } from './SymbolPicker'
 import { initEditorModule } from './commands'
 import './editor.css'
@@ -23,7 +22,7 @@ export function EditorArea() {
           )).flatMap((p, i) => (i === 0 ? [p] : [<Separator key={`sep-${i}`} className="w-px bg-transparent hover:bg-border-strong data-[separator=active]:bg-border-strong transition-colors cursor-col-resize" />, p]))}
         </Group>
       )}
-      <ConfirmCloseDialog />
+      {/* ConfirmCloseDialog is mounted in AppLayout: it must show with no editor on screen (window close, Close Folder). */}
       <SymbolPicker />
     </div>
   )

@@ -4,6 +4,7 @@
  */
 import { getCurrentWindow } from '@tauri-apps/api/window'
 import { isTauri } from './tauri'
+import type { WindowSummary } from '@/types'
 
 /** Label of the current window (`main`, `w2`, …); `main` outside Tauri (tests, the remote browser shim). */
 export function currentWindowLabel(): string {
@@ -36,4 +37,34 @@ export function opensInNewWindow(hasWorkspace: boolean, setting: OpenFoldersIn |
   if (!hasWorkspace) return false
   const wantsNew = (setting ?? 'new') !== 'current'
   return invert ? !wantsNew : wantsNew
+}
+
+/** `<folder> — Caret`, or just `Caret` for an empty window; mirrors `window_title` in core/windows.rs. */
+export function windowTitle(folderName: string | null | undefined): string {
+  return folderName ? `${folderName} — Caret` : 'Caret'
+}
+
+/** `/Users/<me>/x` → `~/x` for display. */
+export function displayPath(path: string): string { return path.replace(/^\/Users\/[^/]+/, '~') }
+
+export interface WindowPickItem { id: string; label: string; description: string; detail: string; keywords: string }
+/**
+ * Rows for "Window: Switch Window…": folder name (or "Empty window"), the folder path, and the label with a "current"
+ * marker. The current window goes last so Enter switches to another window straight away; the others keep creation
+ * order (same as the native Window menu).
+ */
+export function windowPickItems(windows: WindowSummary[], currentLabel: string): WindowPickItem[] {
+  const row = (w: WindowSummary): WindowPickItem => {
+    const current = w.label === currentLabel || w.focused
+    return {
+      id: w.label,
+      label: w.name ?? 'Empty window',
+      description: w.root ? displayPath(w.root) : 'No folder open',
+      detail: current ? `${w.label} · current` : w.label,
+      keywords: [w.label, w.root ?? ''].join(' ').trim(),
+    }
+  }
+  const others = windows.filter((w) => w.label !== currentLabel)
+  const current = windows.filter((w) => w.label === currentLabel)
+  return [...others, ...current].map(row)
 }

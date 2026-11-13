@@ -5,6 +5,8 @@ import { useUi } from '@/store/ui'
 import { useWorkspace } from '@/store/workspace'
 import { useSettings } from '@/store/settings'
 import { EditorArea } from '@/components/editor'
+import { ConfirmCloseDialog } from '@/components/editor/ConfirmCloseDialog'
+import { windowTitle } from '@/lib/windowing'
 import { DebugToolbar } from '@/components/debug'
 import { ChatPane } from '@/components/chat'
 import { AgentsLayout } from '@/components/agents'
@@ -31,6 +33,9 @@ export function AppLayout() {
   const onPanel = useCallback((d: number) => useUi.setState((s) => ({ panelHeight: clamp(s.panelHeight - d, 100, window.innerHeight - 200), panelMaximized: false })), [])
   const zen = ui.zenMode
   useScrollReveal()
+  // The native title (`<folder> — Caret`) is set in Rust; mirror it on the document for assistive tech and automation.
+  const wsName = ws?.name
+  useEffect(() => { document.title = windowTitle(wsName) }, [wsName])
 
   const sidebarOpen = ui.sidebarVisible && !zen
   const chatOpen = ui.chatVisible && !zen
@@ -90,6 +95,8 @@ export function AppLayout() {
         </div>
       )}
       <Pane open={!zen} size={22} axis="y" edge="end"><StatusBar /></Pane>
+      {/* Save / Don't Save / Cancel for dirty tabs; lives here (not in EditorArea) so closing the window or the folder can ask even with no editor mounted. */}
+      <ConfirmCloseDialog />
     </div>
   )
 }

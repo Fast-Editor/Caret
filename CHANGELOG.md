@@ -4,6 +4,13 @@ All notable changes to Caret. The version here must match `package.json`, `src-t
 
 ## Unreleased
 
+- Windows, polish: closing a window that has unsaved files now asks once for all of them (Save All / Don't Save /
+  Cancel; a failed save keeps the window) and kills the window's terminals before it goes; "Open in New Window" on
+  explorer folders (right-click) and on recent folders (hover action; Alt-click on the Welcome tab's Recent list does
+  the opposite of `window.openFoldersIn`); new palette commands Window: Switch Window… and Window: Close Other
+  Windows; a new empty window shows the Welcome view with a "New window" link; `document.title` matches the native
+  `<folder> — Caret`. The unsaved-changes dialog is mounted at the layout root, so Close Folder with dirty tabs can
+  ask too.
 - Windows: File → New Window (Cmd+Shift+N) opens a second Caret window, empty or showing a folder. Each window has
   its own folder, title (`<folder> — Caret`), editor tabs, terminals and chat; Open Folder / Open Recent from a
   window that already shows a folder open the new folder in a new window (`window.openFoldersIn`, `"new"` by default;
