@@ -1,5 +1,6 @@
 //! IndexManager: per-workspace lifecycle (scan → chunk → BM25 → embeddings), incremental updates
 //! from fs events, status broadcasting, and the `CodebaseSearchPort` implementation.
+use crate::core::generation::Generation;
 use crate::core::ports::{self, CodeHit, CodebaseSearchPort, DocHit};
 use crate::core::settings::SettingsState;
 use crate::error::{CaretError, Result};
@@ -55,10 +56,16 @@ pub struct Inner {
     debounce_running: AtomicBool,
     last_emit: Mutex<Instant>,
     run_lock: tokio::sync::Mutex<()>,
+    /// Bumped per workspace change; a queued `set_workspace` or the delayed first run stops when it is no longer current.
+    generation: Generation,
 }
 
 #[derive(Clone)]
 pub struct IndexManager { pub inner: Arc<Inner> }
+
+/// How long a newly opened folder must stay open before the scan + embeddings run starts. Clicking through the recent
+/// list or `caret <dir>` in quick succession must not launch (and then cancel) a run per folder.
+pub const FIRST_RUN_DELAY: Duration = Duration::from_millis(1200);
 
 fn now_ms() -> u64 { std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis() as u64).unwrap_or(0) }
 
@@ -69,6 +76,7 @@ impl IndexManager {
             status: RwLock::new(IndexStatus::default()), paused: AtomicBool::new(false), cancel: Mutex::new(None),
             backend: tokio::sync::RwLock::new(None), backend_probed: AtomicBool::new(false), pending: Mutex::new(HashSet::new()),
             debounce_running: AtomicBool::new(false), last_emit: Mutex::new(Instant::now() - Duration::from_secs(10)), run_lock: tokio::sync::Mutex::new(()),
+            generation: Generation::new(),
         });
         Self { inner }
     }
@@ -121,8 +129,12 @@ impl Inner {
     }
 
     async fn set_workspace(self: &Arc<Self>, root: Option<PathBuf>) {
+        let ticket = self.generation.begin();
+        let t0 = Instant::now();
         if let Some(c) = self.cancel.lock().take() { c.cancel(); }
         let _guard = self.run_lock.lock().await;
+        // Two rapid opens queue two of these behind the lock; only the newest may touch the stores.
+        if !self.generation.is_current(ticket) { return; }
         *self.store.write() = None;
         *self.vectors.write() = None;
         *self.manifest.lock() = Manifest::default();
@@ -136,8 +148,17 @@ impl Inner {
         let s = self.settings();
         if !s.indexing.enabled { self.set_state("disabled", None); return; }
         if let Err(e) = self.open_stores(&root).await { self.set_state("error", Some(e.message)); return; }
+        if !self.generation.is_current(ticket) { return; }
         self.emit(true);
-        if s.indexing.auto_index_new_folders { let me = self.clone(); tauri::async_runtime::spawn(async move { me.run_full(false).await; }); }
+        tracing::info!(root = %root.display(), ms = t0.elapsed().as_millis() as u64, "index stores opened");
+        if s.indexing.auto_index_new_folders {
+            let me = self.clone();
+            tauri::async_runtime::spawn(async move {
+                tokio::time::sleep(FIRST_RUN_DELAY).await;
+                if !me.generation.is_current(ticket) { return; }
+                me.run_full(false).await;
+            });
+        }
     }
 
     async fn open_stores(&self, root: &Path) -> Result<()> {

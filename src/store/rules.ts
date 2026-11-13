@@ -2,6 +2,7 @@ import { create } from 'zustand'
 import type { RuleInfo, MemoryItem, SkillInfo, SlashCommandInfo, SubagentInfo, HookInfo, PlanInfo } from '@/types'
 import { api } from '@/lib/api'
 import { Events, on } from '@/lib/tauri'
+import { onWorkspaceChanged } from '@/lib/workspaceReload'
 
 interface RulesStore {
   rules: RuleInfo[]
@@ -39,5 +40,5 @@ export function initRulesStore(): void {
   subscribed = true
   useRules.getState().loadAll().catch(() => {})
   on(Events.rulesChanged, () => useRules.getState().loadAll().catch(() => {}))
-  on(Events.workspaceChanged, () => useRules.getState().loadAll().catch(() => {}))
+  onWorkspaceChanged('later', () => useRules.getState().loadAll().catch(() => {}))
 }

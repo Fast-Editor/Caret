@@ -2,6 +2,7 @@ import { create } from 'zustand'
 import type { IndexStatus, DocSource } from '@/types'
 import { api } from '@/lib/api'
 import { Events, on } from '@/lib/tauri'
+import { onWorkspaceChanged } from '@/lib/workspaceReload'
 
 interface IndexingStore {
   status: IndexStatus | null
@@ -27,5 +28,6 @@ export function initIndexingStore(): void {
   s.load().catch(() => {}); s.loadDocs().catch(() => {})
   on<IndexStatus>(Events.indexStatus, (status) => useIndexing.setState({ status }))
   on(Events.docsChanged, () => { useIndexing.getState().loadDocs().catch(() => {}) })
-  on(Events.workspaceChanged, () => { const st = useIndexing.getState(); st.load().catch(() => {}); st.loadDocs().catch(() => {}) })
+  // The backend pushes `indexStatus` as soon as its stores open; this pull is only the fallback, so it can wait.
+  onWorkspaceChanged('later', () => { const st = useIndexing.getState(); st.load().catch(() => {}); st.loadDocs().catch(() => {}) })
 }

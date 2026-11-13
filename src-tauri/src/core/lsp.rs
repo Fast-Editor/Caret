@@ -210,8 +210,11 @@ pub fn init(app: &AppHandle) {
     app.listen(events::WORKSPACE_CHANGED, move |_| {
         let h2 = h.clone();
         tauri::async_runtime::spawn(async move {
+            let t0 = std::time::Instant::now();
             let ids: Vec<String> = h2.state::<LspState>().servers.iter().map(|e| e.key().clone()).collect();
+            let n = ids.len();
             for id in ids { stop_server(&h2, &id).await; }
+            if n > 0 { tracing::info!(servers = n, ms = t0.elapsed().as_millis() as u64, "lsp servers stopped for workspace change"); }
         });
     });
 }

@@ -6,6 +6,7 @@ import { create } from 'zustand'
 import type { GitStatus, GitBranch, GitCommit, GitWorktree, GitRemoteOpResult } from '@/types'
 import { api } from '@/lib/api'
 import { Events, on } from '@/lib/tauri'
+import { onWorkspaceChanged } from '@/lib/workspaceReload'
 
 interface GitStore {
   status: GitStatus | null
@@ -169,6 +170,10 @@ export function initGitStore(): void {
   subscribed = true
   useGit.getState().refresh().catch(() => {})
   on(Events.gitChanged, () => { const g = useGit.getState(); g.refresh().catch(() => {}) })
-  on(Events.workspaceChanged, () => { useGit.setState({ log: [], logHasMore: true, worktrees: [], commitSummary: '', commitBody: '' }); const g = useGit.getState(); g.refresh().catch(() => {}); g.loadWorktrees().catch(() => {}); g.loadRemotes().catch(() => {}) })
+  // Workspace switch: drop the old repo's state at once, fetch status (status bar + explorer decorations) after the
+  // tree has painted, and the SCM-view extras (worktrees, remotes) once the window is settled.
+  onWorkspaceChanged('now', () => useGit.setState({ log: [], logHasMore: true, worktrees: [], commitSummary: '', commitBody: '' }))
+  onWorkspaceChanged('soon', () => { useGit.getState().refresh().catch(() => {}) })
+  onWorkspaceChanged('later', () => { const g = useGit.getState(); g.loadWorktrees().catch(() => {}); g.loadRemotes().catch(() => {}) })
   on(Events.fsChanged, () => { useGit.getState().refresh().catch(() => {}) })
 }

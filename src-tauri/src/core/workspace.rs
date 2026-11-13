@@ -6,6 +6,7 @@ use crate::paths;
 use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
+use std::time::Instant;
 use tauri::{AppHandle, Manager, State};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -54,16 +55,24 @@ fn touch_recent(root: &Path) {
 }
 
 /// Open a workspace: updates settings scope, recent list, and broadcasts. Other domains react to the event.
+///
+/// The `WORKSPACE_CHANGED` listeners run inline inside `emit`, so each of them must hand its real work (watcher
+/// setup, index builds, server restarts) to a background task; the `emit_ms` figure in the log is how well they do.
 pub fn open_workspace(app: &AppHandle, path: &Path) -> Result<WorkspaceInfo> {
+    let t0 = Instant::now();
     let root = std::fs::canonicalize(path).map_err(|_| CaretError::not_found(format!("Folder {}", path.display())))?;
     if !root.is_dir() { return Err(CaretError::invalid(format!("{} is not a directory", root.display()))); }
     let ws = app.state::<WorkspaceState>();
     *ws.root.write() = Some(root.clone());
     app.state::<SettingsState>().set_workspace(Some(&root));
+    let t_settings = t0.elapsed();
     touch_recent(&root);
+    let t_recent = t0.elapsed();
     let info = info_for(&root);
+    let t_emit = Instant::now();
     events::emit(app, events::WORKSPACE_CHANGED, Some(info.clone()));
-    tracing::info!(root = %root.display(), "workspace opened");
+    let ms = |d: std::time::Duration| d.as_millis() as u64;
+    tracing::info!(root = %root.display(), settings_ms = ms(t_settings), recent_ms = ms(t_recent - t_settings), emit_ms = ms(t_emit.elapsed()), total_ms = ms(t0.elapsed()), "workspace opened");
     Ok(info)
 }
 
@@ -74,15 +83,17 @@ pub fn close_workspace(app: &AppHandle) {
     events::emit::<Option<WorkspaceInfo>>(app, events::WORKSPACE_CHANGED, None);
 }
 
-#[tauri::command]
+// `async` commands run on the blocking pool instead of the main thread: everything here touches the disk (canonicalize,
+// settings and recent-list files), and a plain command would stall every other IPC call for as long as it runs.
+#[tauri::command(async)]
 pub fn workspace_open(app: AppHandle, path: String) -> Result<WorkspaceInfo> { open_workspace(&app, Path::new(&path)) }
 #[tauri::command(async)]
 pub fn workspace_current(ws: State<'_, WorkspaceState>) -> Result<Option<WorkspaceInfo>> { Ok(ws.info()) }
-#[tauri::command]
+#[tauri::command(async)]
 pub fn workspace_close(app: AppHandle) -> Result<()> { close_workspace(&app); Ok(()) }
 #[tauri::command(async)]
 pub fn workspace_recent() -> Result<Vec<RecentWorkspace>> { Ok(load_recent()) }
-#[tauri::command]
+#[tauri::command(async)]
 pub fn workspace_remove_recent(path: String) -> Result<()> { let mut v = load_recent(); v.retain(|r| r.path != path); save_recent(&v); Ok(()) }
 #[tauri::command(async)]
 pub fn workspace_ensure_project_dir(ws: State<'_, WorkspaceState>) -> Result<String> {

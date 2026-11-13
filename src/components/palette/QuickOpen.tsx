@@ -19,6 +19,8 @@ export function QuickOpen({ initial = '' }: { initial?: string }) {
   const [value, setValue] = useState(initial)
   const [rows, setRows] = useState<Row[]>([])
   const [loading, setLoading] = useState(false)
+  // "showing the first N files" when the index walk stopped at its cap or time budget (huge trees without ignore files)
+  const [partialNote, setPartialNote] = useState<string | null>(null)
   const seq = useRef(0)
   const parsed = parseQuickOpenInput(value)
 
@@ -47,6 +49,7 @@ export function QuickOpen({ initial = '' }: { initial?: string }) {
       try {
         const res: QuickOpenResult[] = await api.fs.quickOpen(parsed.query, 60)
         if (my === seq.current) setRows(res.map((r) => ({ path: r.path, relPath: r.relPath, indices: r.indices, ignored: r.ignored })))
+        void api.fs.indexStatus().then((s) => { if (my === seq.current) setPartialNote(s.partial ? `showing the first ${s.files.toLocaleString()} files` : null) }).catch(() => {})
       } catch { if (my === seq.current) setRows([]) } finally { if (my === seq.current) setLoading(false) }
     }, 60)
     return () => clearTimeout(t)
@@ -60,7 +63,7 @@ export function QuickOpen({ initial = '' }: { initial?: string }) {
     <PaletteShell label="Go to file" value={value} onValueChange={setValue} shouldFilter={false} onClose={close}
       placeholder="Search files by name (append :line:col to jump)"
       onKeyDown={(e) => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { const el = document.querySelector<HTMLElement>('[cmdk-item][data-selected=true]'); const p = el?.dataset.path; const r = rows.find((x) => x.path === p); if (r) { e.preventDefault(); open(r, true) } } }}
-      footer={<><span><Kbd keys="enter" /> open</span><span><Kbd keys="mod+enter" /> open to the side</span><span className="ml-auto">{loading ? 'searching…' : `${rows.length} results`}</span></>}>
+      footer={<><span><Kbd keys="enter" /> open</span><span><Kbd keys="mod+enter" /> open to the side</span><span className="ml-auto">{loading ? 'searching…' : partialNote ? `${rows.length} results, ${partialNote}` : `${rows.length} results`}</span></>}>
       {rows.length === 0 && !loading && <Command.Empty className="px-3 py-6 text-center text-xs text-muted">{parsed.mode === 'recent' ? 'No recently opened files' : 'No matching files'}</Command.Empty>}
       {rows.map((r) => {
         const name = r.relPath.split('/').pop() ?? r.relPath

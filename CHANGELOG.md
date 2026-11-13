@@ -4,6 +4,23 @@ All notable changes to Caret. The version here must match `package.json`, `src-t
 
 ## Unreleased
 
+- Performance: opening a folder no longer freezes the window. `workspace_open` ran on the main thread and the file
+  watcher walked the whole tree (node_modules included) to seed its rename cache before the command returned, which
+  stalled every IPC call for 7 to 9 s on a 600 MB JavaScript checkout. The command now runs off the main thread, the
+  watcher starts on a background thread without the tree walk, a rapid folder switch cancels the previous folder's
+  watcher, quick-open index and codebase index runs (the scan + embeddings run also waits 1.2 s for the switch to
+  settle), and the UI reloads in tiers: explorer and editor first, git status and chat threads next, then branches,
+  worktrees, MCP, rules and index status. Measured here: a 32 GB Rust + Node checkout (124,818 files) went from a
+  2 to 4 minute freeze to a 30 ms open. The log now shows where the time goes (`workspace opened` with per-step ms,
+  `file watcher started ms=`, `index stores opened`, `lsp servers stopped`, `mcp configs reloaded`). See
+  docs/PERFORMANCE.md, "Opening a folder".
+- Performance: the Quick Open file index is built in two phases. The ignore-aware list is published as soon as it is
+  walked and is the only thing Cmd+P, @-mentions and the agent's file list ever wait for; files hidden only by ignore
+  rules are merged in afterwards from the background. Both walks stop at a cap, a wall-clock budget (new settings
+  `indexing.quickOpenBudgetMs`, default 8 s, and `indexing.quickOpenIgnoredBudgetMs`, default 1.5 s) or a workspace
+  switch; a capped or timed-out list is reported as partial (`fs_index_status`) and Quick Open says "showing the first
+  N files". `vendor/bundle` joined the heavy-directory skip list (`target`, `node_modules`, `dist`, `build`, `out`,
+  `Pods`, `DerivedData`, `.gradle`, `.terraform`, `coverage`, `.tox` were already on it).
 - Fixed: agent events now reach every connected UI. The event stream had a single subscriber, so a remote browser (or a
   second window) connecting through `caret serve` silently took the desktop's channel and the desktop stopped updating
   (deleted threads lingered, streaming stalled) until it re-subscribed. Each page now has its own channel.

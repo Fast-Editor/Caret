@@ -42,6 +42,8 @@ export interface FileStat { path: string; kind: FileKind; size: number; mtime: n
 export interface WriteResult { path: string; mtime: number; size: number }
 export interface FsChangeEvent { kind: 'create' | 'modify' | 'remove' | 'rename' | 'any'; paths: string[] }
 export interface QuickOpenResult { path: string; relPath: string; score: number; indices?: number[]; ignored?: boolean }
+/** State of the two-phase quick-open index: `partial` means the tracked walk stopped at its cap or budget. */
+export interface QuickOpenIndexStatus { root: string | null; ready: boolean; files: number; ignoredFiles: number; partial: boolean; ignoredDone: boolean; ignoredPartial: boolean }
 
 // ───────────────────────────── search ─────────────────────────────
 export interface SearchQuery {
@@ -156,6 +158,8 @@ export interface IndexingSettings {
   enabled: boolean; embeddingsProviderId?: string; embeddingsModel?: string; maxFileSizeKb: number
   excludeGlobs: string[]; chunkLines: number; chunkOverlap: number; autoIndexNewFolders: boolean; hybridAlpha: number
   gitGraphIndexing: boolean
+  /** Wall-clock budgets (ms) for the Quick Open file walks; 0 uses the built-in default. */
+  quickOpenBudgetMs: number; quickOpenIgnoredBudgetMs: number
 }
 export type ThemeId = 'caret-dark' | 'caret-midnight' | 'caret-light' | 'caret-high-contrast'
 export interface UiSettings {

@@ -1,21 +1,29 @@
 //! Workspace file watcher: debounced notify events → `caret://fs/changed` / `caret://git/changed`,
 //! plus incremental quick-open index updates.
+//!
+//! The watcher is (re)started on a blocking thread when the workspace changes and uses `NoCache`: the debouncer's
+//! default file-ID cache walks the whole tree on `watch()` (node_modules included), which took 7 s for a 600 MB
+//! JavaScript checkout and blocked the open. Without the cache a rename arrives as two events (old path, new path)
+//! instead of one paired event; the handler below treats every path by its current existence, so nothing is lost.
+use crate::core::generation::Generation;
 use crate::core::workspace::WorkspaceInfo;
 use crate::events;
 use notify::RecursiveMode;
-use notify_debouncer_full::{new_debouncer, DebounceEventResult, Debouncer, RecommendedCache};
+use notify_debouncer_full::{new_debouncer_opt, DebounceEventResult, Debouncer, NoCache};
 use parking_lot::Mutex;
 use serde::Serialize;
 use std::path::{Path, PathBuf};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use tauri::{AppHandle, Listener, Manager};
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct FsChangeEvent { pub kind: &'static str, pub paths: Vec<String> }
 
+type WorkspaceWatcher = Debouncer<notify::RecommendedWatcher, NoCache>;
+
 #[derive(Default)]
-pub struct WatcherState { inner: Mutex<Option<Debouncer<notify::RecommendedWatcher, RecommendedCache>>> }
+pub struct WatcherState { inner: Mutex<Option<WorkspaceWatcher>>, generation: Generation }
 
 const MAX_PATHS: usize = 500;
 
@@ -44,10 +52,10 @@ fn kind_of(k: &notify::EventKind) -> &'static str {
     match k { Create(_) => "create", Modify(notify::event::ModifyKind::Name(_)) => "rename", Modify(_) => "modify", Remove(_) => "remove", _ => "any" }
 }
 
-fn start(app: &AppHandle, root: &Path) -> notify::Result<Debouncer<notify::RecommendedWatcher, RecommendedCache>> {
+fn start(app: &AppHandle, root: &Path) -> notify::Result<WorkspaceWatcher> {
     let h = app.clone();
     let root_b: PathBuf = root.to_path_buf();
-    let mut deb = new_debouncer(Duration::from_millis(300), None, move |res: DebounceEventResult| {
+    let mut deb = new_debouncer_opt::<_, notify::RecommendedWatcher, NoCache>(Duration::from_millis(300), None, move |res: DebounceEventResult| {
         let events = match res { Ok(ev) => ev, Err(errs) => { for e in errs { tracing::debug!(error = %e, "watch error"); } return; } };
         let mut fs_paths: Vec<String> = Vec::new();
         let mut kinds: Vec<&'static str> = Vec::new();
@@ -76,25 +84,45 @@ fn start(app: &AppHandle, root: &Path) -> notify::Result<Debouncer<notify::Recom
             events::emit(&h, events::FS_CHANGED, FsChangeEvent { kind, paths: fs_paths });
         }
         if git_changed { events::emit(&h, events::GIT_CHANGED, serde_json::Value::Null); }
-    })?;
+    }, NoCache::new(), notify::Config::default())?;
     deb.watch(root, RecursiveMode::Recursive)?;
-    tracing::info!(root = %root.display(), "file watcher started");
     Ok(deb)
+}
+
+/// Swap the watcher for a new root (or none) off the emitting thread. A ticket from `WatcherState::generation` makes
+/// a stale start (the user switched folders again meanwhile) discard its watcher instead of installing it.
+fn restart(app: AppHandle, info: Option<WorkspaceInfo>) {
+    let st = app.state::<WatcherState>();
+    let ticket = st.generation.begin();
+    // Detach the old watcher right away so no more events arrive for the previous root; its teardown
+    // (stopping the debouncer thread, closing the OS stream) happens on the blocking thread below.
+    let old = st.inner.lock().take();
+    tauri::async_runtime::spawn_blocking(move || {
+        let t0 = Instant::now();
+        drop(old);
+        let Some(info) = info else { return };
+        let st = app.state::<WatcherState>();
+        if !st.generation.is_current(ticket) { return; }
+        match start(&app, Path::new(&info.root)) {
+            Ok(d) => {
+                let mut guard = st.inner.lock();
+                if st.generation.is_current(ticket) {
+                    *guard = Some(d);
+                    tracing::info!(root = %info.root, ms = t0.elapsed().as_millis() as u64, "file watcher started");
+                } else {
+                    tracing::debug!(root = %info.root, "file watcher start superseded by a newer workspace");
+                }
+            }
+            Err(e) => { tracing::warn!(error = %e, "failed to start watcher"); events::notify(&app, "warn", "File watcher unavailable", Some(e.to_string())); }
+        }
+    });
 }
 
 pub fn init(app: &AppHandle) {
     let h = app.clone();
     app.listen(events::WORKSPACE_CHANGED, move |ev| {
         let info: Option<WorkspaceInfo> = serde_json::from_str(ev.payload()).ok().flatten();
-        let st = h.state::<WatcherState>();
-        let mut guard = st.inner.lock();
-        *guard = None; // drop old watcher first
-        if let Some(info) = info {
-            match start(&h, Path::new(&info.root)) {
-                Ok(d) => *guard = Some(d),
-                Err(e) => { tracing::warn!(error = %e, "failed to start watcher"); events::notify(&h, "warn", "File watcher unavailable", Some(e.to_string())); }
-            }
-        }
+        restart(h.clone(), info);
     });
 }
 
