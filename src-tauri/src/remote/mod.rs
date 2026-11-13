@@ -224,7 +224,8 @@ pub fn init(app: &AppHandle) {
         });
     }
     if serve_args().map(|a| a.no_window).unwrap_or(false) {
-        if let Some(w) = app.get_webview_window("main") { let _ = w.hide(); }
+        // The window the user would see: the focused one (`main` at start-up, falling back to it when no focus is known).
+        if let Some(w) = crate::core::windows::focused_window(app) { let _ = w.hide(); }
     }
 }
 

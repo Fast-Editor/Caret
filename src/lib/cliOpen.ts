@@ -1,7 +1,9 @@
 /**
- * `caret` command-line launcher glue: drains the backend's pending-open queue (argv, Finder "Open with",
+ * `caret` command-line launcher glue: drains this window's pending-open queue (argv, Finder "Open with",
  * `caret://open?…`) and routes each request to the workspace/editor; registers the install/uninstall commands.
- * The backend pokes us with `caret://open-paths`; we always drain the queue so each request is handled once.
+ * The backend router (`core/cli.rs::route_open`, docs/CLI.md "Which window opens it") decides which window a
+ * request belongs to and pokes only that window with `caret://open-paths`; `cli_take_pending_opens` hands a window
+ * its own requests, so each request is handled once, by the window the router chose.
  */
 import { api } from './api'
 import { on } from './tauri'
@@ -17,29 +19,49 @@ async function focusWindow(): Promise<void> {
   try { const { getCurrentWindow } = await import('@tauri-apps/api/window'); const w = getCurrentWindow(); await w.show(); await w.setFocus() } catch { /* not fatal */ }
 }
 
-function workspaceReady(): Promise<void> {
+/** Longest wait for the workspace store's first load before requests are handled anyway. */
+export const WORKSPACE_READY_TIMEOUT_MS = 5_000
+
+/**
+ * Wait for the workspace store's first load, so a folder the backend opened before this window booted (a window
+ * created for a `caret <folder>`) is known before its files are opened. Capped: a window may legitimately have no
+ * folder (loose files routed to an empty window), and a slow or failed load must not hold the requests forever.
+ */
+function workspaceReady(timeoutMs = WORKSPACE_READY_TIMEOUT_MS): Promise<void> {
   return new Promise((res) => {
     if (useWorkspace.getState().loaded) return res()
-    const u = useWorkspace.subscribe((s) => { if (s.loaded) { u(); res() } })
+    let done = false
+    const finish = () => { if (done) return; done = true; clearTimeout(timer); unsubscribe(); res() }
+    const timer = setTimeout(finish, timeoutMs)
+    const unsubscribe = useWorkspace.subscribe((s) => { if (s.loaded) finish() })
   })
 }
 
-/** Open one request: folders become the workspace; files open in the editor (their folder becomes the workspace when none is open). */
+/**
+ * Open one request in this window. The backend router only hands a window the requests meant for it, so there is
+ * nothing to decide here about *which* window: a folder arrives when this window already shows it (then only the
+ * window focus is needed), when it is empty, or when `window.openFoldersIn` is `"current"` (then it opens here);
+ * a file arrives when it lives under this window's folder or is a loose file sent to the focused window.
+ */
 export async function handleOpenRequest(r: OpenRequest): Promise<void> {
   const st = await api.fs.stat(r.path).catch(() => null)
   if (!st?.exists) { void runCommand('app.notify', { level: 'warn', title: 'Cannot open', message: `${r.path} does not exist` }); return }
   const path = st.path || r.path
   const ws = useWorkspace.getState()
   if (st.kind === 'dir') {
-    if (ws.workspace?.root !== path) await ws.open(path)
+    // Already this window's folder: the pump brings the window to the front; nothing to replace.
+    if (ws.workspace?.root === path) return
+    await ws.open(path)
     return
   }
+  // Caret shows the editor only inside a workspace, so a loose file reaching a window without one opens its folder
+  // first. The router sent the file here on purpose; this only decides how this window shows it.
   if (!ws.workspace) await ws.open(parentDir(path))
   if (hasCommand('editor.openFile')) await runCommand('editor.openFile', { path, line: r.line, column: r.col, preview: false, focus: true })
 }
 
 let chain: Promise<void> = Promise.resolve()
-/** Drain the backend queue and handle every request in order (serialised across pokes). */
+/** Drain this window's backend queue and handle every request in order (serialised across pokes). */
 export function pumpPendingOpens(): Promise<void> {
   chain = chain.then(async () => {
     let reqs: OpenRequest[] = []
