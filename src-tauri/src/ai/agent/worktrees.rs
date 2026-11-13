@@ -1,6 +1,9 @@
 //! Agent worktree policies (`settings.worktrees`): location and branch templates, per-thread status, and cleanup
 //! (preview + removal). Decision helpers are pure and unit-tested; git probes go through `core::git::run_git`.
-use crate::ai::agent::manager::AgentManager;
+//!
+//! Cleanup is per workspace root: the preview lists the threads of one root (or of every root), and the automatic
+//! pass runs once per root per process, when the root's first window opens (`events::on_workspace_change`).
+use crate::ai::agent::manager::{AgentManager, SessionHandle};
 use crate::ai::agent::session::*;
 use crate::core::git::run_git;
 use crate::core::settings::WorktreeSettings;
@@ -9,7 +12,7 @@ use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
-use tauri::{AppHandle, Listener, Manager};
+use tauri::{AppHandle, Manager};
 
 const GIT_TIMEOUT: Duration = Duration::from_secs(30);
 const DAY_MS: u64 = 86_400_000;
@@ -158,15 +161,29 @@ pub async fn status_for_session(mgr: &Arc<AgentManager>, session_id: &str) -> Re
 
 // ───────────────────────── cleanup ─────────────────────────
 
-/// Threads of the current workspace whose worktree qualifies under the configured policies.
-pub async fn cleanup_preview(mgr: &Arc<AgentManager>) -> Result<Vec<WorktreeCleanupCandidate>> {
+/// Summaries of the threads that belong to `root` (every workspace's when `None`), archived included.
+fn sessions_for_root(mgr: &Arc<AgentManager>, root: Option<&Path>) -> Vec<SessionSummary> {
+    let all = mgr.list_sessions_all(true);
+    match root { Some(r) => all.into_iter().filter(|s| Path::new(&s.workspace_root) == r).collect(), None => all }
+}
+
+/// The handle of a thread that lives under `root` (its own `workspace_root`): the loaded one when the manager has
+/// it, otherwise read from that root's store without going through the focused window's workspace.
+fn handle_for(mgr: &Arc<AgentManager>, root: Option<&Path>, id: &str) -> Result<Arc<SessionHandle>> {
+    if let Some(h) = mgr.get_loaded(id) { return Ok(h); }
+    let key = crate::core::sessions::workspace_key(root);
+    mgr.store.load(&key, id).or_else(|_| mgr.store.load("global", id)).map(SessionHandle::new)
+}
+
+/// Threads of workspace `root` (every workspace when `None`) whose worktree qualifies under the configured policies.
+pub async fn cleanup_preview(mgr: &Arc<AgentManager>, root: Option<&Path>) -> Result<Vec<WorktreeCleanupCandidate>> {
     let cfg = mgr.settings().worktrees.clone();
     if !any_policy_on(&cfg) { return Ok(vec![]); }
     let now = now_ms();
     let mut out = vec![];
-    for sum in mgr.list_sessions(true) {
+    for sum in sessions_for_root(mgr, root) {
         if sum.worktree_path.is_none() || sum.is_subagent == Some(true) { continue; }
-        let Ok(h) = mgr.handle(&sum.id) else { continue };
+        let Ok(h) = handle_for(mgr, Some(Path::new(&sum.workspace_root)), &sum.id) else { continue };
         let (wt, branch, root, base, title, archived, updated) = { let s = h.session.lock(); (s.worktree_path.clone().unwrap_or_default(), s.branch.clone(), s.root(), s.worktree_base.clone(), s.title.clone(), s.archived, s.updated_at) };
         let Some(root) = root else { continue };
         let wt_path = PathBuf::from(&wt);
@@ -184,8 +201,11 @@ pub async fn cleanup_preview(mgr: &Arc<AgentManager>) -> Result<Vec<WorktreeClea
 pub async fn cleanup(mgr: &Arc<AgentManager>, session_ids: Vec<String>) -> Result<WorktreeCleanupReport> {
     let cfg = mgr.settings().worktrees.clone();
     let mut rep = WorktreeCleanupReport::default();
+    // Threads may belong to any workspace (the auto pass runs per root): find each one's root before loading it.
+    let roots: std::collections::HashMap<String, String> = mgr.list_sessions_all(true).into_iter().map(|s| (s.id, s.workspace_root)).collect();
     for id in session_ids {
-        let h = match mgr.handle(&id) { Ok(h) => h, Err(_) => { rep.skipped.push(CleanupSkipped { session_id: id, reason: "thread not found".into() }); continue; } };
+        let root = roots.get(&id).filter(|r| !r.is_empty()).map(|r| PathBuf::from(r));
+        let h = match handle_for(mgr, root.as_deref(), &id) { Ok(h) => h, Err(_) => { rep.skipped.push(CleanupSkipped { session_id: id, reason: "thread not found".into() }); continue; } };
         if h.is_running() { rep.skipped.push(CleanupSkipped { session_id: id, reason: "thread is running".into() }); continue; }
         let (wt, branch, root, base) = { let s = h.session.lock(); (s.worktree_path.clone(), s.branch.clone(), s.root(), s.worktree_base.clone()) };
         let Some(wt) = wt else { rep.skipped.push(CleanupSkipped { session_id: id, reason: "thread has no worktree".into() }); continue };
@@ -232,22 +252,30 @@ pub async fn cleanup(mgr: &Arc<AgentManager>, session_ids: Vec<String>) -> Resul
 
 static AUTO_DONE: std::sync::OnceLock<parking_lot::Mutex<std::collections::HashSet<PathBuf>>> = std::sync::OnceLock::new();
 
-/// Register the start-up / workspace-change hook. Runs when `worktrees.autoCleanup` is on and a policy applies,
-/// once per workspace root per process, and reports through an in-app notification.
+/// Register the start-up / workspace-open hook. Runs when `worktrees.autoCleanup` is on and a policy applies, once
+/// per workspace root per process (at start-up for every open root, then for each root as its first window opens),
+/// and reports through an in-app notification.
 pub fn init(app: &AppHandle) {
     let h = app.clone();
-    tauri::async_runtime::spawn(async move { tokio::time::sleep(Duration::from_secs(12)).await; run_auto_cleanup(&h).await; });
-    let h2 = app.clone();
-    app.listen(crate::events::WORKSPACE_CHANGED, move |_| { let h = h2.clone(); tauri::async_runtime::spawn(async move { tokio::time::sleep(Duration::from_secs(4)).await; run_auto_cleanup(&h).await; }); });
+    tauri::async_runtime::spawn(async move {
+        tokio::time::sleep(Duration::from_secs(12)).await;
+        for root in h.state::<crate::core::windows::WindowRegistry>().roots() { run_auto_cleanup(&h, &root).await; }
+    });
+    crate::events::on_workspace_change(app, |app, change| {
+        if !change.first_for_root { return; }
+        let Some(info) = &change.info else { return };
+        let (h, root) = (app.clone(), PathBuf::from(&info.root));
+        tauri::async_runtime::spawn(async move { tokio::time::sleep(Duration::from_secs(4)).await; run_auto_cleanup(&h, &root).await; });
+    });
 }
 
-pub async fn run_auto_cleanup(app: &AppHandle) {
+/// The automatic cleanup pass for one workspace root.
+pub async fn run_auto_cleanup(app: &AppHandle, root: &Path) {
     let Some(mgr) = app.try_state::<Arc<AgentManager>>().map(|s| s.inner().clone()) else { return };
     let settings = mgr.settings();
     if !settings.worktrees.auto_cleanup || !any_policy_on(&settings.worktrees) { return; }
-    let Some(root) = mgr.workspace_root() else { return };
-    if !AUTO_DONE.get_or_init(Default::default).lock().insert(root) { return; }
-    let preview = match cleanup_preview(&mgr).await { Ok(p) => p, Err(e) => { tracing::warn!(error=%e, "worktree cleanup preview failed"); return; } };
+    if !AUTO_DONE.get_or_init(Default::default).lock().insert(root.to_path_buf()) { return; }
+    let preview = match cleanup_preview(&mgr, Some(root)).await { Ok(p) => p, Err(e) => { tracing::warn!(error=%e, root = %root.display(), "worktree cleanup preview failed"); return; } };
     if preview.is_empty() { return; }
     let ids: Vec<String> = preview.iter().map(|c| c.session_id.clone()).collect();
     match cleanup(&mgr, ids).await {

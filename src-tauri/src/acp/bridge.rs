@@ -174,10 +174,11 @@ pub async fn ensure_conn(inner: &Arc<AcpInner>, mgr: &Arc<AgentManager>, agent_i
     }
 }
 
-fn mcp_servers(app: Option<&AppHandle>, caps: &McpCapabilities) -> Vec<Value> {
+/// MCP servers to hand an external agent: the user's plus the session's workspace root's.
+fn mcp_servers(app: Option<&AppHandle>, root: Option<&std::path::Path>, caps: &McpCapabilities) -> Vec<Value> {
     let Some(app) = app else { return vec![] };
     let Some(m) = app.try_state::<crate::mcp::McpManager>() else { return vec![] };
-    m.inner.configs().into_iter().filter(|c| c.enabled).filter_map(|c| {
+    m.inner.configs(root).into_iter().filter(|c| c.enabled).filter_map(|c| {
         let env: Vec<Value> = c.env.clone().unwrap_or_default().into_iter().map(|(k, v)| json!({ "name": k, "value": v })).collect();
         match c.transport {
             crate::mcp::config::McpTransport::Stdio => c.command.clone().map(|cmd| json!({ "name": c.name, "command": cmd, "args": c.args.clone().unwrap_or_default(), "env": env })),
@@ -209,9 +210,9 @@ fn emit_agent_status(inner: &AcpInner, mgr: &AgentManager, link: &SessionLink, c
 pub async fn ensure_session(inner: &Arc<AcpInner>, mgr: &Arc<AgentManager>, app: Option<&AppHandle>, h: &Arc<SessionHandle>, conn: &Arc<AgentConn>) -> Result<(Arc<SessionLink>, bool)> {
     let caret_id = h.id();
     if let Some(l) = inner.links.get(&caret_id) { if l.conn_key == conn.key && conn.alive() { return Ok((l.clone(), false)); } }
-    let cwd = h.session.lock().cwd_path();
+    let (cwd, root) = { let s = h.session.lock(); (s.cwd_path(), s.root()) };
     let settings = mgr.settings();
-    let mcp = if settings.acp.pass_mcp_servers { mcp_servers(app, &conn.init.agent_capabilities.mcp_capabilities) } else { vec![] };
+    let mcp = if settings.acp.pass_mcp_servers { mcp_servers(app, root.as_deref(), &conn.init.agent_capabilities.mcp_capabilities) } else { vec![] };
     let res = match conn.new_session(&cwd, mcp).await {
         Ok(r) => r,
         Err(e) if e.code == RpcError::AUTH_REQUIRED => {

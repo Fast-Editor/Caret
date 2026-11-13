@@ -1,5 +1,10 @@
-//! IndexManager: per-workspace lifecycle (scan → chunk → BM25 → embeddings), incremental updates
-//! from fs events, status broadcasting, and the `CodebaseSearchPort` implementation.
+//! IndexManager: per-root lifecycle (scan → chunk → BM25 → embeddings), incremental updates from fs events, status
+//! broadcasting, and the `CodebaseSearchPort` implementation.
+//!
+//! One [`RootIndex`] per open folder, kept in a [`RootTable`]: it opens on the first window for a root
+//! (`WorkspaceChange::first_for_root`) and closes when the last one leaves (`last_for_prev_root`); windows on the
+//! same folder share it. Status goes to the windows showing the root (`events::emit_for_root`). The embeddings
+//! backend (a provider + model from settings) is shared by every root; vector stores are per root.
 use crate::core::generation::Generation;
 use crate::core::ports::{self, CodeHit, CodebaseSearchPort, DocHit};
 use crate::core::settings::SettingsState;
@@ -8,6 +13,7 @@ use crate::events;
 use crate::index::chunker::chunk_file;
 use crate::index::embeddings::{self, ChunkRef, EmbeddingBackend, VectorStore};
 use crate::index::hybrid::{self, CodebaseSearchHit};
+use crate::index::roots::{RootResource, RootTable};
 use crate::index::store::Store;
 use crate::index::walker::{self, FileEntry, Manifest, WalkOptions};
 use crate::paths;
@@ -41,23 +47,63 @@ impl Default for IndexStatus {
     fn default() -> Self { Self { state: "idle".into(), total_files: 0, indexed_files: 0, total_chunks: 0, embedded_chunks: 0, pending_files: 0, last_indexed_at: None, error: None, size_bytes: 0, embeddings_available: false, root: None, progress: 0.0 } }
 }
 
-pub struct Inner {
+/// The embeddings backend shared by every root: probed once (again after a root opens, so settings changes are
+/// picked up on the next folder open) from the configured provider or an auto-detected local one.
+struct Embeddings {
+    backend: tokio::sync::RwLock<Option<Arc<EmbeddingBackend>>>,
+    probed: AtomicBool,
+    probe_lock: tokio::sync::Mutex<()>,
+}
+
+impl Embeddings {
+    fn new() -> Self { Self { backend: tokio::sync::RwLock::new(None), probed: AtomicBool::new(false), probe_lock: tokio::sync::Mutex::new(()) } }
+    /// Forget the probe result; the next `ensure` detects again.
+    fn invalidate(&self) { self.probed.store(false, Ordering::SeqCst); }
+    async fn ensure(&self, app: &AppHandle) -> Option<Arc<EmbeddingBackend>> {
+        if !self.probed.load(Ordering::SeqCst) {
+            let _g = self.probe_lock.lock().await;
+            if !self.probed.load(Ordering::SeqCst) {
+                let settings = app.state::<SettingsState>().effective();
+                let secrets = app.state::<SettingsState>();
+                let b = embeddings::detect(&settings, &secrets).await.map(Arc::new);
+                if let Some(b) = &b { tracing::info!(backend = %b.label, "embeddings backend selected"); }
+                *self.backend.write().await = b;
+                self.probed.store(true, Ordering::SeqCst);
+            }
+        }
+        self.backend.read().await.clone()
+    }
+    async fn current(&self) -> Option<Arc<EmbeddingBackend>> { self.backend.read().await.clone() }
+}
+
+/// The index of one open folder.
+pub struct RootIndex {
     app: AppHandle,
-    root: RwLock<Option<PathBuf>>,
+    root: PathBuf,
+    embeddings: Arc<Embeddings>,
     store: RwLock<Option<Arc<Store>>>,
     vectors: RwLock<Option<Arc<Mutex<VectorStore>>>>,
     manifest: Mutex<Manifest>,
     status: RwLock<IndexStatus>,
     paused: AtomicBool,
     cancel: Mutex<Option<CancellationToken>>,
-    backend: tokio::sync::RwLock<Option<Arc<EmbeddingBackend>>>,
-    backend_probed: AtomicBool,
     pending: Mutex<HashSet<PathBuf>>,
     debounce_running: AtomicBool,
     last_emit: Mutex<Instant>,
     run_lock: tokio::sync::Mutex<()>,
-    /// Bumped per workspace change; a queued `set_workspace` or the delayed first run stops when it is no longer current.
+    /// Begun when the root opens, bumped when it closes; the delayed first run stops when its ticket is stale.
     generation: Generation,
+}
+
+impl RootResource for RootIndex {
+    fn generation(&self) -> &Generation { &self.generation }
+    fn root(&self) -> &Path { &self.root }
+}
+
+pub struct Inner {
+    app: AppHandle,
+    roots: RootTable<RootIndex>,
+    embeddings: Arc<Embeddings>,
 }
 
 #[derive(Clone)]
@@ -71,23 +117,21 @@ fn now_ms() -> u64 { std::time::SystemTime::now().duration_since(std::time::UNIX
 
 impl IndexManager {
     pub fn new(app: AppHandle) -> Self {
-        let inner = Arc::new(Inner {
-            app, root: RwLock::new(None), store: RwLock::new(None), vectors: RwLock::new(None), manifest: Mutex::new(Manifest::default()),
-            status: RwLock::new(IndexStatus::default()), paused: AtomicBool::new(false), cancel: Mutex::new(None),
-            backend: tokio::sync::RwLock::new(None), backend_probed: AtomicBool::new(false), pending: Mutex::new(HashSet::new()),
-            debounce_running: AtomicBool::new(false), last_emit: Mutex::new(Instant::now() - Duration::from_secs(10)), run_lock: tokio::sync::Mutex::new(()),
-            generation: Generation::new(),
-        });
-        Self { inner }
+        Self { inner: Arc::new(Inner { app, roots: RootTable::new(), embeddings: Arc::new(Embeddings::new()) }) }
     }
 
     /// Subscribe to workspace / fs events and register the codebase search port.
     pub fn install(&self) {
         let me = self.inner.clone();
-        self.inner.app.listen(events::WORKSPACE_CHANGED, move |ev| {
-            let root = serde_json::from_str::<serde_json::Value>(ev.payload()).ok().and_then(|v| v.get("root").and_then(|r| r.as_str()).map(PathBuf::from));
-            let me = me.clone();
-            tauri::async_runtime::spawn(async move { me.set_workspace(root).await; });
+        events::on_workspace_change(&self.inner.app, move |_, change| {
+            if change.last_for_prev_root { if let Some(prev) = change.prev_root.as_deref() { me.close_root(Path::new(prev)); } }
+            if change.first_for_root {
+                if let Some(info) = &change.info {
+                    let root = PathBuf::from(&info.root);
+                    let me = me.clone();
+                    tauri::async_runtime::spawn(async move { let _ = me.open_root(&root).await; });
+                }
+            }
         });
         let me = self.inner.clone();
         self.inner.app.listen(events::FS_CHANGED, move |ev| {
@@ -101,25 +145,78 @@ impl IndexManager {
 }
 
 impl Inner {
+    /// Open the index of `root` (no-op when it is already open) and, when enabled, schedule its first run. `None`
+    /// only when the root was closed again while this ran.
+    pub async fn open_root(self: &Arc<Self>, root: &Path) -> Option<Arc<RootIndex>> {
+        let Some((ri, ticket)) = self.roots.open(root, || RootIndex::new(self.app.clone(), root.to_path_buf(), self.embeddings.clone())) else {
+            return self.roots.get(root);
+        };
+        // Settings may have changed since the last probe (a new provider or key); detect again for the next run.
+        self.embeddings.invalidate();
+        ri.start(ticket).await;
+        Some(ri)
+    }
+
+    /// Close the index of `root`: cancels its run (which saves what it has) and drops the stores.
+    pub fn close_root(&self, root: &Path) {
+        if let Some(ri) = self.roots.close(root) { ri.shutdown(); tracing::info!(root = %root.display(), "index closed: last window left the folder"); }
+    }
+
+    /// The open index of `root`, opening it when the workspace event has not arrived yet (or was missed).
+    pub async fn ensure_root(self: &Arc<Self>, root: &Path) -> Result<Arc<RootIndex>> {
+        if let Some(ri) = self.roots.get(root) { return Ok(ri); }
+        self.open_root(root).await.ok_or_else(CaretError::no_workspace)
+    }
+    pub fn get(&self, root: &Path) -> Option<Arc<RootIndex>> { self.roots.get(root) }
+    pub fn open_roots(&self) -> Vec<PathBuf> { self.roots.roots() }
+
+    /// Status of `root`'s index; an idle placeholder when the root is unknown or none is given.
+    pub fn status_for(&self, root: Option<&Path>) -> IndexStatus {
+        match root.and_then(|r| self.roots.get(r)) {
+            Some(ri) => ri.status(),
+            None => IndexStatus { root: root.map(|r| r.to_string_lossy().to_string()), ..Default::default() },
+        }
+    }
+
+    /// Hand each changed path to the open root that contains it (FS_CHANGED arrives per root from the watcher, but
+    /// the prefix check keeps a nested checkout's events with the nested root).
+    fn on_fs_changed(&self, paths: Vec<PathBuf>) {
+        for (ri, paths) in self.roots.group_by_owner(paths) { ri.on_fs_changed(paths); }
+    }
+}
+
+impl RootIndex {
+    fn new(app: AppHandle, root: PathBuf, embeddings: Arc<Embeddings>) -> Self {
+        let status = IndexStatus { root: Some(root.to_string_lossy().to_string()), ..Default::default() };
+        Self {
+            app, root, embeddings, store: RwLock::new(None), vectors: RwLock::new(None), manifest: Mutex::new(Manifest::default()),
+            status: RwLock::new(status), paused: AtomicBool::new(false), cancel: Mutex::new(None), pending: Mutex::new(HashSet::new()),
+            debounce_running: AtomicBool::new(false), last_emit: Mutex::new(Instant::now() - Duration::from_secs(10)), run_lock: tokio::sync::Mutex::new(()),
+            generation: Generation::new(),
+        }
+    }
+
+    pub fn root(&self) -> &Path { &self.root }
     fn settings(&self) -> crate::core::settings::Settings { self.app.state::<SettingsState>().effective() }
     fn ws_dir(root: &Path) -> PathBuf { paths::sub_dir("index").join(paths::workspace_hash(root)) }
-    fn walk_opts(&self, root: &Path) -> WalkOptions {
+    fn walk_opts(&self) -> WalkOptions {
         let s = self.settings();
-        WalkOptions { root: root.to_path_buf(), exclude_globs: s.indexing.exclude_globs.clone(), global_ignore: s.general.global_ignore.clone(), max_file_size: (s.indexing.max_file_size_kb as u64).max(1) * 1024 }
+        WalkOptions { root: self.root.clone(), exclude_globs: s.indexing.exclude_globs.clone(), global_ignore: s.general.global_ignore.clone(), max_file_size: (s.indexing.max_file_size_kb as u64).max(1) * 1024 }
     }
 
     fn set_state(&self, state: &str, error: Option<String>) {
         { let mut st = self.status.write(); st.state = state.into(); st.error = error; }
         self.emit(true);
     }
+    /// Send the status to the windows showing this root (rate-limited unless `force`).
     fn emit(&self, force: bool) {
         {
             let mut last = self.last_emit.lock();
             if !force && last.elapsed() < Duration::from_millis(250) { return; }
             *last = Instant::now();
         }
-        let st = self.status.read().clone();
-        events::emit(&self.app, events::INDEX_STATUS, st);
+        let st = self.status();
+        events::emit_for_root(&self.app, &self.root, events::INDEX_STATUS, st);
     }
     pub fn status(&self) -> IndexStatus {
         let mut st = self.status.read().clone();
@@ -127,30 +224,18 @@ impl Inner {
         if let Some(v) = self.vectors.read().as_ref() { st.embedded_chunks = v.lock().len() as u64; st.size_bytes += v.lock().memory_bytes() as u64; }
         st
     }
+    pub fn is_ready(&self) -> bool { let s = self.status.read(); s.state == "ready" || (s.indexed_files > 0 && s.state != "error" && s.state != "disabled") }
 
-    async fn set_workspace(self: &Arc<Self>, root: Option<PathBuf>) {
-        let ticket = self.generation.begin();
+    /// Open the stores and, when `autoIndexNewFolders` is on, run after `FIRST_RUN_DELAY` unless the root closed
+    /// meanwhile (`ticket` went stale).
+    async fn start(self: &Arc<Self>, ticket: u64) {
         let t0 = Instant::now();
-        if let Some(c) = self.cancel.lock().take() { c.cancel(); }
-        let _guard = self.run_lock.lock().await;
-        // Two rapid opens queue two of these behind the lock; only the newest may touch the stores.
-        if !self.generation.is_current(ticket) { return; }
-        *self.store.write() = None;
-        *self.vectors.write() = None;
-        *self.manifest.lock() = Manifest::default();
-        self.pending.lock().clear();
-        self.backend_probed.store(false, Ordering::SeqCst);
-        *self.backend.write().await = None;
-        *self.root.write() = root.clone();
-        *self.status.write() = IndexStatus { root: root.as_ref().map(|r| r.to_string_lossy().to_string()), ..Default::default() };
-        drop(_guard);
-        let Some(root) = root else { self.set_state("idle", None); return };
         let s = self.settings();
         if !s.indexing.enabled { self.set_state("disabled", None); return; }
-        if let Err(e) = self.open_stores(&root).await { self.set_state("error", Some(e.message)); return; }
+        if let Err(e) = self.open_stores().await { self.set_state("error", Some(e.message)); return; }
         if !self.generation.is_current(ticket) { return; }
         self.emit(true);
-        tracing::info!(root = %root.display(), ms = t0.elapsed().as_millis() as u64, "index stores opened");
+        tracing::info!(root = %self.root.display(), ms = t0.elapsed().as_millis() as u64, "index stores opened");
         if s.indexing.auto_index_new_folders {
             let me = self.clone();
             tauri::async_runtime::spawn(async move {
@@ -161,8 +246,11 @@ impl Inner {
         }
     }
 
-    async fn open_stores(&self, root: &Path) -> Result<()> {
-        let dir = Self::ws_dir(root);
+    /// Cancel the running work; the run saves its manifest and vectors on the way out.
+    fn shutdown(&self) { if let Some(c) = self.cancel.lock().take() { c.cancel(); } }
+
+    async fn open_stores(&self) -> Result<()> {
+        let dir = Self::ws_dir(&self.root);
         let store = tokio::task::spawn_blocking({ let d = dir.join("tantivy"); move || Store::open(&d) }).await.map_err(|e| CaretError::internal(e.to_string()))??;
         let manifest = Manifest::load(&dir.join("manifest.json"));
         {
@@ -178,22 +266,18 @@ impl Inner {
         Ok(())
     }
 
+    /// The shared backend plus this root's vector store for its model (reopened when the model changed).
     async fn ensure_backend(&self) -> Option<Arc<EmbeddingBackend>> {
-        if !self.backend_probed.swap(true, Ordering::SeqCst) {
-            let settings = self.settings();
-            let secrets = self.app.state::<SettingsState>();
-            let b = embeddings::detect(&settings, &secrets).await.map(Arc::new);
-            if let Some(b) = &b { tracing::info!(backend = %b.label, "embeddings backend selected"); }
-            *self.backend.write().await = b.clone();
-            self.status.write().embeddings_available = b.is_some();
-            let root = { let g = self.root.read(); g.clone() };
-            if let (Some(b), Some(root)) = (b.as_ref(), root) {
-                let dir = Self::ws_dir(&root).join("vectors");
-                let vs = VectorStore::open(&dir, &b.model);
+        let b = self.embeddings.ensure(&self.app).await;
+        self.status.write().embeddings_available = b.is_some();
+        if let Some(b) = &b {
+            let reopen = self.vectors.read().as_ref().map(|v| v.lock().model != b.model).unwrap_or(true);
+            if reopen {
+                let vs = VectorStore::open(&Self::ws_dir(&self.root).join("vectors"), &b.model);
                 *self.vectors.write() = Some(Arc::new(Mutex::new(vs)));
             }
         }
-        self.backend.read().await.clone()
+        b
     }
 
     async fn wait_if_paused(&self, cancel: &CancellationToken) -> bool {
@@ -210,11 +294,10 @@ impl Inner {
         let cancel = CancellationToken::new();
         *self.cancel.lock() = Some(cancel.clone());
         let _guard = self.run_lock.lock().await;
-        let root = { let g = self.root.read(); g.clone() };
-        let Some(root) = root else { return };
+        let root = self.root.clone();
         let settings = self.settings();
         if !settings.indexing.enabled { self.set_state("disabled", None); return; }
-        if self.store.read().is_none() { if let Err(e) = self.open_stores(&root).await { self.set_state("error", Some(e.message)); return; } }
+        if self.store.read().is_none() { if let Err(e) = self.open_stores().await { self.set_state("error", Some(e.message)); return; } }
         let store = self.store.read().clone().unwrap();
         let dir = Self::ws_dir(&root);
         if force {
@@ -225,7 +308,7 @@ impl Inner {
         let started = Instant::now();
         // ── scan ──
         self.set_state("scanning", None);
-        let opts = self.walk_opts(&root);
+        let opts = self.walk_opts();
         let entries: Vec<FileEntry> = match tokio::task::spawn_blocking({ let o = opts.clone(); let c = cancel.clone(); move || { let mut v = Vec::new(); walker::walk(&o, |f| { v.push(f); !c.is_cancelled() }); v } }).await {
             Ok(v) => v, Err(e) => { self.set_state("error", Some(e.to_string())); return; }
         };
@@ -323,11 +406,10 @@ impl Inner {
         if cancel.is_cancelled() { self.set_state("paused", None); return; }
         { let mut s = self.status.write(); s.progress = 1.0; s.pending_files = 0; s.last_indexed_at = Some(now_ms()); s.total_chunks = store.doc_count(); }
         self.set_state("ready", None);
-        tracing::info!(files = entries.len(), changed = changed.len(), removed = removed.len(), secs = started.elapsed().as_secs_f32(), "index run complete");
+        tracing::info!(root = %root.display(), files = entries.len(), changed = changed.len(), removed = removed.len(), secs = started.elapsed().as_secs_f32(), "index run complete");
     }
 
     fn on_fs_changed(self: &Arc<Self>, paths: Vec<PathBuf>) {
-        if self.root.read().is_none() { return; }
         { let mut p = self.pending.lock(); for x in paths { p.insert(x); } }
         if self.debounce_running.swap(true, Ordering::SeqCst) { return; }
         let me = self.clone();
@@ -342,13 +424,12 @@ impl Inner {
         let batch: Vec<PathBuf> = { let mut p = self.pending.lock(); p.drain().collect() };
         if batch.is_empty() { return; }
         let _guard = self.run_lock.lock().await;
-        let root = { let g = self.root.read(); g.clone() };
-        let Some(root) = root else { return };
+        let root = self.root.clone();
         let settings = self.settings();
         if !settings.indexing.enabled { return; }
         let store = { let g = self.store.read(); g.clone() };
         let Some(store) = store else { return };
-        let opts = self.walk_opts(&root);
+        let opts = self.walk_opts();
         let dir = Self::ws_dir(&root);
         let mut touched: Vec<(String, String)> = vec![];
         let mut expanded: Vec<PathBuf> = vec![];
@@ -404,14 +485,12 @@ impl Inner {
     }
 
     pub async fn search(&self, query: &str, limit: usize, path_prefix: Option<&str>) -> Result<Vec<CodebaseSearchHit>> {
-        let root = { let g = self.root.read(); g.clone() };
-        let Some(root) = root else { return Err(CaretError::no_workspace()) };
         let store = { let g = self.store.read(); g.clone() };
         let Some(store) = store else { return Ok(vec![]) };
         let limit = limit.clamp(1, 100);
         let bm25 = { let st = store.clone(); let q = query.to_string(); let p = path_prefix.map(String::from); tokio::task::spawn_blocking(move || st.search(&q, limit * 2, p.as_deref())).await.map_err(|e| CaretError::internal(e.to_string()))?? };
         let mut vec_hits = vec![];
-        let backend = self.backend.read().await.clone();
+        let backend = self.embeddings.current().await;
         let vectors = { let g = self.vectors.read(); g.clone() };
         if let (Some(backend), Some(vs)) = (backend, vectors) {
             let empty = { let g = vs.lock(); g.is_empty() };
@@ -425,7 +504,7 @@ impl Inner {
         }
         let alpha = self.settings().indexing.hybrid_alpha;
         let mut hits = hybrid::rrf(&bm25, &vec_hits, alpha, limit);
-        hybrid::attach_snippets(&root, &mut hits, 40);
+        hybrid::attach_snippets(&self.root, &mut hits, 40);
         Ok(hits)
     }
 
@@ -436,9 +515,8 @@ impl Inner {
         let _g = self.run_lock.lock().await;
         if let Some(s) = self.store.read().as_ref() { s.clear()?; }
         if let Some(v) = self.vectors.read().as_ref() { v.lock().clear(); }
-        let root = self.root.read().clone();
         *self.manifest.lock() = Manifest::default();
-        if let Some(r) = root { let _ = std::fs::remove_file(Self::ws_dir(&r).join("manifest.json")); }
+        let _ = std::fs::remove_file(Self::ws_dir(&self.root).join("manifest.json"));
         { let mut s = self.status.write(); s.indexed_files = 0; s.total_chunks = 0; s.embedded_chunks = 0; s.progress = 0.0; s.last_indexed_at = None; }
         self.set_state("idle", None);
         Ok(())
@@ -449,10 +527,11 @@ pub struct IndexPort(pub Arc<Inner>);
 
 #[async_trait::async_trait]
 impl CodebaseSearchPort for IndexPort {
-    async fn search(&self, query: &str, limit: usize, path_prefix: Option<&str>) -> Result<Vec<CodeHit>> {
-        Ok(self.0.search(query, limit, path_prefix).await?.into_iter().map(|h| CodeHit { path: h.path, start_line: h.start_line, end_line: h.end_line, score: h.score, snippet: h.snippet, name: h.name }).collect())
+    async fn search(&self, root: Option<&Path>, query: &str, limit: usize, path_prefix: Option<&str>) -> Result<Vec<CodeHit>> {
+        let ri = root.and_then(|r| self.0.roots.get(r)).ok_or_else(CaretError::no_workspace)?;
+        Ok(ri.search(query, limit, path_prefix).await?.into_iter().map(|h| CodeHit { path: h.path, start_line: h.start_line, end_line: h.end_line, score: h.score, snippet: h.snippet, name: h.name }).collect())
     }
-    fn is_ready(&self) -> bool { let s = self.0.status.read(); s.state == "ready" || (s.indexed_files > 0 && s.state != "error" && s.state != "disabled") }
+    fn is_ready(&self, root: Option<&Path>) -> bool { root.and_then(|r| self.0.roots.get(r)).map(|ri| ri.is_ready()).unwrap_or(false) }
     async fn search_docs(&self, query: &str, doc_ids: Option<&[String]>, limit: usize) -> Result<Vec<DocHit>> {
         let docs = self.0.app.state::<crate::index::docs::DocsManager>();
         let hits = docs.search(query, doc_ids, limit).await?;

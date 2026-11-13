@@ -226,7 +226,7 @@ pub async fn chat_mention_candidates(app: AppHandle, mgr: Mgr<'_>, kind: String,
 pub async fn chat_tool_catalog(mgr: Mgr<'_>) -> Result<Vec<ToolCatalogEntry>> {
     let mut v = mgr.registry.catalog();
     for t in crate::ai::agent::tools::dynamic::browser_tools() { v.push(ToolCatalogEntry { name: t.name().into(), display_name: t.display_name().into(), description: t.description(), group: t.group().into(), readonly: false }); }
-    for t in crate::ai::agent::tools::dynamic::mcp_tools().await { v.push(ToolCatalogEntry { name: t.name().into(), display_name: t.display_name().into(), description: t.description(), group: "mcp".into(), readonly: false }); }
+    for t in crate::ai::agent::tools::dynamic::mcp_tools(mgr.workspace_root().as_deref()).await { v.push(ToolCatalogEntry { name: t.name().into(), display_name: t.display_name().into(), description: t.description(), group: "mcp".into(), readonly: false }); }
     Ok(v)
 }
 
@@ -383,7 +383,7 @@ pub async fn chat_fan_out(mgr: Mgr<'_>, session_id: Option<String>, text: String
 pub async fn chat_worktree_status(mgr: Mgr<'_>, session_id: String) -> Result<crate::ai::agent::worktrees::WorktreeStatus> { crate::ai::agent::worktrees::status_for_session(mgr.inner(), &session_id).await }
 
 #[tauri::command]
-pub async fn chat_worktree_cleanup_preview(mgr: Mgr<'_>) -> Result<Vec<crate::ai::agent::worktrees::WorktreeCleanupCandidate>> { crate::ai::agent::worktrees::cleanup_preview(mgr.inner()).await }
+pub async fn chat_worktree_cleanup_preview(mgr: Mgr<'_>) -> Result<Vec<crate::ai::agent::worktrees::WorktreeCleanupCandidate>> { crate::ai::agent::worktrees::cleanup_preview(mgr.inner(), mgr.workspace_root().as_deref()).await }
 
 #[tauri::command]
 pub async fn chat_worktree_cleanup(mgr: Mgr<'_>, session_ids: Vec<String>) -> Result<crate::ai::agent::worktrees::WorktreeCleanupReport> { crate::ai::agent::worktrees::cleanup(mgr.inner(), session_ids).await }

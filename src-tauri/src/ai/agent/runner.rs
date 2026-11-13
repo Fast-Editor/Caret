@@ -248,7 +248,7 @@ pub async fn run_turn(mgr: Arc<AgentManager>, h: Arc<SessionHandle>, mut req: Se
     mgr.persist(&h);
 
     // Tools
-    let active = tools::active_tools(&mgr.registry, &mode, &settings, is_subagent).await;
+    let active = tools::active_tools(&mgr.registry, &mode, &settings, is_subagent, root.as_deref()).await;
     let tool_map: HashMap<String, Arc<dyn Tool>> = active.iter().map(|t| (t.name().to_string(), t.clone())).collect();
     let tool_defs = tools::to_defs(&active);
     let tool_names: Vec<String> = active.iter().map(|t| t.name().to_string()).collect();
