@@ -11,6 +11,12 @@ All notable changes to Caret. The version here must match `package.json`, `src-t
   Windows; a new empty window shows the Welcome view with a "New window" link; `document.title` matches the native
   `<folder> — Caret`. The unsaved-changes dialog is mounted at the layout root, so Close Folder with dirty tabs can
   ask too.
+- Windows, per-folder services (phase 1A): the file watcher, the Quick Open index and workspace search are scoped
+  to the folder each window shows. Every open folder gets its own watcher and quick-open index, started when the
+  first window opens it and dropped when the last window showing it closes (two windows on one folder share them);
+  `caret://fs/changed` and `caret://git/changed` reach only the windows showing that folder. The `fs_*` commands,
+  `fs_quick_open` / `fs_list_files` / `fs_index_status` and `search_text` / `search_replace` now resolve against the
+  calling window's folder instead of the focused window's.
 - Windows: File → New Window (Cmd+Shift+N) opens a second Caret window, empty or showing a folder. Each window has
   its own folder, title (`<folder> — Caret`), editor tabs, terminals and chat; Open Folder / Open Recent from a
   window that already shows a folder open the new folder in a new window (`window.openFoldersIn`, `"new"` by default;

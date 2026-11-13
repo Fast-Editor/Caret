@@ -1,17 +1,21 @@
-//! File system commands + the quick-open fuzzy path index.
+//! File system commands (relative paths resolve against the calling window's folder) + the per-folder quick-open
+//! fuzzy path index.
 use crate::core::generation::Generation;
-use crate::core::settings::SettingsState;
-use crate::core::workspace::{WorkspaceInfo, WorkspaceState};
+use crate::core::settings::{Settings, SettingsState};
+use crate::core::workspace::WorkspaceState;
 use crate::error::{CaretError, Result};
+use crate::events;
 use crate::paths;
 use base64::Engine;
+use dashmap::DashMap;
 use parking_lot::{Mutex, RwLock};
 use serde::{Deserialize, Serialize};
 use std::collections::{BinaryHeap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
-use tauri::{AppHandle, Listener, Manager, State};
+use tauri::{AppHandle, Manager, State, Window};
 
 // ───────────────────────── types ─────────────────────────
 
@@ -75,10 +79,11 @@ fn kind_of(md: &std::fs::Metadata) -> FileKind {
     if ft.is_dir() { FileKind::Dir } else if ft.is_file() { FileKind::File } else if ft.is_symlink() { FileKind::Symlink } else { FileKind::Other }
 }
 
-fn resolve(app: &AppHandle, p: &str) -> PathBuf {
-    let root = app.state::<WorkspaceState>().root();
-    paths::resolve(root.as_deref(), p)
-}
+/// The folder the calling window shows (`None` for an empty window; absolute paths still resolve).
+fn window_root(app: &AppHandle, window: &Window) -> Option<PathBuf> { app.state::<WorkspaceState>().root_for(window.label()) }
+
+/// Resolve a possibly relative path against the calling window's folder.
+fn resolve(root: Option<&Path>, p: &str) -> PathBuf { paths::resolve(root, p) }
 
 fn is_readonly(md: &std::fs::Metadata) -> bool { md.permissions().readonly() }
 
@@ -200,17 +205,17 @@ pub fn read_dir_impl(dir: &Path, root: Option<&Path>, global: &[String], show_hi
 }
 
 #[tauri::command]
-pub async fn fs_read_dir(app: AppHandle, path: String, show_hidden: Option<bool>) -> Result<Vec<DirEntry>> {
-    let dir = resolve(&app, &path);
-    let root = app.state::<WorkspaceState>().root();
+pub async fn fs_read_dir(app: AppHandle, window: Window, path: String, show_hidden: Option<bool>) -> Result<Vec<DirEntry>> {
+    let root = window_root(&app, &window);
+    let dir = resolve(root.as_deref(), &path);
     let global = app.state::<SettingsState>().effective().general.global_ignore;
     let show_hidden = show_hidden.unwrap_or(true);
     tokio::task::spawn_blocking(move || read_dir_impl(&dir, root.as_deref(), &global, show_hidden)).await.map_err(|e| CaretError::internal(e.to_string()))?
 }
 
 #[tauri::command]
-pub async fn fs_read_file(app: AppHandle, path: String, max_bytes: Option<u64>) -> Result<FileContent> {
-    let p = resolve(&app, &path);
+pub async fn fs_read_file(app: AppHandle, window: Window, path: String, max_bytes: Option<u64>) -> Result<FileContent> {
+    let p = resolve(window_root(&app, &window).as_deref(), &path);
     tokio::task::spawn_blocking(move || {
         use std::io::Read;
         let md = std::fs::metadata(&p)?;
@@ -227,8 +232,8 @@ pub async fn fs_read_file(app: AppHandle, path: String, max_bytes: Option<u64>) 
 }
 
 #[tauri::command]
-pub async fn fs_write_file(app: AppHandle, path: String, content: String, create_dirs: Option<bool>, line_ending: Option<String>) -> Result<WriteResult> {
-    let p = resolve(&app, &path);
+pub async fn fs_write_file(app: AppHandle, window: Window, path: String, content: String, create_dirs: Option<bool>, line_ending: Option<String>) -> Result<WriteResult> {
+    let p = resolve(window_root(&app, &window).as_deref(), &path);
     tokio::task::spawn_blocking(move || {
         if create_dirs.unwrap_or(true) { if let Some(parent) = p.parent() { std::fs::create_dir_all(parent)?; } }
         let bytes: Vec<u8> = match line_ending.as_deref() {
@@ -243,8 +248,8 @@ pub async fn fs_write_file(app: AppHandle, path: String, content: String, create
 }
 
 #[tauri::command(async)]
-pub fn fs_stat(app: AppHandle, path: String) -> Result<FileStat> {
-    let p = resolve(&app, &path);
+pub fn fs_stat(app: AppHandle, window: Window, path: String) -> Result<FileStat> {
+    let p = resolve(window_root(&app, &window).as_deref(), &path);
     let p = std::fs::canonicalize(&p).unwrap_or(p);
     match std::fs::metadata(&p) {
         Ok(md) => Ok(FileStat { path: p.to_string_lossy().to_string(), kind: kind_of(&md), size: md.len(), mtime: mtime_ms(&md), readonly: is_readonly(&md), exists: true }),
@@ -254,33 +259,36 @@ pub fn fs_stat(app: AppHandle, path: String) -> Result<FileStat> {
 }
 
 #[tauri::command(async)]
-pub fn fs_exists(app: AppHandle, path: String) -> Result<bool> { Ok(resolve(&app, &path).exists()) }
+pub fn fs_exists(app: AppHandle, window: Window, path: String) -> Result<bool> { Ok(resolve(window_root(&app, &window).as_deref(), &path).exists()) }
 
 #[tauri::command(async)]
-pub fn fs_create(app: AppHandle, path: String, kind: String) -> Result<()> {
-    let p = resolve(&app, &path);
+pub fn fs_create(app: AppHandle, window: Window, path: String, kind: String) -> Result<()> {
+    let root = window_root(&app, &window);
+    let p = resolve(root.as_deref(), &path);
     if kind == "dir" { std::fs::create_dir_all(&p)?; }
     else {
         if let Some(parent) = p.parent() { std::fs::create_dir_all(parent)?; }
         std::fs::OpenOptions::new().write(true).create_new(true).open(&p).map_err(|e| if e.kind() == std::io::ErrorKind::AlreadyExists { CaretError::new("already_exists", format!("{} already exists", p.display())) } else { e.into() })?;
     }
-    index_add(&app, &p);
+    if let Some(r) = &root { index_add(&app, r, &p); }
     Ok(())
 }
 
 #[tauri::command(async)]
-pub fn fs_rename(app: AppHandle, from: String, to: String) -> Result<()> {
-    let f = resolve(&app, &from); let t = resolve(&app, &to);
+pub fn fs_rename(app: AppHandle, window: Window, from: String, to: String) -> Result<()> {
+    let root = window_root(&app, &window);
+    let f = resolve(root.as_deref(), &from); let t = resolve(root.as_deref(), &to);
     if t.exists() && f != t { return Err(CaretError::new("already_exists", format!("{} already exists", t.display()))); }
     if let Some(parent) = t.parent() { std::fs::create_dir_all(parent)?; }
     std::fs::rename(&f, &t)?;
-    index_remove(&app, &f); index_add(&app, &t);
+    if let Some(r) = &root { index_remove(&app, r, &f); index_add(&app, r, &t); }
     Ok(())
 }
 
 #[tauri::command]
-pub async fn fs_delete(app: AppHandle, paths: Vec<String>, trash: Option<bool>) -> Result<()> {
-    let ps: Vec<PathBuf> = paths.iter().map(|p| resolve(&app, p)).collect();
+pub async fn fs_delete(app: AppHandle, window: Window, paths: Vec<String>, trash: Option<bool>) -> Result<()> {
+    let root = window_root(&app, &window);
+    let ps: Vec<PathBuf> = paths.iter().map(|p| resolve(root.as_deref(), p)).collect();
     let app2 = app.clone();
     let use_trash = trash.unwrap_or(true);
     tokio::task::spawn_blocking(move || {
@@ -290,7 +298,7 @@ pub async fn fs_delete(app: AppHandle, paths: Vec<String>, trash: Option<bool>) 
                 for p in &ps { remove_permanently(p)?; }
             }
         } else { for p in &ps { remove_permanently(p)?; } }
-        for p in &ps { index_remove(&app2, p); }
+        if let Some(r) = &root { for p in &ps { index_remove(&app2, r, p); } }
         Ok(())
     }).await.map_err(|e| CaretError::internal(e.to_string()))?
 }
@@ -305,29 +313,31 @@ fn remove_permanently(p: &Path) -> Result<()> {
 }
 
 #[tauri::command]
-pub async fn fs_copy(app: AppHandle, from: String, to: String) -> Result<()> {
-    let f = resolve(&app, &from); let t = resolve(&app, &to);
+pub async fn fs_copy(app: AppHandle, window: Window, from: String, to: String) -> Result<()> {
+    let root = window_root(&app, &window);
+    let f = resolve(root.as_deref(), &from); let t = resolve(root.as_deref(), &to);
     if t.exists() { return Err(CaretError::new("already_exists", format!("{} already exists", t.display()))); }
     let app2 = app.clone();
-    tokio::task::spawn_blocking(move || { copy_recursive(&f, &t)?; index_add(&app2, &t); Ok(()) }).await.map_err(|e| CaretError::internal(e.to_string()))?
+    tokio::task::spawn_blocking(move || { copy_recursive(&f, &t)?; if let Some(r) = &root { index_add(&app2, r, &t); } Ok(()) }).await.map_err(|e| CaretError::internal(e.to_string()))?
 }
 
 #[tauri::command]
-pub async fn fs_move(app: AppHandle, from: String, to: String) -> Result<()> {
-    let f = resolve(&app, &from); let t = resolve(&app, &to);
+pub async fn fs_move(app: AppHandle, window: Window, from: String, to: String) -> Result<()> {
+    let root = window_root(&app, &window);
+    let f = resolve(root.as_deref(), &from); let t = resolve(root.as_deref(), &to);
     if t.exists() { return Err(CaretError::new("already_exists", format!("{} already exists", t.display()))); }
     let app2 = app.clone();
     tokio::task::spawn_blocking(move || {
         if let Some(parent) = t.parent() { std::fs::create_dir_all(parent)?; }
         if std::fs::rename(&f, &t).is_err() { copy_recursive(&f, &t)?; remove_permanently(&f)?; }
-        index_remove(&app2, &f); index_add(&app2, &t);
+        if let Some(r) = &root { index_remove(&app2, r, &f); index_add(&app2, r, &t); }
         Ok(())
     }).await.map_err(|e| CaretError::internal(e.to_string()))?
 }
 
 #[tauri::command]
-pub async fn fs_read_image(app: AppHandle, path: String) -> Result<ImageData> {
-    let p = resolve(&app, &path);
+pub async fn fs_read_image(app: AppHandle, window: Window, path: String) -> Result<ImageData> {
+    let p = resolve(window_root(&app, &window).as_deref(), &path);
     tokio::task::spawn_blocking(move || {
         let md = std::fs::metadata(&p)?;
         if md.len() > 50 * 1024 * 1024 { return Err(CaretError::invalid("image larger than 50 MiB")); }
@@ -339,32 +349,47 @@ pub async fn fs_read_image(app: AppHandle, path: String) -> Result<ImageData> {
 
 // ───────────────────────── quick-open index ─────────────────────────
 //
+// One index per open folder: `FileIndexState` maps a canonical root to its `RootIndex`, and windows showing the same
+// folder share it. An index is built when the first window opens the folder (`WorkspaceChange::first_for_root`) and
+// dropped when the last window showing it leaves (`last_for_prev_root`); a query from a window looks up that window's
+// folder and waits only for its own tier-1 build.
+//
 // Two phases. Tier 1 walks the tree honouring ignore files and is published the moment it finishes; it is the only
 // thing Quick Open, @-mention pickers and the agent's file list may ever wait for. Tier 2 walks again with ignore
 // files off (heavy-directory skip list still on) to surface files that only the ignore rules hide, and merges its
 // results into the published index from the same background thread. Both walks stop at an entry cap, a wall-clock
-// budget, or when the workspace changes under them (generation ticket); a cap/budget stop publishes a `partial` list.
+// budget, or when the folder closes under them (generation ticket); a cap/budget stop publishes a `partial` list.
 
 pub const INDEX_CAP: usize = 200_000;
 
 struct Entry { rel: String, lower: String, ignored: bool }
 
+/// The quick-open index of one folder.
 #[derive(Default)]
-pub struct FileIndexState {
-    root: RwLock<Option<PathBuf>>,
+pub struct RootIndex {
     entries: RwLock<Vec<Entry>>,
-    /// Tier 1 is published for `root`.
+    /// Tier 1 is published.
     ready: AtomicBool,
     /// Tier 1 stopped at its cap or budget: the list is a prefix of the tree.
     tracked_partial: AtomicBool,
-    /// Tier 2 has merged (or was skipped) for `root`.
+    /// Tier 2 has merged (or was skipped).
     ignored_done: AtomicBool,
     ignored_partial: AtomicBool,
-    /// Serialises tier-1 builds; a query that finds the index stale waits here, and only here.
+    /// Serialises tier-1 builds; a query that finds the index unpublished waits here, and only here.
     build_lock: Mutex<()>,
-    /// Bumped per workspace change so a walk in progress for the previous root stops and discards its results.
+    /// Bumped per (re)build and when the folder closes, so a walk in progress stops and discards its results.
     generation: Generation,
 }
+
+impl std::fmt::Debug for RootIndex {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("RootIndex").field("ready", &self.is_ready()).field("entries", &self.len()).field("generation", &self.generation.current()).finish()
+    }
+}
+
+/// Per-folder quick-open indexes, keyed by canonical root.
+#[derive(Default)]
+pub struct FileIndexState { roots: DashMap<PathBuf, Arc<RootIndex>> }
 
 /// What the UI needs to label results ("showing the first N files").
 #[derive(Debug, Clone, Serialize)]
@@ -372,12 +397,55 @@ pub struct FileIndexState {
 pub struct QuickOpenIndexStatus { pub root: Option<String>, pub ready: bool, pub files: usize, pub ignored_files: usize, pub partial: bool, pub ignored_done: bool, pub ignored_partial: bool }
 
 impl FileIndexState {
-    pub fn root(&self) -> Option<PathBuf> { self.root.read().clone() }
+    /// The index of `root`, created (unbuilt) when there was none. Idempotent: a second window on the same folder
+    /// gets the same `Arc`.
+    pub fn insert(&self, root: &Path) -> Arc<RootIndex> { Arc::clone(&*self.roots.entry(root.to_path_buf()).or_default()) }
+    pub fn get(&self, root: &Path) -> Option<Arc<RootIndex>> { self.roots.get(root).map(|e| Arc::clone(e.value())) }
+    /// `get` for a query: a folder no window has opened is an error, not an empty result.
+    pub fn index_for(&self, root: &Path) -> Result<Arc<RootIndex>> {
+        self.get(root).ok_or_else(|| CaretError::new("no_index", format!("No quick-open index for {}", root.display())))
+    }
+    /// Drop the index of `root` (the last window showing it left). A walk still running for it stops and discards its
+    /// results; an `Arc` a caller still holds sees an empty, unpublished index. `false` when there was none.
+    pub fn remove(&self, root: &Path) -> bool {
+        let Some((_, idx)) = self.roots.remove(root) else { return false };
+        idx.generation.begin();
+        idx.ready.store(false, Ordering::Release);
+        idx.entries.write().clear();
+        true
+    }
+    pub fn contains(&self, root: &Path) -> bool { self.roots.contains_key(root) }
+    pub fn roots(&self) -> Vec<PathBuf> { self.roots.iter().map(|e| e.key().clone()).collect() }
+    /// Status of a window's folder (`None`, or a folder without an index: nothing indexed).
+    pub fn status_for(&self, root: Option<&Path>) -> QuickOpenIndexStatus {
+        match root.and_then(|r| self.get(r).map(|idx| (r, idx))) {
+            Some((r, idx)) => idx.status(r),
+            None => QuickOpenIndexStatus { root: root.map(|r| r.to_string_lossy().to_string()), ready: false, files: 0, ignored_files: 0, partial: false, ignored_done: false, ignored_partial: false },
+        }
+    }
+}
+
+impl RootIndex {
+    pub fn is_ready(&self) -> bool { self.ready.load(Ordering::Acquire) }
     pub fn len(&self) -> usize { self.entries.read().len() }
-    pub fn status(&self) -> QuickOpenIndexStatus {
+    pub fn is_empty(&self) -> bool { self.entries.read().is_empty() }
+    pub fn status(&self, root: &Path) -> QuickOpenIndexStatus {
         let e = self.entries.read();
         let ignored = e.iter().filter(|x| x.ignored).count();
-        QuickOpenIndexStatus { root: self.root().map(|r| r.to_string_lossy().to_string()), ready: self.ready.load(Ordering::Acquire), files: e.len() - ignored, ignored_files: ignored, partial: self.tracked_partial.load(Ordering::Acquire), ignored_done: self.ignored_done.load(Ordering::Acquire), ignored_partial: self.ignored_partial.load(Ordering::Acquire) }
+        QuickOpenIndexStatus { root: Some(root.to_string_lossy().to_string()), ready: self.is_ready(), files: e.len() - ignored, ignored_files: ignored, partial: self.tracked_partial.load(Ordering::Acquire), ignored_done: self.ignored_done.load(Ordering::Acquire), ignored_partial: self.ignored_partial.load(Ordering::Acquire) }
+    }
+    /// The first `limit` tracked (non-ignored) paths, folder-relative, in path order.
+    pub fn list(&self, limit: usize) -> Vec<String> { self.entries.read().iter().filter(|e| !e.ignored).take(limit).map(|e| e.rel.clone()).collect() }
+    /// Insert a folder-relative path (no-op when present; the index stops growing at the combined cap).
+    fn insert_rel(&self, rel: String, ignored: bool) {
+        let mut e = self.entries.write();
+        if e.len() >= INDEX_CAP + IGNORED_CAP { return; }
+        match e.binary_search_by(|x| x.rel.as_str().cmp(rel.as_str())) { Ok(_) => {}, Err(pos) => e.insert(pos, Entry { lower: rel.to_lowercase(), rel, ignored }) }
+    }
+    /// Remove a folder-relative path or directory subtree.
+    fn remove_rel(&self, rel: &str) {
+        let prefix = format!("{rel}/");
+        self.entries.write().retain(|e| e.rel != rel && !e.rel.starts_with(&prefix));
     }
 }
 
@@ -473,61 +541,69 @@ pub fn collect_ignored_files(root: &Path, global_ignore: &[String], exclude_glob
 
 fn budget(ms: u64, default_ms: u64) -> Duration { Duration::from_millis(if ms == 0 { default_ms } else { ms }) }
 
-/// Tier 1 under `build_lock`: builds (or finds already built) the ignore-aware index for the current root and publishes
-/// it. Returns `false` when there is no root or the workspace changed meanwhile. This is the only wait a caller sees.
-fn ensure_tracked(app: &AppHandle, ticket: u64) -> bool {
-    let st = app.state::<FileIndexState>();
+/// Ignore rules and wall-clock budgets for one build (`general.globalIgnore`, `indexing.excludeGlobs`,
+/// `indexing.quickOpenBudgetMs`, `indexing.quickOpenIgnoredBudgetMs`).
+#[derive(Debug, Clone)]
+pub struct BuildOptions { pub global_ignore: Vec<String>, pub exclude_globs: Vec<String>, pub tracked_budget: Duration, pub ignored_budget: Duration }
+impl Default for BuildOptions {
+    fn default() -> Self { Self { global_ignore: vec![], exclude_globs: vec![], tracked_budget: Duration::from_millis(DEFAULT_TRACKED_BUDGET_MS), ignored_budget: Duration::from_millis(DEFAULT_IGNORED_BUDGET_MS) } }
+}
+impl BuildOptions {
+    pub fn from_settings(s: &Settings) -> Self {
+        Self { global_ignore: s.general.global_ignore.clone(), exclude_globs: s.indexing.exclude_globs.clone(), tracked_budget: budget(s.indexing.quick_open_budget_ms, DEFAULT_TRACKED_BUDGET_MS), ignored_budget: budget(s.indexing.quick_open_ignored_budget_ms, DEFAULT_IGNORED_BUDGET_MS) }
+    }
+    fn current(app: &AppHandle) -> Self { Self::from_settings(&app.state::<SettingsState>().effective()) }
+}
+
+/// Tier 1 under `build_lock`: builds (or finds already built) the ignore-aware index of `root` and publishes it.
+/// Returns `false` when the folder closed (or closed and reopened) meanwhile, i.e. `ticket` went stale. This is the
+/// only wait a caller sees.
+pub fn build_tracked(idx: &RootIndex, root: &Path, opts: &BuildOptions, ticket: u64) -> bool {
     let t_lock = Instant::now();
-    let _g = st.build_lock.lock();
+    let _g = idx.build_lock.lock();
     let lock_wait_ms = t_lock.elapsed().as_millis() as u64;
-    if lock_wait_ms > 1000 { tracing::warn!(lock_wait_ms, "quick-open index build waited for a previous build to finish"); }
-    if !st.generation.is_current(ticket) { return false; }
-    let Some(root) = app.state::<WorkspaceState>().root() else { *st.root.write() = None; st.entries.write().clear(); st.ready.store(false, Ordering::Release); return false; };
-    // The listener thread and a query racing on a folder switch both arrive here; the second finds the first's index.
-    if st.ready.load(Ordering::Acquire) && st.root().as_deref() == Some(root.as_path()) { return true; }
-    let settings = app.state::<SettingsState>().effective();
+    if lock_wait_ms > 1000 { tracing::warn!(root = %root.display(), lock_wait_ms, "quick-open index build waited for a previous build to finish"); }
+    if !idx.generation.is_current(ticket) { return false; }
+    // The listener thread and a query racing on a folder open both arrive here; the second finds the first's index.
+    if idx.is_ready() { return true; }
     let t0 = Instant::now();
-    let limits = WalkLimits { cap: INDEX_CAP, deadline: Some(t0 + budget(settings.indexing.quick_open_budget_ms, DEFAULT_TRACKED_BUDGET_MS)), ticket: Some((&st.generation, ticket)) };
-    let out = collect_workspace_files(&root, &settings.general.global_ignore, &settings.indexing.exclude_globs, &limits);
-    if out.stale { tracing::debug!(root = %root.display(), "quick-open index build superseded by a newer workspace"); return false; }
+    let limits = WalkLimits { cap: INDEX_CAP, deadline: Some(t0 + opts.tracked_budget), ticket: Some((&idx.generation, ticket)) };
+    let out = collect_workspace_files(root, &opts.global_ignore, &opts.exclude_globs, &limits);
+    if out.stale || !idx.generation.is_current(ticket) { tracing::debug!(root = %root.display(), "quick-open index build superseded: folder closed or reopened"); return false; }
     let n = out.files.len();
     let entries: Vec<Entry> = out.files.into_iter().map(|rel| Entry { lower: rel.to_lowercase(), rel, ignored: false }).collect();
     {
-        // Publish atomically with respect to readers: root, entries, flags, then `ready`.
-        let mut e = st.entries.write();
-        *st.root.write() = Some(root.clone());
+        // Publish atomically with respect to readers: entries, flags, then `ready`.
+        let mut e = idx.entries.write();
         *e = entries;
-        st.tracked_partial.store(out.partial, Ordering::Release);
-        st.ignored_done.store(false, Ordering::Release);
-        st.ignored_partial.store(false, Ordering::Release);
-        st.ready.store(true, Ordering::Release);
+        idx.tracked_partial.store(out.partial, Ordering::Release);
+        idx.ignored_done.store(false, Ordering::Release);
+        idx.ignored_partial.store(false, Ordering::Release);
+        idx.ready.store(true, Ordering::Release);
     }
-    tracing::info!(files = n, partial = out.partial, lock_wait_ms, ms = t0.elapsed().as_millis() as u64, "quick-open index built");
+    tracing::info!(root = %root.display(), files = n, partial = out.partial, lock_wait_ms, ms = t0.elapsed().as_millis() as u64, "quick-open index built");
     true
 }
 
-/// Tier 2, never on a caller's path: walk the ignore-only files and merge them into the published index. Skipped
-/// when the workspace changed, and discarded if it changes during the walk.
-fn merge_ignored(app: &AppHandle, ticket: u64) {
-    let st = app.state::<FileIndexState>();
-    if !st.generation.is_current(ticket) { return; }
-    let Some(root) = st.root() else { return };
-    let settings = app.state::<SettingsState>().effective();
-    let known: HashSet<String> = st.entries.read().iter().map(|e| e.rel.clone()).collect();
+/// Tier 2, never on a caller's path: walk the ignore-only files of `root` and merge them into its published index.
+/// Skipped when the folder closed, discarded if it closes during the walk.
+pub fn build_ignored(idx: &RootIndex, root: &Path, opts: &BuildOptions, ticket: u64) {
+    if !idx.generation.is_current(ticket) || !idx.is_ready() { return; }
+    let known: HashSet<String> = idx.entries.read().iter().map(|e| e.rel.clone()).collect();
     let t0 = Instant::now();
-    let limits = WalkLimits { cap: IGNORED_CAP, deadline: Some(t0 + budget(settings.indexing.quick_open_ignored_budget_ms, DEFAULT_IGNORED_BUDGET_MS)), ticket: Some((&st.generation, ticket)) };
-    let out = collect_ignored_files(&root, &settings.general.global_ignore, &settings.indexing.exclude_globs, &known, &limits);
-    if out.stale || !st.generation.is_current(ticket) { return; }
+    let limits = WalkLimits { cap: IGNORED_CAP, deadline: Some(t0 + opts.ignored_budget), ticket: Some((&idx.generation, ticket)) };
+    let out = collect_ignored_files(root, &opts.global_ignore, &opts.exclude_globs, &known, &limits);
+    if out.stale || !idx.generation.is_current(ticket) { return; }
     let n = out.files.len();
     {
-        let mut e = st.entries.write();
-        if st.root().as_deref() != Some(root.as_path()) { return; }
+        let mut e = idx.entries.write();
+        if !idx.generation.is_current(ticket) { return; }
         let extra = out.files.into_iter().map(|rel| Entry { lower: rel.to_lowercase(), rel, ignored: true });
         *e = merge_sorted(std::mem::take(&mut *e), extra);
-        st.ignored_partial.store(out.partial, Ordering::Release);
-        st.ignored_done.store(true, Ordering::Release);
+        idx.ignored_partial.store(out.partial, Ordering::Release);
+        idx.ignored_done.store(true, Ordering::Release);
     }
-    tracing::info!(ignored = n, partial = out.partial, ms = t0.elapsed().as_millis() as u64, "quick-open ignored tier merged");
+    tracing::info!(root = %root.display(), ignored = n, partial = out.partial, ms = t0.elapsed().as_millis() as u64, "quick-open ignored tier merged");
 }
 
 /// Merge two `rel`-sorted lists; on a duplicate path the existing entry wins (the watcher may have inserted it since).
@@ -550,56 +626,55 @@ fn merge_sorted(base: Vec<Entry>, extra: impl Iterator<Item = Entry>) -> Vec<Ent
     out
 }
 
-/// Make sure tier 1 is published for the current root (waiting for it if a build is in progress). Joins the current
-/// generation rather than starting one, so it never cancels the listener's build.
-fn ensure_index(app: &AppHandle) {
-    let st = app.state::<FileIndexState>();
-    let ws_root = app.state::<WorkspaceState>().root();
-    if st.ready.load(Ordering::Acquire) && st.root() == ws_root { return; }
-    let ticket = st.generation.current();
-    ensure_tracked(app, ticket);
+/// Make sure tier 1 is published for `root` (waiting for it if a build is in progress) and hand back its index.
+/// Joins the current generation rather than starting one, so it never cancels the listener's build. A folder no
+/// window has opened is an error.
+fn ensure_index(app: &AppHandle, root: &Path) -> Result<Arc<RootIndex>> {
+    let idx = app.state::<FileIndexState>().index_for(root)?;
+    if !idx.is_ready() { build_tracked(&idx, root, &BuildOptions::current(app), idx.generation.current()); }
+    Ok(idx)
 }
 
-/// Called by the watcher / fs ops: add a file to the index if it lives in the workspace.
-pub fn index_add(app: &AppHandle, path: &Path) {
-    let st = app.state::<FileIndexState>();
-    if !st.ready.load(Ordering::Acquire) { return; }
-    let Some(root) = st.root() else { return };
-    if !path.starts_with(&root) || !path.is_file() { return; }
-    let rel = paths::rel_to(&root, path);
+/// Called by the watcher of `root` and by fs commands run from a window on `root`: add `path` to that folder's index
+/// if it lives inside it (another open folder that also contains the path has its own watcher).
+pub fn index_add(app: &AppHandle, root: &Path, path: &Path) {
+    let Some(idx) = app.state::<FileIndexState>().get(root) else { return };
+    if !idx.is_ready() || !path.starts_with(root) || !path.is_file() { return; }
+    let rel = paths::rel_to(root, path);
     if rel.split('/').any(|seg| IGNORED_TIER_SKIP.contains(&seg)) { return; }
     // Classify like the builder would, so a watcher-added file in `tmp/` ranks as ignored instead of jumping the queue.
-    let global = app.state::<SettingsState>().effective().general.global_ignore.clone();
-    let ignored = path.parent().map(|d| IgnoreSet::build(Some(&root), d, &global).is_ignored(path, false)).unwrap_or(false);
-    let mut e = st.entries.write();
-    if e.len() >= INDEX_CAP + IGNORED_CAP { return; }
-    match e.binary_search_by(|x| x.rel.as_str().cmp(rel.as_str())) { Ok(_) => {}, Err(pos) => e.insert(pos, Entry { lower: rel.to_lowercase(), rel, ignored }) }
+    let global = app.state::<SettingsState>().effective().general.global_ignore;
+    let ignored = path.parent().map(|d| IgnoreSet::build(Some(root), d, &global).is_ignored(path, false)).unwrap_or(false);
+    idx.insert_rel(rel, ignored);
 }
 
-/// Remove a path (file or directory subtree) from the index.
-pub fn index_remove(app: &AppHandle, path: &Path) {
-    let st = app.state::<FileIndexState>();
-    if !st.ready.load(Ordering::Acquire) { return; }
-    let Some(root) = st.root() else { return };
-    if !path.starts_with(&root) { return; }
-    let rel = paths::rel_to(&root, path);
-    let prefix = format!("{rel}/");
-    st.entries.write().retain(|e| e.rel != rel && !e.rel.starts_with(&prefix));
+/// Remove a path (file or directory subtree) from the index of `root`.
+pub fn index_remove(app: &AppHandle, root: &Path, path: &Path) {
+    let Some(idx) = app.state::<FileIndexState>().get(root) else { return };
+    if !idx.is_ready() || !path.starts_with(root) { return; }
+    idx.remove_rel(&paths::rel_to(root, path));
 }
 
-pub fn init(app: &AppHandle) {
+/// Build the index of `root` off the emitting thread: tier 1 first, tier 2 merged afterwards. A new generation makes
+/// any walk still running for this root stop and discard its results; the index is marked unpublished before the
+/// build starts so queries wait for it.
+fn start_build(app: &AppHandle, root: PathBuf) {
+    let idx = app.state::<FileIndexState>().insert(&root);
+    let ticket = idx.generation.begin();
+    idx.ready.store(false, Ordering::Release);
     let h = app.clone();
-    app.listen(crate::events::WORKSPACE_CHANGED, move |_ev| {
-        let h2 = h.clone();
-        let info: Option<WorkspaceInfo> = serde_json::from_str(_ev.payload()).ok().flatten();
-        // New generation: any walk still running for the previous root stops and discards its results. Mark the index
-        // stale before the build starts so queries wait for the new root (and re-opening the same folder still
-        // refreshes); the build itself runs off the emitting thread, tier 1 first, tier 2 merged afterwards.
-        let st = h2.state::<FileIndexState>();
-        let ticket = st.generation.begin();
-        st.ready.store(false, Ordering::Release);
-        if info.is_none() { return; }
-        std::thread::Builder::new().name("caret-file-index".into()).spawn(move || { if ensure_tracked(&h2, ticket) { merge_ignored(&h2, ticket); } }).ok();
+    std::thread::Builder::new().name("caret-file-index".into()).spawn(move || {
+        let opts = BuildOptions::current(&h);
+        if build_tracked(&idx, &root, &opts, ticket) { build_ignored(&idx, &root, &opts, ticket); }
+    }).ok();
+}
+
+/// Per-folder lifecycle: build on the first window that opens a folder, drop when the last window showing it leaves.
+pub fn init(app: &AppHandle) {
+    events::on_workspace_change(app, |app, change| {
+        let plan = crate::core::watcher::root_plan(&change);
+        if let Some(root) = plan.stop { if app.state::<FileIndexState>().remove(&root) { tracing::debug!(root = %root.display(), "quick-open index dropped"); } }
+        if let Some(root) = plan.start { start_build(app, root); }
     });
 }
 
@@ -647,23 +722,19 @@ struct Scored { score: i32, idx: usize }
 impl Ord for Scored { fn cmp(&self, o: &Self) -> std::cmp::Ordering { o.score.cmp(&self.score).then_with(|| self.idx.cmp(&o.idx)) } }
 impl PartialOrd for Scored { fn partial_cmp(&self, o: &Self) -> Option<std::cmp::Ordering> { Some(self.cmp(o)) } }
 
-#[tauri::command]
-pub async fn fs_quick_open(app: AppHandle, query: String, limit: Option<usize>) -> Result<Vec<QuickOpenResult>> {
-    let limit = limit.unwrap_or(50).clamp(1, 500);
-    tokio::task::spawn_blocking(move || {
-        ensure_index(&app);
-        let st = app.state::<FileIndexState>();
-        let Some(root) = st.root() else { return Ok(vec![]) };
+impl RootIndex {
+    /// Fuzzy-match `query` against this folder's index; results carry absolute paths under `root`. `":line[:col]"` and
+    /// `"#…"` suffixes are stripped; an empty query lists tracked files in path order.
+    pub fn query(&self, root: &Path, query: &str, limit: usize) -> Vec<QuickOpenResult> {
         let q = query.trim();
-        // strip ":line[:col]" and "#..." suffixes
         let q = q.split(':').next().unwrap_or(q).split('#').next().unwrap_or(q);
         let q: String = q.chars().filter(|c| !c.is_whitespace()).collect();
         let ql: Vec<char> = q.to_lowercase().chars().collect();
-        let entries = st.entries.read();
-        let mut heap: BinaryHeap<Scored> = BinaryHeap::with_capacity(limit + 1);
+        let entries = self.entries.read();
         if ql.is_empty() {
-            return Ok(entries.iter().filter(|e| !e.ignored).take(limit).map(|e| QuickOpenResult { path: root.join(&e.rel).to_string_lossy().to_string(), rel_path: e.rel.clone(), score: 0, indices: None, ignored: false }).collect());
+            return entries.iter().filter(|e| !e.ignored).take(limit).map(|e| QuickOpenResult { path: root.join(&e.rel).to_string_lossy().to_string(), rel_path: e.rel.clone(), score: 0, indices: None, ignored: false }).collect();
         }
+        let mut heap: BinaryHeap<Scored> = BinaryHeap::with_capacity(limit + 1);
         let mut scores: Vec<(usize, i32, Vec<u32>)> = Vec::new();
         for (i, e) in entries.iter().enumerate() {
             let lower: Vec<char> = e.lower.chars().collect();
@@ -676,24 +747,111 @@ pub async fn fs_quick_open(app: AppHandle, query: String, limit: Option<usize>) 
         }
         let mut picked: Vec<Scored> = heap.into_vec();
         picked.sort();
-        Ok(picked.into_iter().map(|sc| { let (ei, s, idx) = &scores[sc.idx]; let e = &entries[*ei]; QuickOpenResult { path: root.join(&e.rel).to_string_lossy().to_string(), rel_path: e.rel.clone(), score: *s, indices: Some(idx.clone()), ignored: e.ignored } }).collect())
-    }).await.map_err(|e| CaretError::internal(e.to_string()))?
+        picked.into_iter().map(|sc| { let (ei, s, idx) = &scores[sc.idx]; let e = &entries[*ei]; QuickOpenResult { path: root.join(&e.rel).to_string_lossy().to_string(), rel_path: e.rel.clone(), score: *s, indices: Some(idx.clone()), ignored: e.ignored } }).collect()
+    }
 }
 
+/// Fuzzy file search over the calling window's folder; waits for that folder's tier-1 index only.
 #[tauri::command]
-pub async fn fs_list_files(app: AppHandle, limit: Option<usize>) -> Result<Vec<String>> {
-    let limit = limit.unwrap_or(20_000);
-    tokio::task::spawn_blocking(move || { ensure_index(&app); let st = app.state::<FileIndexState>(); let v: Vec<String> = st.entries.read().iter().filter(|e| !e.ignored).take(limit).map(|e| e.rel.clone()).collect(); Ok(v) }).await.map_err(|e| CaretError::internal(e.to_string()))?
+pub async fn fs_quick_open(app: AppHandle, window: Window, query: String, limit: Option<usize>) -> Result<Vec<QuickOpenResult>> {
+    let limit = limit.unwrap_or(50).clamp(1, 500);
+    let root = window_root(&app, &window).ok_or_else(CaretError::no_workspace)?;
+    tokio::task::spawn_blocking(move || { let idx = ensure_index(&app, &root)?; Ok(idx.query(&root, &query, limit)) }).await.map_err(|e| CaretError::internal(e.to_string()))?
 }
 
-/// Current state of the quick-open index (never waits for a build).
+/// The calling window's folder's tracked files, folder-relative and in path order.
+#[tauri::command]
+pub async fn fs_list_files(app: AppHandle, window: Window, limit: Option<usize>) -> Result<Vec<String>> {
+    let limit = limit.unwrap_or(20_000);
+    let root = window_root(&app, &window).ok_or_else(CaretError::no_workspace)?;
+    tokio::task::spawn_blocking(move || { let idx = ensure_index(&app, &root)?; Ok(idx.list(limit)) }).await.map_err(|e| CaretError::internal(e.to_string()))?
+}
+
+/// Current state of the calling window's quick-open index (never waits for a build; an empty window answers
+/// `root: None`, nothing ready).
 #[tauri::command(async)]
-pub fn fs_index_status(st: State<'_, FileIndexState>) -> Result<QuickOpenIndexStatus> { Ok(st.status()) }
+pub fn fs_index_status(ws: State<'_, WorkspaceState>, st: State<'_, FileIndexState>, window: Window) -> Result<QuickOpenIndexStatus> { Ok(st.status_for(ws.root_for(window.label()).as_deref())) }
 
 // ───────────────────────── tests ─────────────────────────
 #[cfg(test)]
 mod tests {
     use super::*;
+    fn opts() -> BuildOptions { BuildOptions { tracked_budget: Duration::from_secs(30), ignored_budget: Duration::from_secs(30), ..Default::default() } }
+    fn folder(files: &[&str]) -> (tempfile::TempDir, PathBuf) {
+        let d = tempfile::tempdir().unwrap();
+        for f in files { let p = d.path().join(f); std::fs::create_dir_all(p.parent().unwrap()).unwrap(); std::fs::write(p, "x").unwrap(); }
+        let root = d.path().canonicalize().unwrap();
+        (d, root)
+    }
+    #[test]
+    fn per_root_indexes_are_independent_and_dropped_one_at_a_time() {
+        let (_a, ra) = folder(&["src/alpha.rs", "README.md"]);
+        let (_b, rb) = folder(&["lib/beta.ts", "docs/guide.md"]);
+        let st = FileIndexState::default();
+        let ia = st.insert(&ra); let ib = st.insert(&rb);
+        assert!(Arc::ptr_eq(&ia, &st.insert(&ra)), "a second window on the same folder shares the index");
+        assert!(!ia.is_ready() && !ib.is_ready() && st.contains(&ra) && st.contains(&rb));
+        assert!(build_tracked(&ia, &ra, &opts(), ia.generation.begin()));
+        assert!(build_tracked(&ib, &rb, &opts(), ib.generation.begin()));
+        assert_eq!(ia.list(100), vec!["README.md", "src/alpha.rs"]);
+        assert_eq!(ib.list(100), vec!["docs/guide.md", "lib/beta.ts"]);
+        let hits = ia.query(&ra, "alpha", 10);
+        assert_eq!(hits.len(), 1);
+        assert_eq!((hits[0].rel_path.as_str(), hits[0].path.as_str()), ("src/alpha.rs", ra.join("src/alpha.rs").to_string_lossy().as_ref()));
+        assert!(ib.query(&rb, "alpha", 10).is_empty(), "a query on B never sees A's files");
+        assert_eq!(st.status_for(Some(&ra)).files, 2);
+        assert_eq!(st.status_for(Some(&rb)).root.as_deref(), Some(rb.to_string_lossy().as_ref()));
+        // The last window on A closes: A's index goes, B's is untouched.
+        let ticket = ia.generation.current();
+        assert!(st.remove(&ra));
+        assert!(!st.remove(&ra), "already gone");
+        assert!(st.get(&ra).is_none() && !st.contains(&ra));
+        assert!(!ia.generation.is_current(ticket) && !ia.is_ready() && ia.is_empty(), "a walk still running for A stops; a held Arc is empty");
+        assert_eq!(st.index_for(&ra).unwrap_err().code, "no_index", "a query on a folder no window shows is an error");
+        assert!(ib.is_ready());
+        assert_eq!(st.index_for(&rb).unwrap().list(100), vec!["docs/guide.md", "lib/beta.ts"]);
+        assert_eq!(st.roots(), vec![rb.clone()]);
+        let none = st.status_for(None);
+        assert!(none.root.is_none() && !none.ready && none.files == 0, "an empty window: nothing indexed");
+        let unknown = st.status_for(Some(&ra));
+        assert!(unknown.root.is_some() && !unknown.ready && unknown.files == 0);
+    }
+    #[test]
+    fn a_closed_folder_discards_its_build_and_a_reopen_starts_clean() {
+        let (d, r) = folder(&["a.txt"]);
+        let st = FileIndexState::default();
+        let idx = st.insert(&r);
+        let ticket = idx.generation.begin();
+        st.remove(&r); // closed before the build ran
+        assert!(!build_tracked(&idx, &r, &opts(), ticket), "a stale ticket never publishes");
+        assert!(!idx.is_ready() && idx.is_empty());
+        let fresh = st.insert(&r);
+        assert!(!Arc::ptr_eq(&fresh, &idx), "reopening creates a new index; the orphaned one is never installed");
+        assert!(build_tracked(&fresh, &r, &opts(), fresh.generation.begin()));
+        assert_eq!(fresh.list(10), vec!["a.txt"]);
+        // Tier 2 merges into the same folder's index.
+        std::fs::write(d.path().join(".gitignore"), "tmp/\n").unwrap();
+        std::fs::create_dir_all(d.path().join("tmp")).unwrap(); std::fs::write(d.path().join("tmp/x.log"), "x").unwrap();
+        let t = fresh.generation.begin(); fresh.ready.store(false, Ordering::Release);
+        assert!(build_tracked(&fresh, &r, &opts(), t));
+        build_ignored(&fresh, &r, &opts(), t);
+        let s = fresh.status(&r);
+        assert!(s.ready && s.ignored_done && s.ignored_files == 1 && s.files == 2, "{s:?}");
+        assert_eq!(fresh.query(&r, "x.log", 5).len(), 1, "ignored-tier files are still found");
+    }
+    #[test]
+    fn incremental_updates_touch_only_the_matching_root() {
+        let (_a, ra) = folder(&["a.txt"]);
+        let (_b, rb) = folder(&["b.txt"]);
+        let st = FileIndexState::default();
+        let ia = st.insert(&ra); let ib = st.insert(&rb);
+        assert!(build_tracked(&ia, &ra, &opts(), ia.generation.begin()) && build_tracked(&ib, &rb, &opts(), ib.generation.begin()));
+        ia.insert_rel("new/file.rs".into(), false); ia.insert_rel("new/file.rs".into(), false);
+        assert_eq!(ia.list(10), vec!["a.txt", "new/file.rs"], "inserted once, in order");
+        assert_eq!(ib.list(10), vec!["b.txt"], "the other folder is untouched");
+        ia.remove_rel("new");
+        assert_eq!(ia.list(10), vec!["a.txt"], "removing a directory drops its subtree");
+    }
     #[test]
     fn ignored_tier_surfaces_gitignored_files_but_not_heavy_dirs() {
         let d = tempfile::tempdir().unwrap(); let r = d.path();
