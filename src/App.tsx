@@ -12,6 +12,7 @@ import { runCommand, hasCommand } from '@/lib/commands'
 import { startKeybindings, setUserOverrides, setFileBindings, setPersistHandler } from '@/lib/keybindings'
 import { initTheme } from '@/lib/theme'
 import { initCliOpen } from '@/lib/cliOpen'
+import { initWindowClose } from '@/lib/windowClose'
 import { initDebugModule } from '@/components/debug'
 import { Events, on, isTauri } from '@/lib/tauri'
 import { onWorkspaceChanged } from '@/lib/workspaceReload'
@@ -47,6 +48,7 @@ function boot(): () => void {
   try { const r = ch.initChatModule?.(); if (typeof r === 'function') offs.push(r) } catch (e) { console.error('chat module init failed', e) }
   // `caret <path>` launcher: drain queued opens (argv / Finder / caret:// URLs) and register install commands
   offs.push(initCliOpen())
+  offs.push(initWindowClose()) // closing the window with unsaved files asks Save All / Don't Save / Cancel
   try { offs.push(initDebugModule()) } catch (e) { console.error('debug module init failed', e) }
   if (!import.meta.env.DEV) { const t = window.setTimeout(() => { void import('@/lib/updater').then((m) => m.checkForUpdatesSilently()) }, 15_000); offs.push(() => window.clearTimeout(t)) }
   // keybindings: settings overrides + optional ~/.caret/keybindings.json

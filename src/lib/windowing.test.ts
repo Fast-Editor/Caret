@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest'
-import { currentWindowLabel, legacySessionKey, opensInNewWindow, readSession, sessionKey } from './windowing'
+import { currentWindowLabel, displayPath, legacySessionKey, opensInNewWindow, readSession, sessionKey, windowPickItems, windowTitle } from './windowing'
+import type { WindowSummary } from '@/types'
 
 function storage(entries: Record<string, string>): Pick<Storage, 'getItem'> {
   return { getItem: (k: string) => (k in entries ? entries[k] : null) }
@@ -48,5 +49,46 @@ describe('opensInNewWindow', () => {
   it('inverts the setting for the Alt gesture', () => {
     expect(opensInNewWindow(true, 'new', true)).toBe(false)
     expect(opensInNewWindow(true, 'current', true)).toBe(true)
+  })
+})
+
+describe('windowTitle', () => {
+  it('matches the native title: "<folder> — Caret", or "Caret" when empty', () => {
+    expect(windowTitle('caret')).toBe('caret — Caret')
+    expect(windowTitle(null)).toBe('Caret')
+    expect(windowTitle(undefined)).toBe('Caret')
+    expect(windowTitle('')).toBe('Caret')
+  })
+  it('shortens the home directory for display', () => {
+    expect(displayPath('/Users/me/repo/a')).toBe('~/repo/a')
+    expect(displayPath('/srv/b')).toBe('/srv/b')
+  })
+})
+
+describe('windowPickItems', () => {
+  const list: WindowSummary[] = [
+    { label: 'main', root: '/Users/me/repo/a', name: 'a', focused: false },
+    { label: 'w2', root: null, name: null, focused: true },
+    { label: 'w3', root: '/srv/b', name: 'b', focused: false },
+  ]
+  it('shows folder name, path and label, and marks the current window', () => {
+    const items = windowPickItems(list, 'w2')
+    expect(items[0]).toMatchObject({ id: 'main', label: 'a', description: '~/repo/a', detail: 'main' })
+    expect(items[1]).toMatchObject({ id: 'w3', label: 'b', description: '/srv/b', detail: 'w3' })
+    expect(items[2]).toMatchObject({ id: 'w2', label: 'Empty window', description: 'No folder open', detail: 'w2 · current' })
+    expect(items[0].keywords).toBe('main /Users/me/repo/a')
+  })
+  it('puts the current window last and keeps creation order for the others', () => {
+    expect(windowPickItems(list, 'w2').map((i) => i.id)).toEqual(['main', 'w3', 'w2'])
+    expect(windowPickItems(list, 'main').map((i) => i.id)).toEqual(['w2', 'w3', 'main'])
+  })
+  it('falls back to the focused flag when the current label is not in the list', () => {
+    const items = windowPickItems(list, 'zz')
+    expect(items.map((i) => i.id)).toEqual(['main', 'w2', 'w3'])
+    expect(items[1].detail).toBe('w2 · current')
+  })
+  it('handles a single window', () => {
+    expect(windowPickItems([list[0]], 'main')).toHaveLength(1)
+    expect(windowPickItems([], 'main')).toEqual([])
   })
 })

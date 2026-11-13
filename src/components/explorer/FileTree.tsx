@@ -218,6 +218,8 @@ export function FileTree() {
       { label: 'Open to the Side', hidden: !r || isDir, onSelect: () => void runCommand('editor.openFile', { path: r!.entry.path, group: 1, focus: true }) },
       { label: 'Reveal in Finder', onSelect: () => void api.app.showInFolder(r ? r.entry.path : root!) },
       { label: 'Open in Integrated Terminal', onSelect: () => void runCommand('terminal.new', { cwd: dirForNew }) },
+      // Folders (and the workspace root, from the empty area) can open as their own window; two windows may show one folder.
+      { label: 'Open in New Window', hidden: !!r && !isDir, onSelect: () => void runCommand('workspace.openInNewWindow', { path: r ? r.nodePath : root! }) },
       { type: 'separator' },
       { label: sel.length > 1 ? `Add ${sel.length} Files to Chat` : 'Add to Chat', hidden: !r, onSelect: () => { for (const p of sel) void runCommand('chat.addFile', { path: p }) } },
       { label: 'Find in Folder…', hidden: !isDir, onSelect: () => void runCommand('search.findInFiles', { include: `${relPath(r!.nodePath)}/**` }) },

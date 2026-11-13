@@ -23,7 +23,12 @@ export interface EditorTab {
 }
 export interface EditorGroup { id: string; tabs: EditorTab[]; activeTabId: string | null }
 export interface NavEntry { path: string; line: number; column: number }
-export interface ConfirmClose { groupId: string; tabId: string; title: string; resolve: (choice: 'save' | 'discard' | 'cancel') => void }
+export interface ConfirmClose {
+  groupId: string; tabId: string; title: string
+  /** Window close (src/lib/windowClose.ts): every dirty file, listed in the dialog, with a "Save All" button. */
+  titles?: string[]; saveLabel?: string
+  resolve: (choice: 'save' | 'discard' | 'cancel') => void
+}
 
 interface ModelEntry { model: monaco.editor.ITextModel; mtime: number; lineEnding: 'lf' | 'crlf' | 'mixed'; savedVersion: number; lastAccess: number; disposables: monaco.IDisposable[]; lineCache: Map<number, string>; autosaveTimer: ReturnType<typeof setTimeout> | null; size: number }
 

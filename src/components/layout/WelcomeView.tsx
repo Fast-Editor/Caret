@@ -1,17 +1,22 @@
-import { FolderOpen, Clock, Sparkles, BookOpen, Keyboard, Settings } from 'lucide-react'
-import { Button, Kbd } from '@/components/common'
+import { FolderOpen, Clock, Sparkles, BookOpen, Keyboard, Settings, AppWindow, ExternalLink } from 'lucide-react'
+import { Button, IconButton, Kbd } from '@/components/common'
 import { runCommand } from '@/lib/commands'
+import { displayPath } from '@/lib/windowing'
 import { useWorkspace } from '@/store/workspace'
 
 const ACTIONS: { icon: typeof Sparkles; label: string; run: () => void }[] = [
   { icon: Sparkles, label: 'Start a new agent chat', run: () => void runCommand('chat.new') },
+  { icon: AppWindow, label: 'New window', run: () => void runCommand('file.newWindow') },
   { icon: Settings, label: 'Configure models & API keys', run: () => void runCommand('settings.open', { page: 'models' }) },
   { icon: Keyboard, label: 'Keyboard shortcuts', run: () => void runCommand('help.shortcuts') },
   { icon: BookOpen, label: 'Documentation', run: () => void runCommand('help.docs') },
 ]
-const SHORTCUTS: [string, string][] = [['Command palette', 'mod+shift+p'], ['Go to file', 'mod+p'], ['Chat / add selection', 'mod+l'], ['New agent', 'mod+i'], ['Inline edit', 'mod+k'], ['Terminal', 'ctrl+`']]
+const SHORTCUTS: [string, string][] = [['Command palette', 'mod+shift+p'], ['Go to file', 'mod+p'], ['Chat / add selection', 'mod+l'], ['New agent', 'mod+i'], ['Inline edit', 'mod+k'], ['New window', 'mod+shift+n'], ['Terminal', 'ctrl+`']]
 
-/** Shown in the main area when no folder is open: one centred column (title, primary action, links, shortcuts, recent). */
+/**
+ * Shown in the main area when no folder is open (every new window starts here): one centred column (title, primary
+ * action, links, shortcuts, recent). A recent folder opens in this window; the hover action opens it in a new one.
+ */
 export function WelcomeView() {
   const recent = useWorkspace((s) => s.recent)
   return (
@@ -33,9 +38,12 @@ export function WelcomeView() {
           {recent.length === 0 && <div className="text-xs text-faint">No recent folders.</div>}
           <div className="flex flex-col">
             {recent.slice(0, 8).map((r) => (
-              <button key={r.path} type="button" disabled={!r.exists} onClick={() => void runCommand('workspace.openFolder', { path: r.path })} className="text-xs h-7 rounded px-2 hover:bg-hover disabled:opacity-40 truncate" title={r.path}>
-                <span className="text-fg">{r.name}</span> <span className="text-faint">{r.path.replace(/^\/Users\/[^/]+/, '~').replace(new RegExp(`/${r.name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`), '')}</span>
-              </button>
+              <div key={r.path} className="group flex items-center gap-0.5">
+                <button type="button" disabled={!r.exists} onClick={() => void runCommand('workspace.openFolder', { path: r.path })} className="flex-1 min-w-0 text-xs h-7 rounded px-2 hover:bg-hover disabled:opacity-40 truncate" title={r.path}>
+                  <span className="text-fg">{r.name}</span> <span className="text-faint">{displayPath(r.path).replace(new RegExp(`/${r.name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`), '')}</span>
+                </button>
+                <IconButton size="xs" icon={<ExternalLink />} label="Open in New Window" disabled={!r.exists} className="invisible group-hover:visible group-focus-within:visible" onClick={() => void runCommand('workspace.openFolder', { path: r.path, newWindow: true })} />
+              </div>
             ))}
           </div>
         </div>

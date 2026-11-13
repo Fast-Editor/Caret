@@ -1,5 +1,5 @@
 import { runCommand } from '@/lib/commands'
-const rows: [string, string][] = [['Show All Commands', '⌘⇧P'], ['Go to File', '⌘P'], ['Find in Files', '⌘⇧F'], ['Open Chat', '⌘L'], ['New Agent', '⌘I'], ['Inline Edit', '⌘K'], ['Toggle Terminal', '⌃`']]
+const rows: [string, string][] = [['Show All Commands', '⌘⇧P'], ['Go to File', '⌘P'], ['Find in Files', '⌘⇧F'], ['Open Chat', '⌘L'], ['New Agent', '⌘I'], ['Inline Edit', '⌘K'], ['Toggle Terminal', '⌃`'], ['New Window', '⌘⇧N']]
 export function EmptyState() {
   return (
     <div className="h-full w-full flex flex-col items-center justify-center text-muted select-none bg-editor" onDoubleClick={() => void runCommand('file.new')}>

@@ -8,7 +8,7 @@ import { THEMES } from '@/lib/theme'
 import { useUi } from '@/store/ui'
 import { useWorkspace } from '@/store/workspace'
 import { useSettings } from '@/store/settings'
-import { opensInNewWindow } from '@/lib/windowing'
+import { currentWindowLabel, opensInNewWindow, windowPickItems } from '@/lib/windowing'
 import { notify } from '@/store/notifications'
 import { pick, showDialog, confirm } from '@/components/dialogs'
 import { registerExplorerCommands } from '@/components/explorer'
@@ -24,12 +24,13 @@ export function registerShellCommands(): () => void {
   offs.push(registerCommands([
     // ── workspace / files ──
     { id: 'workspace.openFolder', title: 'Open Folder…', category: 'File', keybinding: 'mod+o', run: async (args) => {
-      const a = args as { path?: string; newWindow?: boolean } | undefined
+      // `newWindow` forces the target; `invert` is the Alt gesture (the opposite of `window.openFoldersIn`).
+      const a = args as { path?: string; newWindow?: boolean; invert?: boolean } | undefined
       let path = a?.path
       if (!path) { const p = await openDialog({ directory: true, multiple: false, title: 'Open Folder' }); if (typeof p !== 'string') return; path = p }
       try {
         // A window that already shows a folder opens the next one per `window.openFoldersIn`; an empty window opens in place.
-        const inNewWindow = a?.newWindow ?? opensInNewWindow(!!useWorkspace.getState().workspace, useSettings.getState().settings?.window.openFoldersIn)
+        const inNewWindow = a?.newWindow ?? opensInNewWindow(!!useWorkspace.getState().workspace, useSettings.getState().settings?.window.openFoldersIn, a?.invert)
         if (inNewWindow) { await api.window.new(path); void useWorkspace.getState().refreshRecent().catch(() => {}); return }
         await useWorkspace.getState().open(path); ui().set({ layout: 'editor', settingsOpen: false }); if (!ui().sidebarVisible) ui().showSidebar('explorer')
       } catch (e) { notify('error', 'Could not open folder', String((e as Error).message ?? e)) }
@@ -51,6 +52,20 @@ export function registerShellCommands(): () => void {
     { id: 'file.newWindow', title: 'New Window', category: 'File', run: async () => { try { await api.window.new(null) } catch (e) { notify('error', 'Could not open a new window', String((e as Error).message ?? e)) } } },
     { id: 'window.list', title: 'List Windows', category: 'Window', hidden: true, run: () => api.window.list() },
     { id: 'window.focus', title: 'Focus Window', category: 'Window', hidden: true, run: async (args) => { const label = (args as { label?: string } | undefined)?.label; if (label) await api.window.focus(label) } },
+    // Cmd+` (next window) is macOS's own shortcut and already cycles Caret's windows, so it is not bound here.
+    { id: 'window.switch', title: 'Window: Switch Window…', category: 'Window', run: async () => {
+      const windows = await api.window.list()
+      if (windows.length < 2) { notify('info', 'No other windows', 'File → New Window (⌘⇧N) opens one.'); return }
+      const label = await pick({ title: 'Switch Window', placeholder: 'Select a window', items: windowPickItems(windows, currentWindowLabel()) })
+      if (label) { try { await api.window.focus(label) } catch (e) { notify('error', 'Could not switch window', String((e as Error).message ?? e)) } }
+    } },
+    { id: 'window.closeOthers', title: 'Window: Close Other Windows', category: 'Window', run: async () => {
+      const me = currentWindowLabel()
+      const others = (await api.window.list()).filter((w) => w.label !== me)
+      if (!others.length) { notify('info', 'No other windows'); return }
+      // Each window runs its own close flow (Save All / Don't Save / Cancel for unsaved files), so none is lost silently.
+      await Promise.allSettled(others.map((w) => api.window.close(w.label)))
+    } },
     // ── views ──
     { id: 'view.explorer', title: 'Show Explorer', category: 'View', keybinding: 'mod+shift+e', run: () => { ui().set({ layout: 'editor' }); ui().showSidebar('explorer'); setTimeout(() => document.querySelector<HTMLElement>('[data-keyctx=explorer]')?.focus(), 30) } },
     { id: 'view.search', title: 'Show Search', category: 'View', run: () => { ui().set({ layout: 'editor' }); ui().showSidebar('search') } },
