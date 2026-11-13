@@ -213,6 +213,9 @@ fn write_script_at(path: &Path, content: &str) -> Result<()> {
 fn refresh_installed_script(app: &AppHandle) {
     let path = script_path();
     if !path.exists() { return; }
+    // Only a bundled build may refresh the user's launcher: a `tauri dev` binary would otherwise point `caret` at
+    // `target/debug/caret`, which stops working the moment the dev session ends.
+    if app_path().extension().and_then(|e| e.to_str()) != Some("app") { tracing::debug!(path = %app_path().display(), "cli: not a bundled build, leaving the installed launcher alone"); return; }
     if let Err(e) = write_script(&rendered_for(app)) { tracing::warn!(error = %e, "cli: could not refresh launcher script"); }
 }
 
