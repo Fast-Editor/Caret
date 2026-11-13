@@ -26,6 +26,15 @@ const apiBase = {
     ensureProjectDir: () => invoke<string>('workspace_ensure_project_dir'),
   },
 
+  /** Caret windows (docs/MULTI_WINDOW.md). The calling window is implicit in `api.workspace.*`. */
+  window: {
+    /** Open a new window, empty or showing `path`; resolves to its label (`w2`, `w3`, …). */
+    new: (path?: string | null) => invoke<string>('window_new', { path: path ?? null }),
+    list: () => invoke<T.WindowSummary[]>('window_list'),
+    focus: (label: string) => invoke<void>('window_focus', { label }),
+    close: (label: string) => invoke<void>('window_close', { label }),
+  },
+
   fs: {
     readDir: (path: string, showHidden = true) => invoke<T.DirEntry[]>('fs_read_dir', { path, showHidden }),
     readFile: (path: string, maxBytes?: number) => invoke<T.FileContent>('fs_read_file', { path, maxBytes }),

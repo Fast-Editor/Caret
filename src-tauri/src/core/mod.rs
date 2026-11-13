@@ -1,5 +1,6 @@
 pub mod settings;
 pub mod workspace;
+pub mod windows;
 pub mod diagnostics;
 pub mod ports;
 pub mod sessions;

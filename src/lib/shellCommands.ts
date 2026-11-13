@@ -8,6 +8,7 @@ import { THEMES } from '@/lib/theme'
 import { useUi } from '@/store/ui'
 import { useWorkspace } from '@/store/workspace'
 import { useSettings } from '@/store/settings'
+import { opensInNewWindow } from '@/lib/windowing'
 import { notify } from '@/store/notifications'
 import { pick, showDialog, confirm } from '@/components/dialogs'
 import { registerExplorerCommands } from '@/components/explorer'
@@ -23,19 +24,33 @@ export function registerShellCommands(): () => void {
   offs.push(registerCommands([
     // ── workspace / files ──
     { id: 'workspace.openFolder', title: 'Open Folder…', category: 'File', keybinding: 'mod+o', run: async (args) => {
-      let path = (args as { path?: string } | undefined)?.path
+      const a = args as { path?: string; newWindow?: boolean } | undefined
+      let path = a?.path
       if (!path) { const p = await openDialog({ directory: true, multiple: false, title: 'Open Folder' }); if (typeof p !== 'string') return; path = p }
-      try { await useWorkspace.getState().open(path); ui().set({ layout: 'editor', settingsOpen: false }); if (!ui().sidebarVisible) ui().showSidebar('explorer') } catch (e) { notify('error', 'Could not open folder', String((e as Error).message ?? e)) }
+      try {
+        // A window that already shows a folder opens the next one per `window.openFoldersIn`; an empty window opens in place.
+        const inNewWindow = a?.newWindow ?? opensInNewWindow(!!useWorkspace.getState().workspace, useSettings.getState().settings?.window.openFoldersIn)
+        if (inNewWindow) { await api.window.new(path); void useWorkspace.getState().refreshRecent().catch(() => {}); return }
+        await useWorkspace.getState().open(path); ui().set({ layout: 'editor', settingsOpen: false }); if (!ui().sidebarVisible) ui().showSidebar('explorer')
+      } catch (e) { notify('error', 'Could not open folder', String((e as Error).message ?? e)) }
+    } },
+    { id: 'workspace.openInNewWindow', title: 'Open Folder in New Window…', category: 'File', hidden: true, run: async (args) => {
+      let path = (args as { path?: string } | undefined)?.path
+      if (!path) { const p = await openDialog({ directory: true, multiple: false, title: 'Open Folder in New Window' }); if (typeof p !== 'string') return; path = p }
+      try { await api.window.new(path) } catch (e) { notify('error', 'Could not open a new window', String((e as Error).message ?? e)) }
     } },
     { id: 'workspace.closeFolder', title: 'Close Folder', category: 'File', run: async () => { await useWorkspace.getState().close() } },
     { id: 'workspace.openRecent', title: 'Open Recent…', category: 'File', run: async () => {
       const recent = useWorkspace.getState().recent.filter((r) => r.exists)
       if (!recent.length) { notify('info', 'No recent folders'); return }
+      // The picker reports the chosen item only, so the Alt-inverts-the-setting gesture is not available here yet.
       const id = await pick({ title: 'Open Recent', items: recent.map((r) => ({ id: r.path, label: r.name, description: r.path })) })
       if (id) await runCommand('workspace.openFolder', { path: id })
     } },
     { id: 'file.revealInFinder', title: 'Reveal Active File in Finder', category: 'File', run: async () => { const r = await runCommand<{ path?: string } | string | undefined>('editor.getActiveFile'); const p = typeof r === 'string' ? r : r?.path ?? useWorkspace.getState().workspace?.root; if (p) await api.app.showInFolder(p) } },
-    { id: 'file.newWindow', title: 'New Window', category: 'File', run: () => notify('info', 'Multiple windows are not available yet', 'Open another folder in this window via File → Open Folder.') },
+    { id: 'file.newWindow', title: 'New Window', category: 'File', run: async () => { try { await api.window.new(null) } catch (e) { notify('error', 'Could not open a new window', String((e as Error).message ?? e)) } } },
+    { id: 'window.list', title: 'List Windows', category: 'Window', hidden: true, run: () => api.window.list() },
+    { id: 'window.focus', title: 'Focus Window', category: 'Window', hidden: true, run: async (args) => { const label = (args as { label?: string } | undefined)?.label; if (label) await api.window.focus(label) } },
     // ── views ──
     { id: 'view.explorer', title: 'Show Explorer', category: 'View', keybinding: 'mod+shift+e', run: () => { ui().set({ layout: 'editor' }); ui().showSidebar('explorer'); setTimeout(() => document.querySelector<HTMLElement>('[data-keyctx=explorer]')?.focus(), 30) } },
     { id: 'view.search', title: 'Show Search', category: 'View', run: () => { ui().set({ layout: 'editor' }); ui().showSidebar('search') } },

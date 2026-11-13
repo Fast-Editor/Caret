@@ -3,7 +3,7 @@ use crate::error::Result;
 use crate::paths;
 use parking_lot::Mutex;
 use serde::Serialize;
-use tauri::{AppHandle, Manager, State};
+use tauri::{AppHandle, State};
 use tauri_plugin_opener::OpenerExt;
 
 #[derive(Debug, Clone, Serialize)]
@@ -54,7 +54,7 @@ pub fn app_show_in_folder(app: AppHandle, path: String) -> Result<()> {
 }
 #[tauri::command]
 pub fn app_open_devtools(app: AppHandle) -> Result<()> {
-    if let Some(w) = app.get_webview_window("main") { w.open_devtools(); }
+    if let Some(w) = crate::core::windows::focused_window(&app) { w.open_devtools(); }
     Ok(())
 }
 #[tauri::command]

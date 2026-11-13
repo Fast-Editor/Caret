@@ -469,7 +469,7 @@ export const useChat = create<ChatState>((set, get) => ({
       const name = workspaceRoot.split('/').filter(Boolean).pop() ?? workspaceRoot
       if (!window.confirm(`This thread belongs to "${name}" (${workspaceRoot}). Open that folder to continue it?`)) return
       set({ pendingSelect: id, revealTarget: messageId ? { sessionId: id, messageId } : null })
-      await runCommand('workspace.openFolder', { path: workspaceRoot }) // workspace-changed reloads the list, which selects `pendingSelect`
+      await runCommand('workspace.openFolder', { path: workspaceRoot, newWindow: false }) // this window's workspace-changed reloads the list, which selects `pendingSelect`
       return
     }
     set({ revealTarget: messageId ? { sessionId: id, messageId } : null })
