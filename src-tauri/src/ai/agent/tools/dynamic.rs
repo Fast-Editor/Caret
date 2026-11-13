@@ -5,6 +5,7 @@ use crate::ai::agent::policy::ToolEffect;
 use crate::core::ports::{self, McpToolDesc};
 use crate::error::{CaretError, Result};
 use serde_json::{json, Value};
+use std::path::Path;
 use std::sync::Arc;
 
 pub fn sanitize(s: &str) -> String { s.chars().map(|c| if c.is_ascii_alphanumeric() || c == '_' || c == '-' { c } else { '_' }).collect() }
@@ -25,7 +26,7 @@ impl Tool for McpTool {
         let Some(port) = ports::mcp() else { return Ok(ToolOutput::error("MCP is not available")) };
         let h = hooks::run(ctx.root.as_deref(), HookEvent::BeforeMcpExecution, json!({ "server": self.desc.server_id, "tool": self.desc.name, "input": input, "session_id": ctx.session_id })).await;
         if h.permission == HookPermission::Deny { return Ok(ToolOutput::error(format!("Blocked by hook{}", h.user_message.map(|m| format!(": {m}")).unwrap_or_default()))); }
-        let res = match port.call_tool(&self.desc.server_id, &self.desc.name, input).await { Ok(r) => r, Err(e) => return Ok(ToolOutput::error(format!("MCP tool failed: {}", e.message))) };
+        let res = match port.call_tool(ctx.root.as_deref(), &self.desc.server_id, &self.desc.name, input).await { Ok(r) => r, Err(e) => return Ok(ToolOutput::error(format!("MCP tool failed: {}", e.message))) };
         let mut text = String::new(); let mut images = vec![];
         for c in res.content {
             match c.r#type.as_str() {
@@ -40,9 +41,10 @@ impl Tool for McpTool {
     }
 }
 
-pub async fn mcp_tools() -> Vec<Arc<dyn Tool>> {
+/// The MCP tools available to a run in workspace `root` (the user's servers plus that folder's; `None`: user only).
+pub async fn mcp_tools(root: Option<&Path>) -> Vec<Arc<dyn Tool>> {
     let Some(port) = ports::mcp() else { return vec![] };
-    let descs = port.list_tools().await;
+    let descs = port.list_tools(root).await;
     // Trust-on-first-use pinning: records description/schema drift so the policy can demand a fresh approval.
     crate::sandbox::mcp_pins::check(&descs);
     descs.into_iter().filter(|t| t.enabled).map(|d| { let name = mcp_tool_name(&d.server_id, &d.name); Arc::new(McpTool { desc: d, name }) as Arc<dyn Tool> }).collect()

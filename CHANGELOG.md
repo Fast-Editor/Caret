@@ -14,6 +14,13 @@ All notable changes to Caret. The version here must match `package.json`, `src-t
   window. Per-folder scoping of Quick Open, the file watcher, LSP, git status and MCP across windows lands in the
   follow-up: in this release those background services follow the folder most recently opened in the focused
   window. See docs/MULTI_WINDOW.md.
+- Windows: language servers, the codebase index, MCP servers and agent worktree cleanup are per folder. Each starts
+  when the first window on a folder opens and stops when the last one leaves, so switching folders in one window no
+  longer stops the servers or cancels the index run of a folder another window still shows; two windows on one
+  folder share them. `lsp_status`, `lsp_diagnostics`, `index_*`, `mcp_*` answer for the calling window's folder
+  (an empty window sees user-scope MCP servers only), and LSP status/diagnostics, index status and MCP changes reach
+  only the windows showing that folder. Agent runs resolve MCP tools and codebase search against their thread's
+  workspace root rather than the focused window's.
 - Fixed: Go to Definition, Type Definition, Implementation and references that land in another file now open that
   file (Cmd+click on an import or a symbol included). Monaco can only move the caret inside the file it is showing;
   Caret never registered an editor opener, so every cross-file jump was silently dropped.

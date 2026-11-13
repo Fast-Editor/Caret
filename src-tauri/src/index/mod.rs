@@ -6,6 +6,7 @@ pub mod chunker;
 pub mod store;
 pub mod embeddings;
 pub mod hybrid;
+pub mod roots;
 pub mod manager;
 pub mod docs;
 pub mod commands;

@@ -50,6 +50,10 @@ impl DiagnosticsStore {
     pub fn all(&self) -> Vec<FileDiagnostics> {
         self.inner.iter().flat_map(|e| { let path = e.key().clone(); e.value().iter().map(move |kv| FileDiagnostics { uri: format!("file://{path}"), path: path.clone(), diagnostics: kv.value().clone(), server_id: kv.key().clone(), version: None }).collect::<Vec<_>>() }).collect()
     }
+    /// Diagnostics of files under `root` (what a window showing that folder lists).
+    pub fn under_root(&self, root: &std::path::Path) -> Vec<FileDiagnostics> {
+        self.all().into_iter().filter(|fd| std::path::Path::new(&fd.path).starts_with(root)).collect()
+    }
     /// Errors+warnings as compact text lines for prompts: `path:line:col: [severity] message`.
     pub fn summary(&self, paths: Option<&[String]>, max_lines: usize) -> String {
         let mut out = vec![];
@@ -62,5 +66,28 @@ impl DiagnosticsStore {
             }
         }
         out.join("\n")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    fn fd(path: &str, server: &str) -> FileDiagnostics {
+        let d = Diagnostic { range: LspRange { start: LspPosition { line: 0, character: 0 }, end: LspPosition { line: 0, character: 1 } }, severity: Some(1), code: None, source: None, message: "boom".into(), tags: None, related_information: None, code_description: None, data: None };
+        FileDiagnostics { uri: format!("file://{path}"), path: path.into(), diagnostics: vec![d], server_id: server.into(), version: None }
+    }
+
+    #[test]
+    fn under_root_keeps_only_files_inside_that_folder() {
+        let st = DiagnosticsStore::default();
+        st.publish(fd("/work/a/src/main.rs", "rust-1"));
+        st.publish(fd("/work/a/lib.ts", "ts-1"));
+        st.publish(fd("/work/ab/x.ts", "ts-2"));
+        st.publish(fd("/work/b/y.ts", "ts-3"));
+        let mut a: Vec<String> = st.under_root(std::path::Path::new("/work/a")).into_iter().map(|f| f.path).collect(); a.sort();
+        assert_eq!(a, vec!["/work/a/lib.ts".to_string(), "/work/a/src/main.rs".to_string()], "/work/ab is a sibling, not a child");
+        assert_eq!(st.under_root(std::path::Path::new("/work/b")).len(), 1);
+        assert!(st.under_root(std::path::Path::new("/work/c")).is_empty());
+        assert_eq!(st.all().len(), 4);
     }
 }

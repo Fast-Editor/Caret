@@ -125,8 +125,8 @@ impl Tool for CodebaseSearch {
         let q = arg_str(&input, &["query"]).ok_or_else(|| CaretError::invalid("query is required"))?.to_string();
         let prefix = input.get("target_directories").and_then(|v| v.as_array()).and_then(|a| a.first()).and_then(|v| v.as_str()).map(String::from);
         if let Some(port) = ports::codebase() {
-            if port.is_ready() {
-                let hits = port.search(&q, 12, prefix.as_deref()).await?;
+            if port.is_ready(ctx.root.as_deref()) {
+                let hits = port.search(ctx.root.as_deref(), &q, 12, prefix.as_deref()).await?;
                 if hits.is_empty() { return Ok(ToolOutput::text("No relevant code found in the index. Try grep_search with specific identifiers.")); }
                 let mut out = String::new();
                 for h in &hits { out.push_str(&format!("### {}:{}-{}{}\n```\n{}\n```\n\n", h.path, h.start_line, h.end_line, h.name.as_ref().map(|n| format!(" ({n})")).unwrap_or_default(), h.snippet.trim_end())); }

@@ -123,8 +123,9 @@ impl ToolRegistry {
     }
 }
 
-/// Build the active tool set for a turn: builtin (filtered by mode & settings) + MCP + browser tools.
-pub async fn active_tools(registry: &ToolRegistry, mode: &ModeSpec, settings: &Settings, is_subagent: bool) -> Vec<Arc<dyn Tool>> {
+/// Build the active tool set for a turn: builtin (filtered by mode & settings) + MCP (as seen from the session's
+/// workspace `root`) + browser tools.
+pub async fn active_tools(registry: &ToolRegistry, mode: &ModeSpec, settings: &Settings, is_subagent: bool, root: Option<&std::path::Path>) -> Vec<Arc<dyn Tool>> {
     let mut out: Vec<Arc<dyn Tool>> = vec![];
     let allowed = |name: &str, readonly: bool| match &mode.tools { ToolFilter::All => true, ToolFilter::Readonly => readonly, ToolFilter::Only { names } => names.iter().any(|n| n == name) };
     for t in registry.all() {
@@ -134,7 +135,7 @@ pub async fn active_tools(registry: &ToolRegistry, mode: &ModeSpec, settings: &S
         out.push(t.clone());
     }
     if settings.mcp.enabled && !matches!(mode.tools, ToolFilter::Readonly) {
-        for t in dynamic::mcp_tools().await { if allowed(t.name(), false) || matches!(mode.tools, ToolFilter::All) { out.push(t); } }
+        for t in dynamic::mcp_tools(root).await { if allowed(t.name(), false) || matches!(mode.tools, ToolFilter::All) { out.push(t); } }
     }
     if settings.beta.browser_tools && matches!(mode.tools, ToolFilter::All) { out.extend(dynamic::browser_tools()); }
     out

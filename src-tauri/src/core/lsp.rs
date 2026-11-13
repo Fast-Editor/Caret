@@ -1,9 +1,13 @@
 //! Language-server manager: spawns servers, relays JSON-RPC framing to the UI over a Channel,
 //! mirrors diagnostics into `DiagnosticsStore`, and answers simple server→client requests itself.
+//!
+//! Servers are per root (`config.id|root`); status and diagnostics go to the windows showing that root
+//! (`events::emit_for_root`), and a root's servers stop when its last window leaves (`servers_to_stop`).
 use crate::core::diagnostics::{DiagnosticsStore, FileDiagnostics};
 use crate::core::settings::{LspServerConfig, SettingsState};
+use crate::core::workspace::WorkspaceState;
 use crate::error::{CaretError, Result};
-use crate::events;
+use crate::events::{self, WorkspaceChange};
 use dashmap::DashMap;
 use parking_lot::{Mutex, RwLock};
 use serde::Serialize;
@@ -13,7 +17,7 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicI64, Ordering};
 use std::sync::Arc;
 use tauri::ipc::Channel;
-use tauri::{AppHandle, Listener, Manager, State};
+use tauri::{AppHandle, Manager, State};
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 
 #[derive(Debug, Clone, Serialize)]
@@ -102,10 +106,26 @@ impl LspServer {
 pub struct LspState { pub servers: DashMap<String, Arc<LspServer>>, by_key: DashMap<String, String> }
 
 impl LspState {
+    /// Every server of every root (sorted by name).
     pub fn statuses(&self) -> Vec<LspServerStatus> { let mut v: Vec<_> = self.servers.iter().map(|e| e.value().status()).collect(); v.sort_by(|a, b| a.name.cmp(&b.name)); v }
+    /// The servers of one root (what a window showing that root sees).
+    pub fn statuses_for_root(&self, root: &Path) -> Vec<LspServerStatus> {
+        let mut v: Vec<_> = self.servers.iter().filter(|e| e.value().root == root).map(|e| e.value().status()).collect();
+        v.sort_by(|a, b| a.name.cmp(&b.name));
+        v
+    }
 }
 
-fn broadcast(app: &AppHandle) { let st = app.state::<LspState>(); events::emit(app, events::LSP_STATUS, st.statuses()); }
+/// Send the status list of `root`'s servers to the windows showing that root.
+fn broadcast(app: &AppHandle, root: &Path) { let st = app.state::<LspState>(); events::emit_for_root(app, root, events::LSP_STATUS, st.statuses_for_root(root)); }
+
+/// Which servers a workspace change stops: those on the root that lost its last window (`last_for_prev_root`), none
+/// otherwise. A window switching between two folders that are both still shown elsewhere stops nothing.
+pub fn servers_to_stop(change: &WorkspaceChange, servers: impl IntoIterator<Item = (String, PathBuf)>) -> Vec<String> {
+    if !change.last_for_prev_root { return vec![]; }
+    let Some(prev) = change.prev_root.as_deref().map(Path::new) else { return vec![] };
+    servers.into_iter().filter(|(_, root)| root.as_path() == prev).map(|(id, _)| id).collect()
+}
 
 pub fn uri_to_path(uri: &str) -> Option<String> {
     if let Ok(u) = url::Url::parse(uri) { if u.scheme() == "file" { return u.to_file_path().ok().map(|p| p.to_string_lossy().to_string()); } }
@@ -144,7 +164,7 @@ async fn handle_server_message(app: &AppHandle, srv: &Arc<LspServer>, mut msg: V
                     if let Some(path) = uri_to_path(&uri) {
                         let fd = FileDiagnostics { uri: uri.clone(), path, diagnostics: diags, server_id: srv.id.clone(), version: p.get("version").and_then(|v| v.as_i64()) };
                         app.state::<DiagnosticsStore>().publish(fd.clone());
-                        events::emit(app, events::LSP_DIAGNOSTICS, fd);
+                        events::emit_for_root(app, &srv.root, events::LSP_DIAGNOSTICS, fd);
                     }
                 }
             }
@@ -184,11 +204,11 @@ async fn spawn_server(app: AppHandle, config: LspServerConfig, root: PathBuf, on
     // minimal PATH, so plain `which` misses user-installed servers like rust-analyzer or jdtls.
     let exe = resolve_server_command(&config.command, Some(&root)).ok_or_else(|| CaretError::new("missing", format!("{} not found on PATH{}", config.command, config.install_hint.as_ref().map(|h| format!(". Install: {h}")).unwrap_or_default())));
     let make = |state: &str, error: Option<String>, pid, stdin, child| Arc::new(LspServer { id: id.clone(), config: config.clone(), root: root.clone(), stdin: tokio::sync::Mutex::new(stdin), child: tokio::sync::Mutex::new(child), state: RwLock::new(state.into()), error: RwLock::new(error), pid, channel: RwLock::new(on_message.clone()), stderr_tail: Mutex::new(VecDeque::new()), internal_id: AtomicI64::new(1) });
-    let exe = match exe { Ok(e) => e, Err(e) => { let srv = make("missing", Some(e.message.clone()), None, None, None); st.servers.insert(id.clone(), srv.clone()); st.by_key.insert(key, id.clone()); broadcast(&app); return Ok(srv); } };
+    let exe = match exe { Ok(e) => e, Err(e) => { let srv = make("missing", Some(e.message.clone()), None, None, None); st.servers.insert(id.clone(), srv.clone()); st.by_key.insert(key, id.clone()); broadcast(&app, &root); return Ok(srv); } };
     let mut cmd = tokio::process::Command::new(&exe);
     cmd.args(&config.args).current_dir(&root).env("PATH", crate::acp::process::augmented_path()).stdin(std::process::Stdio::piped()).stdout(std::process::Stdio::piped()).stderr(std::process::Stdio::piped()).kill_on_drop(true);
     if let Some(env) = &config.env { for (k, v) in env { cmd.env(k, v); } }
-    let mut child = match cmd.spawn() { Ok(c) => c, Err(e) => { let srv = make("error", Some(format!("failed to start {}: {e}", config.command)), None, None, None); st.servers.insert(id.clone(), srv.clone()); st.by_key.insert(key, id.clone()); broadcast(&app); return Ok(srv); } };
+    let mut child = match cmd.spawn() { Ok(c) => c, Err(e) => { let srv = make("error", Some(format!("failed to start {}: {e}", config.command)), None, None, None); st.servers.insert(id.clone(), srv.clone()); st.by_key.insert(key, id.clone()); broadcast(&app, &root); return Ok(srv); } };
     let pid = child.id();
     let stdin = child.stdin.take();
     let stdout = child.stdout.take();
@@ -196,7 +216,7 @@ async fn spawn_server(app: AppHandle, config: LspServerConfig, root: PathBuf, on
     let srv = make("running", None, pid, stdin, Some(child));
     st.servers.insert(id.clone(), srv.clone());
     st.by_key.insert(key.clone(), id.clone());
-    broadcast(&app);
+    broadcast(&app, &root);
     tracing::info!(server = %config.name, id = %id, pid = ?pid, root = %root.display(), "lsp server started");
     // stderr tail
     if let Some(err) = stderr {
@@ -226,7 +246,7 @@ async fn spawn_server(app: AppHandle, config: LspServerConfig, root: PathBuf, on
             let _ = s.channel.read().send(json!({"jsonrpc":"2.0","method":"$/caret/exit","params":{"serverId": s.id, "code": code}}));
             let st = app2.state::<LspState>();
             st.by_key.remove(&key);
-            broadcast(&app2);
+            broadcast(&app2, &s.root);
             tracing::info!(server = %s.config.name, ?code, "lsp server exited");
         });
     }
@@ -247,19 +267,22 @@ pub async fn stop_server(app: &AppHandle, server_id: &str) {
     }
     *srv.state.write() = "stopped".into();
     app.state::<DiagnosticsStore>().clear_server(server_id);
-    broadcast(app);
+    broadcast(app, &srv.root);
 }
 
+/// Stop a root's servers when its last window leaves it (a window switching folders or closing). Roots that are
+/// still shown by another window keep their servers; windows that join a root reuse them through `lsp_start`.
 pub fn init(app: &AppHandle) {
-    let h = app.clone();
-    app.listen(events::WORKSPACE_CHANGED, move |_| {
-        let h2 = h.clone();
+    events::on_workspace_change(app, |app, change| {
+        let ids = servers_to_stop(&change, app.state::<LspState>().servers.iter().map(|e| (e.key().clone(), e.value().root.clone())));
+        if ids.is_empty() { return; }
+        let h = app.clone();
+        let prev = change.prev_root.clone().unwrap_or_default();
         tauri::async_runtime::spawn(async move {
             let t0 = std::time::Instant::now();
-            let ids: Vec<String> = h2.state::<LspState>().servers.iter().map(|e| e.key().clone()).collect();
             let n = ids.len();
-            for id in ids { stop_server(&h2, &id).await; }
-            if n > 0 { tracing::info!(servers = n, ms = t0.elapsed().as_millis() as u64, "lsp servers stopped for workspace change"); }
+            for id in ids { stop_server(&h, &id).await; }
+            tracing::info!(servers = n, root = %prev, ms = t0.elapsed().as_millis() as u64, "lsp servers stopped: last window left the folder");
         });
     });
 }
@@ -326,19 +349,29 @@ pub async fn lsp_send(st: State<'_, LspState>, server_id: String, message: Value
     srv.write(&message).await
 }
 
+/// The servers of the calling window's folder; empty for a window without a folder.
 #[tauri::command(async)]
-pub fn lsp_status(st: State<'_, LspState>) -> Result<Vec<LspServerStatus>> { Ok(st.statuses()) }
+pub fn lsp_status(st: State<'_, LspState>, ws: State<'_, WorkspaceState>, window: tauri::Window) -> Result<Vec<LspServerStatus>> {
+    Ok(ws.root_for(window.label()).map(|r| st.statuses_for_root(&r)).unwrap_or_default())
+}
 
+/// Diagnostics of files under the calling window's folder; every file when the window has no folder (loose files).
 #[tauri::command(async)]
-pub fn lsp_diagnostics(store: State<'_, DiagnosticsStore>) -> Result<Vec<FileDiagnostics>> { Ok(store.all()) }
+pub fn lsp_diagnostics(store: State<'_, DiagnosticsStore>, ws: State<'_, WorkspaceState>, window: tauri::Window) -> Result<Vec<FileDiagnostics>> {
+    Ok(match ws.root_for(window.label()) { Some(r) => store.under_root(&r), None => store.all() })
+}
 
 #[tauri::command(async)]
 pub fn lsp_diagnostics_for(store: State<'_, DiagnosticsStore>, path: String) -> Result<Vec<FileDiagnostics>> { Ok(store.for_path(&path)) }
 
+/// UI-computed diagnostics (Monaco's TS worker) for a file; relayed to every window on the same folder.
 #[tauri::command]
-pub fn lsp_report_diagnostics(app: AppHandle, store: State<'_, DiagnosticsStore>, diags: FileDiagnostics) -> Result<()> {
+pub fn lsp_report_diagnostics(app: AppHandle, store: State<'_, DiagnosticsStore>, ws: State<'_, WorkspaceState>, window: tauri::Window, diags: FileDiagnostics) -> Result<()> {
     store.publish(diags.clone());
-    events::emit(&app, events::LSP_DIAGNOSTICS, diags);
+    match ws.root_for(window.label()) {
+        Some(root) => events::emit_for_root(&app, &root, events::LSP_DIAGNOSTICS, diags),
+        None => events::emit_to(&app, window.label(), events::LSP_DIAGNOSTICS, diags),
+    }
     Ok(())
 }
 
@@ -397,6 +430,47 @@ mod tests {
         let mut ok = crate::core::settings::default_lsp_servers().into_iter().find(|c| c.id == "typescript").unwrap();
         ok.command = "/bin/sh".into();
         assert_eq!(with_defaults(ok).command, "/bin/sh");
+    }
+
+    fn change(prev_root: Option<&str>, new_root: Option<&str>, last_for_prev_root: bool) -> WorkspaceChange {
+        WorkspaceChange { label: "w2".into(), info: new_root.map(|r| crate::core::workspace::info_for(Path::new(r))), prev_root: prev_root.map(String::from), first_for_root: new_root.is_some(), last_for_prev_root }
+    }
+    fn servers() -> Vec<(String, PathBuf)> {
+        vec![("ts-a".into(), PathBuf::from("/work/a")), ("rust-a".into(), PathBuf::from("/work/a")), ("ts-b".into(), PathBuf::from("/work/b"))]
+    }
+
+    #[test]
+    fn stops_only_the_servers_of_a_root_whose_last_window_left() {
+        // the last window on /work/a switches to /work/c: a's servers stop, b's stay
+        let mut ids = servers_to_stop(&change(Some("/work/a"), Some("/work/c"), true), servers()); ids.sort();
+        assert_eq!(ids, vec!["rust-a".to_string(), "ts-a".to_string()]);
+        // the last window on /work/a closes its folder
+        let mut ids = servers_to_stop(&change(Some("/work/a"), None, true), servers()); ids.sort();
+        assert_eq!(ids, vec!["rust-a".to_string(), "ts-a".to_string()]);
+        // a trailing slash in the recorded root does not matter
+        assert_eq!(servers_to_stop(&change(Some("/work/b/"), None, true), servers()), vec!["ts-b".to_string()]);
+    }
+
+    #[test]
+    fn keeps_servers_while_another_window_still_shows_the_root() {
+        assert!(servers_to_stop(&change(Some("/work/a"), Some("/work/c"), false), servers()).is_empty(), "another window still shows /work/a");
+        assert!(servers_to_stop(&change(None, Some("/work/a"), false), servers()).is_empty(), "an empty window opening a folder stops nothing");
+        assert!(servers_to_stop(&change(Some("/work/zzz"), None, true), servers()).is_empty(), "a root without servers");
+        assert!(servers_to_stop(&change(None, None, true), servers()).is_empty(), "no previous root even if the flag is set");
+    }
+
+    #[test]
+    fn statuses_for_root_filters_by_server_root() {
+        let st = LspState::default();
+        let mk = |id: &str, root: &str| Arc::new(LspServer { id: id.into(), config: LspServerConfig { id: id.into(), name: id.into(), ..Default::default() }, root: PathBuf::from(root), stdin: tokio::sync::Mutex::new(None), child: tokio::sync::Mutex::new(None), state: RwLock::new("running".into()), error: RwLock::new(None), pid: None, channel: RwLock::new(Channel::new(|_| Ok(()))), stderr_tail: Mutex::new(VecDeque::new()), internal_id: AtomicI64::new(1) });
+        st.servers.insert("a1".into(), mk("a1", "/work/a"));
+        st.servers.insert("b1".into(), mk("b1", "/work/b"));
+        st.servers.insert("a2".into(), mk("a2", "/work/a"));
+        let a: Vec<String> = st.statuses_for_root(Path::new("/work/a")).into_iter().map(|s| s.server_id).collect();
+        assert_eq!(a, vec!["a1".to_string(), "a2".to_string()]);
+        assert_eq!(st.statuses_for_root(Path::new("/work/b")).len(), 1);
+        assert!(st.statuses_for_root(Path::new("/work/c")).is_empty());
+        assert_eq!(st.statuses().len(), 3, "the unfiltered list still has every server");
     }
 
     #[test]

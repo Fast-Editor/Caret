@@ -4,16 +4,19 @@ use crate::error::Result;
 use once_cell::sync::OnceCell;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use std::path::Path;
 use std::sync::Arc;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CodeHit { pub path: String, pub start_line: u32, pub end_line: u32, pub score: f32, pub snippet: String, #[serde(default)] pub name: Option<String> }
 
+/// Codebase search is per workspace root (the folder the asking window or agent session works in); `root: None`
+/// (a scratch thread, headless) has no index. Docs are user-global.
 #[async_trait::async_trait]
 pub trait CodebaseSearchPort: Send + Sync {
-    async fn search(&self, query: &str, limit: usize, path_prefix: Option<&str>) -> Result<Vec<CodeHit>>;
-    fn is_ready(&self) -> bool;
+    async fn search(&self, root: Option<&Path>, query: &str, limit: usize, path_prefix: Option<&str>) -> Result<Vec<CodeHit>>;
+    fn is_ready(&self, root: Option<&Path>) -> bool;
     async fn search_docs(&self, query: &str, doc_ids: Option<&[String]>, limit: usize) -> Result<Vec<DocHit>>;
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -33,12 +36,14 @@ pub struct McpContent { pub r#type: String, #[serde(default)] pub text: Option<S
 #[serde(rename_all = "camelCase")]
 pub struct McpCallResult { pub content: Vec<McpContent>, pub is_error: bool }
 
+/// MCP servers as seen from a workspace root: the user's servers plus that root's `.caret/mcp.json` servers
+/// (`root: None`: the user's only). Agent runs pass their session's `workspace_root`.
 #[async_trait::async_trait]
 pub trait McpPort: Send + Sync {
-    async fn list_tools(&self) -> Vec<McpToolDesc>;
-    async fn call_tool(&self, server_id: &str, name: &str, args: Value) -> Result<McpCallResult>;
-    async fn list_resources(&self) -> Vec<McpResourceDesc>;
-    async fn read_resource(&self, server_id: &str, uri: &str) -> Result<McpCallResult>;
+    async fn list_tools(&self, root: Option<&Path>) -> Vec<McpToolDesc>;
+    async fn call_tool(&self, root: Option<&Path>, server_id: &str, name: &str, args: Value) -> Result<McpCallResult>;
+    async fn list_resources(&self, root: Option<&Path>) -> Vec<McpResourceDesc>;
+    async fn read_resource(&self, root: Option<&Path>, server_id: &str, uri: &str) -> Result<McpCallResult>;
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

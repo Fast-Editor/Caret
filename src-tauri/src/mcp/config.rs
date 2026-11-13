@@ -106,21 +106,59 @@ pub fn file_for(scope: &str, root: Option<&Path>) -> Option<PathBuf> {
     }
 }
 
-/// All configured servers (project overrides user on name clash is NOT applied — ids are source-qualified).
-pub fn load_all(root: Option<&Path>, use_cursor_compat: bool) -> Vec<McpServerConfig> {
+/// Scopes that live in a workspace folder (`.caret/mcp.json`, `.cursor/mcp.json`) as opposed to the user's home.
+pub fn is_workspace_scope(scope: &str) -> bool { matches!(scope, "project" | "cursor-project") }
+/// The scope part of a source-qualified server id (`project:fs` → `project`; a bare id counts as `user`).
+pub fn scope_of(id: &str) -> &str { id.split_once(':').map(|(s, _)| s).unwrap_or("user") }
+
+fn load_scopes(scopes: &[&str], root: Option<&Path>) -> Vec<McpServerConfig> {
     let mut out = vec![];
-    let mut scopes = vec!["project", "user"];
-    if use_cursor_compat { scopes.extend(["cursor-project", "cursor-user"]); }
     for scope in scopes {
         if let Some(p) = file_for(scope, root) { if let Ok(c) = std::fs::read_to_string(&p) { out.extend(parse_file(&c, scope, root)); } }
     }
+    out
+}
+
+/// Servers from the user's files (`~/.caret/mcp.json`, plus `~/.cursor/mcp.json` with Cursor compat). Caret-side
+/// enable/disable state is not applied; see `apply_state`.
+pub fn load_user(use_cursor_compat: bool) -> Vec<McpServerConfig> {
+    let mut scopes = vec!["user"];
+    if use_cursor_compat { scopes.push("cursor-user"); }
+    load_scopes(&scopes, None)
+}
+
+/// Servers from one workspace's files (`<root>/.caret/mcp.json`, plus `<root>/.cursor/mcp.json` with Cursor compat),
+/// with `${workspaceFolder}` expanded against that root. Ids are `project:<name>`, so two roots that both define
+/// `fs` produce the same id: callers keep one set per root. State is not applied; see `apply_state`.
+pub fn load_workspace(root: &Path, use_cursor_compat: bool) -> Vec<McpServerConfig> {
+    let mut scopes = vec!["project"];
+    if use_cursor_compat { scopes.push("cursor-project"); }
+    load_scopes(&scopes, Some(root))
+}
+
+/// Apply the Caret-side enable/disable state (`~/.caret/mcp-state.json`, keyed by id) to loaded configs.
+pub fn apply_state(configs: &mut [McpServerConfig]) {
     let st = load_state();
-    for s in &mut out {
+    for s in configs.iter_mut() {
         if let Some(x) = st.get(&s.id) {
             if let Some(en) = x.enabled { s.enabled = en; }
             if !x.disabled_tools.is_empty() { let mut d = s.disabled_tools.clone().unwrap_or_default(); for t in &x.disabled_tools { if !d.contains(t) { d.push(t.clone()); } } s.disabled_tools = Some(d); }
         }
     }
+}
+
+/// Every server visible from `root`: the user's plus that workspace's (none when `root` is `None`), with state
+/// applied. Project overrides user on name clash is NOT applied — ids are source-qualified.
+pub fn load_all(root: Option<&Path>, use_cursor_compat: bool) -> Vec<McpServerConfig> {
+    let mut out = merge_visible(load_user(use_cursor_compat), root.map(|r| load_workspace(r, use_cursor_compat)).unwrap_or_default());
+    apply_state(&mut out);
+    out
+}
+
+/// The merge rule behind `load_all`: workspace servers first (the order the UI lists them), then the user's.
+pub fn merge_visible(user: Vec<McpServerConfig>, workspace: Vec<McpServerConfig>) -> Vec<McpServerConfig> {
+    let mut out = workspace;
+    out.extend(user);
     out
 }
 
@@ -217,5 +255,48 @@ mod tests {
         remove_server("project:demo", Some(root)).unwrap();
         let content = std::fs::read_to_string(root.join(".caret/mcp.json")).unwrap();
         assert!(parse_file(&content, "project", Some(root)).is_empty());
+    }
+
+    fn write_project(root: &Path, servers: &str) {
+        std::fs::create_dir_all(root.join(".caret")).unwrap();
+        std::fs::write(root.join(".caret/mcp.json"), format!(r#"{{"mcpServers": {{{servers}}}}}"#)).unwrap();
+    }
+    fn user_cfg(name: &str) -> McpServerConfig {
+        McpServerConfig { id: format!("user:{name}"), name: name.into(), transport: McpTransport::Stdio, command: Some("u".into()), args: None, env: None, url: None, headers: None, enabled: true, cwd: None, source: "user".into(), disabled_tools: None }
+    }
+
+    #[test]
+    fn workspace_configs_are_loaded_per_root_and_merged_with_the_user_layer() {
+        let a = tempfile::tempdir().unwrap(); let b = tempfile::tempdir().unwrap();
+        write_project(a.path(), r#""fs": {"command": "npx", "args": ["${workspaceFolder}"]}, "only-a": {"command": "a"}"#);
+        write_project(b.path(), r#""fs": {"command": "node", "args": ["${workspaceFolder}"]}"#);
+        let wa = load_workspace(a.path(), false);
+        let wb = load_workspace(b.path(), false);
+        let names = |v: &[McpServerConfig]| { let mut n: Vec<String> = v.iter().map(|c| c.id.clone()).collect(); n.sort(); n };
+        assert_eq!(names(&wa), vec!["project:fs".to_string(), "project:only-a".to_string()]);
+        assert_eq!(names(&wb), vec!["project:fs".to_string()], "b does not see a's servers");
+        // the same id in two roots resolves against its own root
+        let fs_a = wa.iter().find(|c| c.id == "project:fs").unwrap(); let fs_b = wb.iter().find(|c| c.id == "project:fs").unwrap();
+        assert_eq!(fs_a.command.as_deref(), Some("npx")); assert_eq!(fs_b.command.as_deref(), Some("node"));
+        assert_eq!(fs_a.args.as_ref().unwrap()[0], a.path().to_string_lossy()); assert_eq!(fs_b.args.as_ref().unwrap()[0], b.path().to_string_lossy());
+        assert!(wa.iter().all(|c| is_workspace_scope(&c.source)));
+        // a root without a config contributes nothing
+        let empty = tempfile::tempdir().unwrap();
+        assert!(load_workspace(empty.path(), false).is_empty());
+        // merge: the user layer is shared, the workspace layer is the root's own
+        let user = vec![user_cfg("github")];
+        let va = merge_visible(user.clone(), wa.clone()); let vb = merge_visible(user.clone(), wb.clone());
+        assert_eq!(names(&va), vec!["project:fs".to_string(), "project:only-a".to_string(), "user:github".to_string()]);
+        assert_eq!(names(&vb), vec!["project:fs".to_string(), "user:github".to_string()]);
+        assert_eq!(names(&merge_visible(user, vec![])), vec!["user:github".to_string()], "an empty window sees only user servers");
+    }
+
+    #[test]
+    fn scope_helpers() {
+        assert!(is_workspace_scope("project") && is_workspace_scope("cursor-project"));
+        assert!(!is_workspace_scope("user") && !is_workspace_scope("cursor-user") && !is_workspace_scope("other"));
+        assert_eq!(scope_of("project:fs"), "project");
+        assert_eq!(scope_of("cursor-user:x:y"), "cursor-user");
+        assert_eq!(scope_of("legacy"), "user");
     }
 }
