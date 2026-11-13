@@ -10,7 +10,7 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Arc;
 use tauri::ipc::Channel;
-use tauri::{AppHandle, Manager, State};
+use tauri::State;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
@@ -179,15 +179,16 @@ fn run_search(roots: Vec<PathBuf>, q: SearchQuery, on_event: Channel<SearchStrea
     send(SearchStreamEvent::Done { total: t, files: files.load(Ordering::Relaxed), limited: limited.load(Ordering::Relaxed) || t >= max, elapsed_ms: t0.elapsed().as_millis() as u64 });
 }
 
-fn roots_for(app: &AppHandle, q: &SearchQuery) -> Result<Vec<PathBuf>> {
-    let ws = app.state::<WorkspaceState>().root();
-    if let Some(rs) = q.roots.as_ref().filter(|r| !r.is_empty()) { return Ok(rs.iter().map(|r| crate::paths::resolve(ws.as_deref(), r)).collect()); }
-    ws.map(|r| vec![r]).ok_or_else(CaretError::no_workspace)
+/// The folders a query covers: `query.roots` (relative ones resolved against the window's folder) or the window's
+/// folder itself; an empty window has nothing to search.
+fn roots_for(ws: Option<&Path>, q: &SearchQuery) -> Result<Vec<PathBuf>> {
+    if let Some(rs) = q.roots.as_ref().filter(|r| !r.is_empty()) { return Ok(rs.iter().map(|r| crate::paths::resolve(ws, r)).collect()); }
+    ws.map(|r| vec![r.to_path_buf()]).ok_or_else(CaretError::no_workspace)
 }
 
 #[tauri::command]
-pub async fn search_text(app: AppHandle, st: State<'_, SearchState>, query: SearchQuery, on_event: Channel<SearchStreamEvent>) -> Result<String> {
-    let roots = roots_for(&app, &query)?;
+pub async fn search_text(ws: State<'_, WorkspaceState>, st: State<'_, SearchState>, window: tauri::Window, query: SearchQuery, on_event: Channel<SearchStreamEvent>) -> Result<String> {
+    let roots = roots_for(ws.root_for(window.label()).as_deref(), &query)?;
     let id = uuid::Uuid::new_v4().to_string();
     let cancel = Arc::new(AtomicBool::new(false));
     st.active.insert(id.clone(), cancel.clone());
@@ -235,16 +236,25 @@ pub fn replace_in_files(roots: &[PathBuf], req: &ReplaceRequest, restrict: Optio
 }
 
 #[tauri::command]
-pub async fn search_replace(app: AppHandle, req: ReplaceRequest) -> Result<ReplaceResult> {
-    let roots = roots_for(&app, &req.query)?;
-    let ws = app.state::<WorkspaceState>().root();
-    let restrict: Option<Vec<PathBuf>> = req.paths.as_ref().map(|ps| ps.iter().map(|p| crate::paths::resolve(ws.as_deref(), p)).collect());
+pub async fn search_replace(ws: State<'_, WorkspaceState>, window: tauri::Window, req: ReplaceRequest) -> Result<ReplaceResult> {
+    let root = ws.root_for(window.label());
+    let roots = roots_for(root.as_deref(), &req.query)?;
+    let restrict: Option<Vec<PathBuf>> = req.paths.as_ref().map(|ps| ps.iter().map(|p| crate::paths::resolve(root.as_deref(), p)).collect());
     tokio::task::spawn_blocking(move || replace_in_files(&roots, &req, restrict.as_deref())).await.map_err(|e| CaretError::internal(e.to_string()))?
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn roots_follow_the_window_root() {
+        let q = SearchQuery::default();
+        assert_eq!(roots_for(None, &q).unwrap_err().code, "no_workspace", "an empty window has nothing to search");
+        assert_eq!(roots_for(Some(Path::new("/w")), &q).unwrap(), vec![PathBuf::from("/w")]);
+        let scoped = SearchQuery { roots: Some(vec!["src".into(), "/abs".into()]), ..Default::default() };
+        assert_eq!(roots_for(Some(Path::new("/w")), &scoped).unwrap(), vec![PathBuf::from("/w/src"), PathBuf::from("/abs")], "relative roots resolve against the window's folder");
+        assert_eq!(roots_for(None, &SearchQuery { roots: Some(vec![]), ..Default::default() }).unwrap_err().code, "no_workspace", "an empty list means the window's folder");
+    }
     fn fixture() -> tempfile::TempDir {
         let d = tempfile::tempdir().unwrap();
         std::fs::create_dir_all(d.path().join("src")).unwrap();
