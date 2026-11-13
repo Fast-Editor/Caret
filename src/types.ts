@@ -18,6 +18,8 @@ export interface AppInfo {
 export interface ProcessStats { rssBytes: number; cpuPercent: number; threads: number; uptimeSecs: number; totalMemoryBytes: number }
 export interface WorkspaceInfo { root: string; name: string; isGitRepo: boolean; hasCaretDir: boolean; hasCursorDir: boolean }
 export interface RecentWorkspace { path: string; name: string; lastOpened: number; exists: boolean }
+/** One open Caret window (`window_list`); `root`/`name` are null for an empty window. */
+export interface WindowSummary { label: string; root: string | null; name: string | null; focused: boolean }
 export interface Notification {
   id: string; level: 'info' | 'warn' | 'error' | 'success'; title: string; message?: string
   actions?: { id: string; label: string }[]; timeoutMs?: number; source?: string
@@ -203,6 +205,12 @@ export interface Settings {
   worktrees: WorktreeSettings
   orchestrator: OrchestratorSettings
   remote: RemoteSettings
+  window: WindowSettings
+}
+/** Mirrors `WindowSettings` in src-tauri/src/core/settings.rs (docs/MULTI_WINDOW.md). */
+export interface WindowSettings {
+  /** Where Open Folder / Open Recent put a folder when this window already shows one; an empty window always opens in place. */
+  openFoldersIn: 'new' | 'current'
 }
 export interface RouterSettings { enabled: boolean; source: 'npm' | 'bundled'; overrides: Record<string, string>; excludedModels: string[]; stickySessions: boolean; routeSingleShot: boolean; tpmLimit?: number; embeddingsProviderId?: string }
 export type RouterTier = 'simple' | 'medium' | 'complex' | 'reasoning'

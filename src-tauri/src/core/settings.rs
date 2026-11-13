@@ -479,6 +479,16 @@ impl Default for RemoteSettings {
     fn default() -> Self { Self { enabled: false, host: "127.0.0.1".into(), port: 17430 } }
 }
 
+/// Multiple windows (docs/MULTI_WINDOW.md).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase", default)]
+pub struct WindowSettings {
+    /// Where Open Folder / Open Recent put a folder when the window already shows one: `"new"` (a new window) or
+    /// `"current"` (replace). An empty window always opens the folder in place.
+    pub open_folders_in: String,
+}
+impl Default for WindowSettings { fn default() -> Self { Self { open_folders_in: "new".into() } } }
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
 pub struct Settings {
@@ -507,10 +517,11 @@ pub struct Settings {
     pub worktrees: WorktreeSettings,
     pub orchestrator: OrchestratorSettings,
     pub remote: RemoteSettings,
+    pub window: WindowSettings,
 }
 impl Default for Settings {
     fn default() -> Self {
-        Self { providers: default_providers(), models: default_models(), tab: Default::default(), agent: Default::default(), indexing: Default::default(), ui: Default::default(), privacy: Default::default(), general: Default::default(), user_rules: String::new(), lsp: Default::default(), mcp: Default::default(), custom_modes: vec![], beta: Default::default(), keybindings: BTreeMap::new(), verify: Default::default(), sandbox: Default::default(), acp: Default::default(), terminal: Default::default(), router: Default::default(), notifications: Default::default(), chat: Default::default(), usage: Default::default(), worktrees: Default::default(), orchestrator: Default::default(), remote: Default::default() }
+        Self { providers: default_providers(), models: default_models(), tab: Default::default(), agent: Default::default(), indexing: Default::default(), ui: Default::default(), privacy: Default::default(), general: Default::default(), user_rules: String::new(), lsp: Default::default(), mcp: Default::default(), custom_modes: vec![], beta: Default::default(), keybindings: BTreeMap::new(), verify: Default::default(), sandbox: Default::default(), acp: Default::default(), terminal: Default::default(), router: Default::default(), notifications: Default::default(), chat: Default::default(), usage: Default::default(), worktrees: Default::default(), orchestrator: Default::default(), remote: Default::default(), window: Default::default() }
     }
 }
 

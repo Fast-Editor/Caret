@@ -4,6 +4,7 @@
   "description": "Default capabilities for Caret windows",
   "windows": [
     "main",
+    "w*",
     "browser-*",
     "agents"
   ],

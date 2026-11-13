@@ -12,6 +12,7 @@ import { runCommand } from '@/lib/commands'
 import { useSettings } from '@/store/settings'
 import { useWorkspace } from '@/store/workspace'
 import { languageForPath, isImagePath } from '@/lib/languages'
+import { currentWindowLabel, readSession, sessionKey } from '@/lib/windowing'
 import type { RecentEdit, FileContent, FsChangeEvent } from '@/types'
 
 export type TabKind = 'file' | 'diff' | 'settings' | 'welcome' | 'plan' | 'browser' | 'image' | 'markdown-preview' | 'review' | 'keybindings' | 'untitled'
@@ -373,7 +374,9 @@ export function initEditorStore(): void {
   if (useWorkspace.getState().workspace?.root) restoreSession(useWorkspace.getState().workspace!.root)
 }
 
-const sessionKey = (root: string) => `caret.editor.session.${root}`
+// Sessions are keyed per folder *and* window so two windows on one folder keep separate tab sets (docs/MULTI_WINDOW.md).
+let windowLabelCache: string | null = null
+const windowLabel = () => (windowLabelCache ??= currentWindowLabel())
 let persistTimer: ReturnType<typeof setTimeout> | null = null
 function persistSession() {
   if (persistTimer) return
@@ -382,12 +385,12 @@ function persistSession() {
     const root = useWorkspace.getState().workspace?.root; if (!root) return
     const s = useEditor.getState()
     const data = { groups: s.groups.map((g) => ({ tabs: g.tabs.filter((t) => t.kind === 'file' && t.path).map((t) => ({ path: t.path, pinned: t.pinned, preview: t.preview })), active: g.tabs.find((t) => t.id === g.activeTabId)?.path })), activeGroup: s.groups.findIndex((g) => g.id === s.activeGroupId) }
-    try { localStorage.setItem(sessionKey(root), JSON.stringify(data)) } catch { /* quota */ }
+    try { localStorage.setItem(sessionKey(root, windowLabel()), JSON.stringify(data)) } catch { /* quota */ }
   }, 500)
 }
 async function restoreSession(root: string) {
-  let data: { groups: { tabs: { path: string; pinned?: boolean; preview?: boolean }[]; active?: string }[]; activeGroup: number } | null = null
-  try { data = JSON.parse(localStorage.getItem(sessionKey(root)) ?? 'null') } catch { data = null }
+  type Saved = { groups: { tabs: { path: string; pinned?: boolean; preview?: boolean }[]; active?: string }[]; activeGroup: number }
+  const data = readSession<Saved>(localStorage, root, windowLabel()) // falls back to the pre-multi-window `${root}` key
   if (!data?.groups?.length) return
   const st = useEditor.getState()
   for (let gi = 0; gi < Math.min(3, data.groups.length); gi++) {

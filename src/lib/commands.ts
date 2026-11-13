@@ -88,7 +88,10 @@ export interface CommandArgs {
   'editor.openPlan': { path: string }
   'editor.openBrowser': { url?: string; tabId?: string } | undefined
   'git.openDiff': { path: string; staged?: boolean; base?: string }
-  'workspace.openFolder': { path?: string } | undefined
+  /** `newWindow` overrides the `window.openFoldersIn` routing (an empty window always opens in place). */
+  'workspace.openFolder': { path?: string; newWindow?: boolean } | undefined
+  'workspace.openInNewWindow': { path?: string } | undefined
+  'window.focus': { label: string }
 }
 export function run<K extends keyof CommandArgs>(id: K, args: CommandArgs[K]): Promise<unknown> { return runCommand(id, args) }
 

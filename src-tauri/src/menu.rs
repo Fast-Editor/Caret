@@ -1,7 +1,17 @@
-//! Native application menu. Items emit `caret://menu` with their id; the UI maps ids to commands.
+//! Native application menu. Items emit `caret://menu` with their id to the focused window; the UI maps ids to
+//! commands. The Window submenu ends with one check item per open Caret window (`window.focus:<label>`), rebuilt by
+//! `rebuild_window_items` whenever the window registry changes.
+use crate::core::windows::{self, WindowRegistry};
 use crate::events;
-use tauri::menu::{AboutMetadata, Menu, MenuItem, PredefinedMenuItem, Submenu};
-use tauri::{AppHandle, Runtime};
+use tauri::menu::{AboutMetadata, CheckMenuItem, Menu, MenuItem, PredefinedMenuItem, Submenu};
+use tauri::{AppHandle, Manager, Runtime};
+
+/// Id of the Window submenu (looked up on every rebuild).
+pub const WINDOW_MENU_ID: &str = "menu.window";
+/// Prefix of the per-window items; the rest of the id is the window label.
+pub const WINDOW_FOCUS_PREFIX: &str = "window.focus:";
+/// Items in the Window submenu before the dynamic window list (see `build`).
+const WINDOW_STATIC_ITEMS: usize = if cfg!(target_os = "macos") { 6 } else { 4 };
 
 pub fn build<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<Menu<R>> {
     let item = |id: &str, label: &str, accel: Option<&str>| MenuItem::with_id(app, id, label, true, accel);
@@ -65,15 +75,53 @@ pub fn build<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<Menu<R>> {
     let terminal = Submenu::with_items(app, "Terminal", true, &[
         &item("terminal.new", "New Terminal", None)?, &item("terminal.split", "Split Terminal", None)?, &item("terminal.kill", "Kill Terminal", None)?, &item("terminal.cmdk", "Terminal Cmd+K", None)?,
     ])?;
-    let window = Submenu::with_items(app, "Window", true, &[
-        &PredefinedMenuItem::minimize(app, None)?, &PredefinedMenuItem::maximize(app, None)?, &PredefinedMenuItem::separator(app)?, &item("window.agents", "Agents Window", None)?,
+    // Keep WINDOW_STATIC_ITEMS in step with the number of items appended here.
+    let window = Submenu::with_id_and_items(app, WINDOW_MENU_ID, "Window", true, &[
+        &PredefinedMenuItem::minimize(app, None)?, &PredefinedMenuItem::maximize(app, None)?, &PredefinedMenuItem::separator(app)?,
     ])?;
+    #[cfg(target_os = "macos")]
+    window.append_items(&[&PredefinedMenuItem::bring_all_to_front(app, None)?, &PredefinedMenuItem::separator(app)?])?;
+    window.append(&item("window.agents", "Agents Window", None)?)?;
     let help = Submenu::with_items(app, "Help", true, &[
         &item("help.welcome", "Welcome", None)?, &item("help.shortcuts", "Keyboard Shortcuts", None)?, &item("help.docs", "Documentation", None)?, &item("help.openConfig", "Open Config Folder", None)?, &item("help.about", "About Caret", None)?,
     ])?;
     Menu::with_items(app, &[&app_menu, &file, &edit, &view, &go, &ai, &terminal, &window, &help])
 }
 
+/// Route a menu click: window items focus their window; everything else goes to the focused window only (two windows
+/// must not both run File → Save). With no Caret window open (macOS), File → New Window is handled here and other
+/// items fall back to a broadcast.
 pub fn on_menu_event(app: &AppHandle, id: &str) {
-    events::emit(app, events::MENU, id.to_string());
+    if let Some(label) = id.strip_prefix(WINDOW_FOCUS_PREFIX) {
+        if let Err(e) = windows::focus_window(app, label) { tracing::debug!(label, error = %e.message, "window menu: focus failed"); }
+        rebuild_window_items(app); // the check item toggled itself on click; the focus event fixes it, this is the fallback
+        return;
+    }
+    match windows::focused_label(app) {
+        Some(label) => events::emit_to(app, &label, events::MENU, id.to_string()),
+        None if id == "file.newWindow" => { if let Err(e) = windows::create_window(app, None) { tracing::warn!(error = %e.message, "menu: could not create a window"); } }
+        None => events::emit(app, events::MENU, id.to_string()),
+    }
+}
+
+/// Rebuild the dynamic part of the Window submenu (separator + one check item per Caret window, the focused one
+/// checked) from the registry. Safe from any thread; failures are logged and ignored.
+pub fn rebuild_window_items(app: &AppHandle) {
+    if let Err(e) = rebuild_window_items_inner(app) { tracing::debug!(error = %e, "window menu rebuild failed"); }
+}
+
+fn rebuild_window_items_inner(app: &AppHandle) -> tauri::Result<()> {
+    let Some(menu) = app.menu() else { return Ok(()) };
+    let Some(kind) = menu.get(WINDOW_MENU_ID) else { return Ok(()) };
+    let Some(sub) = kind.as_submenu() else { return Ok(()) };
+    let count = sub.items()?.len();
+    for i in (WINDOW_STATIC_ITEMS..count).rev() { sub.remove_at(i)?; }
+    let list = windows::summaries(&app.state::<WindowRegistry>());
+    if list.is_empty() { return Ok(()); }
+    sub.append(&PredefinedMenuItem::separator(app)?)?;
+    for w in list {
+        let text = w.name.clone().unwrap_or_else(|| "Caret".to_string());
+        sub.append(&CheckMenuItem::with_id(app, format!("{WINDOW_FOCUS_PREFIX}{}", w.label), text, true, w.focused, None::<&str>)?)?;
+    }
+    Ok(())
 }

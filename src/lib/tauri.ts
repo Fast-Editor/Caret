@@ -4,6 +4,7 @@
  */
 import { invoke as tauriInvoke, Channel } from '@tauri-apps/api/core'
 import { listen, type UnlistenFn, type Event as TauriEvent } from '@tauri-apps/api/event'
+import { getCurrentWindow } from '@tauri-apps/api/window'
 import type { CaretError } from '@/types'
 
 export class CaretApiError extends Error {
@@ -41,11 +42,24 @@ export function channel<T>(onMessage: (msg: T) => void): Channel<T> {
 
 export type { Channel }
 
-/** Subscribe to a backend broadcast. Returns an unsubscribe function. */
+/**
+ * This window's label, used as the listener target. Tauri's default target (`Any`) receives every window's events,
+ * which would defeat the Rust side's `emit_to(label)` / `emit_for_root`; a labelled listener still receives app-wide
+ * `emit`s. `null` outside Tauri (tests, the remote browser shim).
+ */
+let listenTarget: string | null | undefined
+function currentListenTarget(): string | null {
+  if (listenTarget !== undefined) return listenTarget
+  try { listenTarget = isTauri() ? getCurrentWindow().label || null : null } catch { listenTarget = null }
+  return listenTarget
+}
+
+/** Subscribe to a backend event addressed to this window or to every window. Returns an unsubscribe function. */
 export function on<T>(event: string, handler: (payload: T) => void): () => void {
   let unlisten: UnlistenFn | null = null
   let disposed = false
-  listen<T>(event, (e: TauriEvent<T>) => handler(e.payload)).then((fn) => {
+  const target = currentListenTarget()
+  listen<T>(event, (e: TauriEvent<T>) => handler(e.payload), target ? { target } : undefined).then((fn) => {
     if (disposed) fn()
     else unlisten = fn
   })

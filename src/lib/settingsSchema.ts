@@ -97,6 +97,7 @@ export const DEFAULTS: Settings = {
   worktrees: { perThreadDefault: false, location: '.caret/worktrees', branchTemplate: 'caret/{slug}', cleanupInactiveDays: 14, cleanupSettled: true, cleanupMerged: true, cleanupNoCommits: true, onLocalChanges: 'keep', deleteBranchWithWorktree: true, autoCleanup: false },
   orchestrator: { enabled: false, port: 17431 },
   remote: { enabled: false, host: '127.0.0.1', port: 17430 },
+  window: { openFoldersIn: 'new' },
 }
 
 const PERMISSION_MODE_OPTIONS: SelectOption[] = [
@@ -127,6 +128,7 @@ export const SETTINGS_FIELDS: SettingField[] = [
   { id: 'general.gitAutoFetchIntervalSecs', page: 'general', type: 'number', title: 'Auto fetch interval', unit: 's', min: 30, max: 3600, step: 30, dependsOn: 'general.gitAutoFetch', group: 'Git' },
   { id: 'general.globalIgnore', page: 'general', type: 'stringList', title: 'Global ignore patterns', description: 'Files hidden from the explorer, search and the agent everywhere.', group: 'Files' },
   { id: 'general.useCursorCompatDirs', page: 'general', type: 'boolean', title: 'Read .cursor compatibility directories', description: 'Also load rules, MCP servers, hooks, commands, skills and agents from .cursor/ and .cursorrules.', group: 'Files', keywords: ['cursor', 'compat'] },
+  { id: 'window.openFoldersIn', page: 'general', type: 'select', title: 'Open folders in', description: 'Where File → Open Folder and Open Recent put a folder when this window already shows one. An empty window always opens the folder in place.', options: [{ value: 'new', label: 'New window' }, { value: 'current', label: 'Current window', description: 'Replace the folder this window shows' }], group: 'Windows', keywords: ['window', 'multiple windows', 'new window', 'open recent'] },
   { id: 'privacy.privacyMode', page: 'general', type: 'boolean', title: 'Privacy mode', description: 'Never send code to anything other than your configured model provider: disables web tools and remote embeddings.', group: 'Privacy', keywords: ['telemetry'] },
   { id: 'privacy.allowWebTools', page: 'general', type: 'boolean', title: 'Allow web tools', description: 'Let the agent search the web and fetch URLs.', group: 'Privacy' },
   { id: 'privacy.allowRemoteEmbeddings', page: 'general', type: 'boolean', title: 'Allow remote embeddings', description: 'Send code chunks to the embeddings provider for semantic search. Disable to use local BM25 search only.', group: 'Privacy' },

@@ -1,23 +1,34 @@
 # Multiple windows
 
-Status: in progress (2026-11-13). This document is the design the implementation follows; sections marked *done*
-describe shipped behaviour.
+Status: phase 0 (foundation) done 2026-11-13 — window registry and `RootRefs`, `window_new/list/focus/close`,
+per-window `workspace_open/current/close`, window creation (cascaded, same options as `main`), Window menu with the
+open-window list, native menu events routed to the focused window, macOS keep-alive after the last window closes plus
+Dock-click reopen, per-window editor sessions, `window.openFoldersIn`, `events::emit_to` / `emit_for_root` /
+`on_workspace_change`, and the frontend `on()` subscribing with its own window label. Phase 1 (next) migrates each
+per-root resource onto the internal workspace event and `RootRefs` (watcher, quick-open index, codebase index, LSP,
+MCP, worktrees), makes every workspace-dependent command take `window`, scopes settings per root, routes CLI opens
+(`route_open`, per-label `OpenQueue`), and lets the automation bridge target a label. Until then the single-root Rust
+listeners follow the focused window (see "Phase 0 compatibility" below). Sections marked *done* describe shipped
+behaviour.
 
 ## Behaviour
 
-- **File → New Window** (Cmd+Shift+N) opens an empty window (Welcome + recent folders). Every window is a full Caret:
-  explorer, editor, terminals, chat, git, search, LSP, Quick Open, all scoped to the folder that window has open.
+- **File → New Window** (Cmd+Shift+N) opens an empty window (Welcome + recent folders). *done* — Every window is a
+  full Caret: explorer, editor, terminals, chat, git, search, LSP, Quick Open, all scoped to the folder that window has
+  open (per-root scoping of the Rust services: phase 1).
 - **Open Folder / Open Recent** in a window that already has a folder: the folder opens in a *new* window when
-  `window.openFoldersIn` is `"new"` (default) and replaces the current one when it is `"current"`. Holding Alt while
-  choosing a recent folder does the opposite of the setting. An empty window always opens the folder in place.
+  `window.openFoldersIn` is `"new"` (default) and replaces the current one when it is `"current"`. An empty window
+  always opens the folder in place. *done* — Holding Alt while choosing a recent folder does the opposite of the
+  setting (pending: the recent picker does not report modifiers yet).
 - **`caret <path>`, Finder "Open with", `caret://open?…`**: a folder that is already open in a window focuses that
   window; a file inside an open folder opens there; anything else goes to an empty window if one is focused, or to a
-  new window (folders) or the focused window (loose files).
+  new window (folders) or the focused window (loose files). Phase 1; today the request goes to the focused window (a
+  new one is created when none exists).
 - **Window menu** lists the open windows (folder name, checkmark on the focused one) plus Minimize / Zoom /
-  Bring All to Front; Cmd+` cycles windows (macOS standard).
-- Closing the last window keeps Caret running on macOS (Dock click or Cmd+N reopens a window), quits elsewhere.
+  Bring All to Front. *done* — Cmd+` cycles windows (macOS standard).
+- Closing the last window keeps Caret running on macOS (Dock click or Cmd+Shift+N reopens a window), quits elsewhere. *done*
 - Two windows may show the same folder; they share the watcher, the index and the language servers for it.
-- Window titles are `<folder> — Caret` (just `Caret` when empty); traffic lights stay in the overlay title bar.
+- Window titles are `<folder> — Caret` (just `Caret` when empty); traffic lights stay in the overlay title bar. *done*
 
 ## Architecture
 
@@ -28,82 +39,121 @@ servers, MCP servers, worktrees). Windows showing the same root share the per-ro
 
 ### Rust
 
-`core/windows.rs` (new) — `WindowRegistry` (managed):
+`core/windows.rs` *done* — `WindowRegistry` (managed):
 
 ```rust
 pub struct WindowEntry { pub label: String, pub root: Option<PathBuf>, pub created_at: Instant }
 pub struct WindowRegistry { entries: DashMap<String, WindowEntry>, focused: RwLock<Option<String>>, next_id: AtomicU32 }
 impl WindowRegistry {
-    pub fn register(&self, label: &str);                 // on window creation (main at setup)
+    pub fn register(&self, label: &str);                 // on window creation (main at setup); idempotent
     pub fn unregister(&self, label: &str) -> Option<PathBuf>; // on WindowEvent::Destroyed; returns the root it had
-    pub fn set_root(&self, label: &str, root: Option<PathBuf>) -> Option<PathBuf>; // returns previous root
+    pub fn contains(&self, label: &str) -> bool; pub fn len(&self) -> usize; pub fn is_empty(&self) -> bool;
+    pub fn set_root(&self, label: &str, root: Option<PathBuf>) -> Option<PathBuf>; // returns previous root; unknown label → None
     pub fn root_of(&self, label: &str) -> Option<PathBuf>;
+    pub fn entry(&self, label: &str) -> Option<WindowEntry>; pub fn entries(&self) -> Vec<WindowEntry>; // creation order
     pub fn labels(&self) -> Vec<String>;
     pub fn labels_for_root(&self, root: &Path) -> Vec<String>;   // windows showing this folder
-    pub fn window_containing(&self, path: &Path) -> Option<String>; // a window whose root is `path` or an ancestor of it
-    pub fn set_focused(&self, label: &str); pub fn focused(&self) -> Option<String>;
+    pub fn roots(&self) -> Vec<PathBuf>;                 // distinct open roots
+    pub fn window_containing(&self, path: &Path) -> Option<String>; // deepest root that is `path` or an ancestor; focused, then oldest on ties
+    pub fn set_focused(&self, label: &str); pub fn focused(&self) -> Option<String>; // unregistered labels are ignored
     pub fn next_label(&self) -> String;                  // "w2", "w3", …
-    pub fn is_last_window_for_root(&self, label: &str) -> bool;
+    pub fn is_last_window_for_root(&self, label: &str) -> bool; // false for a window without a folder
 }
+pub struct RootRefs;                                     // managed; windows per root
+impl RootRefs { pub fn acquire(&self, root: &Path) -> bool /* first */; pub fn release(&self, root: &Path) -> bool /* last */; pub fn count(&self, root: &Path) -> usize; pub fn roots(&self) -> Vec<PathBuf>; }
+pub struct WindowSummary { pub label: String, pub root: Option<String>, pub name: Option<String>, pub focused: bool }
+pub fn summaries(registry: &WindowRegistry) -> Vec<WindowSummary>;
+pub fn focused_window(app: &AppHandle) -> Option<WebviewWindow>; // focused → main → oldest; None only when no Caret window exists
+pub fn focused_label(app: &AppHandle) -> Option<String>;
+pub fn window_title(root: Option<&Path>) -> String;      // "<folder> — Caret" / "Caret"
+pub fn create_window(app: &AppHandle, path: Option<PathBuf>) -> Result<String>;
+pub fn focus_window(app: &AppHandle, label: &str) -> Result<()>;
+pub fn on_window_event(window: &tauri::Window, event: &WindowEvent); // Builder::on_window_event
+// commands: window_new(app, path: Option<String>) -> String, window_list(app) -> Vec<WindowSummary>, window_focus(app, label), window_close(app, label)
 ```
 
-`core/workspace.rs` — `WorkspaceState` keeps its name but reads through the registry:
+`core/workspace.rs` *done* — `WorkspaceState` keeps its name but reads through the registry (it holds an
+`AppHandle`, attached at setup, and no root):
 
 - `root_for(label) -> Option<PathBuf>`, `require_root_for(label)`, `info_for_label(label)`.
-- `root()` / `require_root()` (the old implicit accessors) resolve to the **focused** window's root and log at debug
-  level; they stay only so unmigrated call sites compile. Every command that depends on the workspace takes
-  `window: tauri::Window` and uses `window.label()`. Long-running work (agent runs, verify, index) captures the root
-  when it starts and never calls `root()` again.
-- `open_workspace(app, label, path)` / `close_workspace(app, label)`: update the registry, workspace-scope settings for
-  that root, the recent list, the window title; then `events::emit_rust(WORKSPACE_CHANGED, WorkspaceChange { label,
-  info, prev_root })` for Rust listeners and `events::emit_to(label, WORKSPACE_CHANGED, info)` for that window.
-- Commands: `workspace_open(window, path)`, `workspace_current(window)`, `workspace_close(window)`; new
-  `window_new(app, path: Option<String>) -> String`, `window_list() -> Vec<WindowSummary { label, root, name,
-  focused }>`, `window_focus(label)`, `window_close(label)`.
+- `root()` / `require_root()` / `info()` (the old implicit accessors) resolve to the **focused** window's root (an
+  empty focused window answers `None`); with no focused window known they fall back to `main`'s root, then to the only
+  open root. Logged at trace level. They stay only so unmigrated call sites compile. Every command that depends on the
+  workspace takes `window: tauri::Window` and uses `window.label()`. Long-running work (agent runs, verify, index)
+  captures the root when it starts and never calls `root()` again.
+- `open_workspace_for(app, label, path) -> Result<WorkspaceInfo>` / `close_workspace_for(app, label)`: canonicalize +
+  `is_dir`, `registry.set_root`, `RootRefs` release of the previous root and acquire of the new one, workspace-scope
+  settings (focused window only, until phase 1 makes them per root), the recent list, the window title; then
+  `events::emit_internal_workspace_changed(app, WorkspaceChange { label, info, prev_root, first_for_root,
+  last_for_prev_root })` for Rust listeners and `events::emit_to(app, label, WORKSPACE_CHANGED, info)` for that
+  window. `release_workspace_for_destroyed(app, label)` is the same release path for a window that is going away
+  (nothing is sent to its webview). `open_workspace(app, path)` / `close_workspace(app)` are thin wrappers that target
+  the focused window for callers that have no window yet (CLI, phase 1 removes them).
+- Commands: `workspace_open(app, window, path)`, `workspace_current(ws, window)`, `workspace_close(app, window)`,
+  `workspace_ensure_project_dir(ws, window)`; `workspace_recent`, `workspace_remove_recent` unchanged.
 
-`events.rs`:
+`events.rs` *done*:
 
 - `emit` stays for app-wide events (settings, router, agent events, global notifications).
 - `emit_to(app, label, event, payload)` for one window; `emit_for_root(app, root, event, payload)` for every window on
   that root (FS_CHANGED, GIT_CHANGED, INDEX_STATUS, LSP_STATUS, LSP_DIAGNOSTICS, MCP_CHANGED, RULES_CHANGED,
-  DOCS_CHANGED, REVIEW_CHANGED).
-- `MENU` goes only to the focused window (two windows must not both run File → Save). `OPEN_PATHS` goes to the window
-  chosen by the CLI router. `NOTIFY` raised inside a command goes to the calling window; background notifications
-  stay app-wide.
-- Rust-side listeners use a Rust-only channel name (`caret-internal://workspace/changed`) carrying `{ label, info,
-  prev_root }`, so a window switching folders tells them which root lost a window and which gained one.
+  DOCS_CHANGED, REVIEW_CHANGED) plus Rust `app.listen` listeners, which are not per window (`root_target_matches` is
+  the pure filter).
+- `MENU` goes only to the focused window (two windows must not both run File → Save). *done* — `OPEN_PATHS` goes to
+  the window chosen by the CLI router (phase 1). `NOTIFY` raised inside a command goes to the calling window;
+  background notifications stay app-wide (phase 1).
+- Rust-side listeners use a Rust-only channel (`INTERNAL_WORKSPACE_CHANGED = "caret-internal://workspace/changed"`,
+  emitted to `EventTarget::App` so it never reaches a webview) carrying `WorkspaceChange { label, info, prev_root,
+  first_for_root, last_for_prev_root }`, so a window switching folders tells them which root lost a window and which
+  gained one. Subscribe with `events::on_workspace_change(app, |app, change| …)`; the handler runs inline inside the
+  emitting command, so hand real work to a background task.
+- The frontend's `on()` (src/lib/tauri.ts) subscribes with the current window's label as target. Tauri's default
+  target (`Any`) receives every targeted emit, which would make `emit_to` / `emit_for_root` reach every window.
+
+**Phase 0 compatibility.** Six Rust modules still `app.listen(WORKSPACE_CHANGED)` and parse `Option<WorkspaceInfo>`
+as "the" workspace: `core/watcher.rs`, `core/fs.rs`, `core/lsp.rs`, `mcp/manager.rs`, `ai/agent/worktrees.rs`,
+`index/manager.rs`. `open_workspace_for` / `close_workspace_for` therefore still broadcast `WORKSPACE_CHANGED` app-wide
+when the changing window is the focused one (or the only one), so single-window behaviour is unchanged and those
+services follow the folder most recently opened in the focused window. Phase 1 moves each of them onto
+`on_workspace_change` + `RootRefs` and deletes the app-wide emit.
 
 Per-root resources (`watcher`, `fs` quick-open index, `index::IndexManager`, `mcp::McpManager`, `lsp`,
-`ai::agent::worktrees`): a `RootRefs` helper (`core/windows.rs`) counts windows per root; the resource starts on the
-first window for a root and stops when the last one leaves. Each keeps a `DashMap<PathBuf, …>` instead of a single
-slot. Commands that read them take `window` and look up the window's root.
+`ai::agent::worktrees`): `RootRefs` counts windows per root; the resource starts on the first window for a root
+(`WorkspaceChange.first_for_root`) and stops when the last one leaves (`last_for_prev_root`). Each keeps a
+`DashMap<PathBuf, …>` instead of a single slot. Commands that read them take `window` and look up the window's root.
 
-Window creation (`core/windows.rs::create_window`): `WebviewWindowBuilder::new(app, label, WebviewUrl::App("index.html"))`
+Window creation (`core/windows.rs::create_window`) *done*: `WebviewWindowBuilder::new(app, label, WebviewUrl::App("index.html"))`
 with the same options as the `main` entry in `tauri.conf.json` (title bar overlay, hidden title, dark theme,
-background colour, min size, drag-drop off), positioned cascaded from the focused window, registered before it is
-shown. If a path is given, `open_workspace(app, label, path)` runs right after creation so `workspace_current` already
-answers when the frontend boots (the window also receives WORKSPACE_CHANGED, whichever comes first wins idempotently).
-`WindowEvent::Focused(true)` → `registry.set_focused`; `WindowEvent::Destroyed` → unregister, release the root, and on
-non-macOS exit when no windows remain. `RunEvent::Reopen` (macOS Dock click with no windows) → `window_new(None)`.
-`capabilities/default.json` lists `"w*"`.
+background colour `#161618`, 1440×920, min 800×500, drag-drop off), positioned +28/+28 from the focused window,
+registered before it is built. If a path is given, `open_workspace_for(app, label, path)` runs right after creation so
+`workspace_current` already answers when the frontend boots (the window also receives WORKSPACE_CHANGED, whichever
+comes first wins idempotently). `WindowEvent::Focused(true)` → `registry.set_focused` + Window menu rebuild;
+`WindowEvent::Destroyed` → release the root, unregister, rebuild the menu, and on non-macOS exit when no windows
+remain. On macOS `RunEvent::ExitRequested { code: None }` (last window closed) is prevented so the app stays in the
+Dock; `RunEvent::Reopen` with no visible window shows the focused window or creates one. `capabilities/default.json`
+lists `"w*"`. The Window menu (`menu.rs::rebuild_window_items`) is rebuilt on create / destroy / root change / focus;
+its items are `window.focus:<label>` check items.
 
-CLI routing (`core/cli.rs`): `route_open(reqs, &registry, setting) -> Vec<(target: Target, reqs)>` where
+CLI routing (`core/cli.rs`, phase 1): `route_open(reqs, &registry, setting) -> Vec<(target: Target, reqs)>` where
 `Target = Window(label) | NewWindow(path)`; pure and unit-tested. `OpenQueue` is keyed by label; `cli_take_pending_opens(window)`
 returns only that window's requests. `on_opened` and `cli_open` call the router, create windows as needed, and emit
-`OPEN_PATHS` to the target label.
+`OPEN_PATHS` to the target label. Today `on_opened` broadcasts `OPEN_PATHS` and focuses the focused window (creating
+one when none exists).
 
 ### Frontend
 
 Each window runs the same bundle; stores are per window automatically (separate webview). Changes:
 
-- `api.workspace.*` unchanged (the calling window is implicit). New `api.window.{new, list, focus, close}`.
-- `file.newWindow` → `api.window.new(null)`. `workspace.openFolder` / `openRecent` honour `window.openFoldersIn` and
-  the Alt modifier. Window menu entries come from `window_list` (the native menu is rebuilt on `caret://windows/changed`).
+- `api.workspace.*` unchanged (the calling window is implicit). New `api.window.{new, list, focus, close}`. *done*
+- `file.newWindow` → `api.window.new(null)`. `workspace.openFolder` honours `window.openFoldersIn` (pure rule:
+  `opensInNewWindow` in src/lib/windowing.ts; `{ newWindow }` overrides it) and `workspace.openRecent` goes through
+  it; hidden `workspace.openInNewWindow`, `window.list`, `window.focus`. *done* — Alt modifier on Open Recent: pending
+  (the picker reports no modifiers). Window menu entries come from `window_list` (the native menu is rebuilt in Rust).
 - Editor session persistence key: `${root}::${label}` with a fallback read of the old `${root}` key, so two windows on
-  one folder keep separate tab sets.
-- `cliOpen.ts` is unchanged in shape; the backend only hands a window its own requests.
-- Settings: `window.openFoldersIn: "new" | "current"` (mirrored in `settingsSchema.ts` and Rust `WindowSettings`).
-- Automation bridge: `scripts/e2e.mjs eval --window w2 …` targets a label (`dev/automation.rs` takes `?window=`).
+  one folder keep separate tab sets (src/lib/windowing.ts). *done*
+- `cliOpen.ts` is unchanged in shape; the backend only hands a window its own requests (phase 1).
+- Settings: `window.openFoldersIn: "new" | "current"` (mirrored in `settingsSchema.ts` and Rust `WindowSettings`). *done*
+- Automation bridge: `scripts/e2e.mjs eval --window w2 …` targets a label (`dev/automation.rs` takes `?window=`). Phase 1.
 
 ## Out of scope for this pass
 

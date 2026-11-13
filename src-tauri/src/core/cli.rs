@@ -166,7 +166,11 @@ pub fn on_opened(app: &AppHandle, urls: &[tauri::Url]) {
     if reqs.is_empty() { return; }
     app.state::<OpenQueue>().push(reqs.clone());
     crate::events::emit(app, OPEN_PATHS_EVENT, serde_json::json!({ "paths": reqs }));
-    if let Some(w) = app.get_webview_window("main") { let _ = w.show(); let _ = w.set_focus(); }
+    match crate::core::windows::focused_window(app) {
+        Some(w) => { let _ = w.show(); let _ = w.set_focus(); }
+        // No Caret window (macOS after the last one closed): a new one drains the queue when its frontend boots.
+        None => { if let Err(e) = crate::core::windows::create_window(app, None) { tracing::warn!(error = %e.message, "cli: could not create a window"); } }
+    }
 }
 
 // ───────────────────────────── install ─────────────────────────────

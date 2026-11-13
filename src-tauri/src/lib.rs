@@ -57,6 +57,8 @@ pub fn run() {
         .plugin(tauri_plugin_notification::init())
         .manage(core::settings::SettingsState::load())
         .manage(core::workspace::WorkspaceState::default())
+        .manage(core::windows::WindowRegistry::default())
+        .manage(core::windows::RootRefs::default())
         .manage(commands::app::AppStats::default())
         .manage(core::diagnostics::DiagnosticsStore::default())
         .manage(verify::VerifyState::default())
@@ -79,8 +81,12 @@ pub fn run() {
         .manage(orchestrator::OrchestratorState::default())
         .menu(|app| menu::build(app))
         .on_menu_event(|app, ev| menu::on_menu_event(app, ev.id().0.as_str()))
+        .on_window_event(|window, event| core::windows::on_window_event(window, event))
         .setup(|app| {
             let handle = app.handle().clone();
+            // Window bookkeeping first: everything below may ask for the focused window's root.
+            app.state::<core::workspace::WorkspaceState>().attach(&handle);
+            { let reg = app.state::<core::windows::WindowRegistry>(); reg.register(core::windows::MAIN_LABEL); reg.set_focused(core::windows::MAIN_LABEL); }
             dev::automation::start(handle.clone());
             core::fs::init(&handle);
             core::watcher::init(&handle);
@@ -102,12 +108,15 @@ pub fn run() {
                 if std::env::var("CARET_DEVTOOLS").ok().as_deref() == Some("1") { w.open_devtools(); }
                 let _ = w.set_title("Caret");
             }
+            menu::rebuild_window_items(&handle);
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
             commands::app::app_info, commands::app::app_process_stats, commands::app::app_open_external, commands::app::app_show_in_folder, commands::app::app_open_devtools, commands::app::app_log,
             commands::app::app_notify_desktop,
             core::workspace::workspace_open, core::workspace::workspace_current, core::workspace::workspace_close, core::workspace::workspace_recent, core::workspace::workspace_remove_recent, core::workspace::workspace_ensure_project_dir,
+            // REGISTER:commands:windows
+            core::windows::window_new, core::windows::window_list, core::windows::window_focus, core::windows::window_close,
             core::settings::settings_get, core::settings::settings_update, core::settings::settings_reset, core::settings::settings_set_secret, core::settings::settings_delete_secret, core::settings::settings_list_secrets, core::settings::settings_import_env_keys, core::settings::settings_path,
             dev::automation::automation_result,
             // REGISTER:commands:verify
@@ -169,7 +178,18 @@ pub fn run() {
         .build(tauri::generate_context!())
         .expect("error while building Caret")
         .run(|app, event| {
+            // The last window closed (`code: None`): macOS keeps Caret running, like any document app; a Dock click
+            // (`Reopen`), File → New Window or `caret <path>` bring a window back. Quit and `app.exit` carry a code.
+            #[cfg(target_os = "macos")]
+            if let tauri::RunEvent::ExitRequested { code: None, api, .. } = &event { api.prevent_exit(); return; }
             if matches!(event, tauri::RunEvent::ExitRequested { .. } | tauri::RunEvent::Exit) { ai::router::shutdown(app); orchestrator::shutdown(app); remote::shutdown(app); }
+            #[cfg(target_os = "macos")]
+            if let tauri::RunEvent::Reopen { has_visible_windows: false, .. } = &event {
+                match core::windows::focused_window(app) {
+                    Some(w) => { let _ = w.show(); let _ = w.set_focus(); }
+                    None => { if let Err(e) = core::windows::create_window(app, None) { tracing::warn!(error = %e.message, "reopen: could not create a window"); } }
+                }
+            }
             // `caret <path>` / Finder "Open with" / `caret://open?…` arrive here on macOS (also on cold start).
             #[cfg(any(target_os = "macos", target_os = "ios"))]
             if let tauri::RunEvent::Opened { urls } = &event { core::cli::on_opened(app, urls); }

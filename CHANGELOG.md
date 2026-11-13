@@ -4,6 +4,16 @@ All notable changes to Caret. The version here must match `package.json`, `src-t
 
 ## Unreleased
 
+- Windows: File → New Window (Cmd+Shift+N) opens a second Caret window, empty or showing a folder. Each window has
+  its own folder, title (`<folder> — Caret`), editor tabs, terminals and chat; Open Folder / Open Recent from a
+  window that already shows a folder open the new folder in a new window (`window.openFoldersIn`, `"new"` by default;
+  `"current"` replaces in place; an empty window always opens in place). The Window menu lists the open windows with
+  the focused one checked, native menu commands go to the focused window only, and on macOS closing the last window
+  keeps Caret running (Dock click, Cmd+Shift+N or `caret <path>` bring a window back). New commands `window_new`,
+  `window_list`, `window_focus`, `window_close`; `workspace_open` / `workspace_current` / `workspace_close` are per
+  window. Per-folder scoping of Quick Open, the file watcher, LSP, git status and MCP across windows lands in the
+  follow-up: in this release those background services follow the folder most recently opened in the focused
+  window. See docs/MULTI_WINDOW.md.
 - Fixed: Go to Definition, Type Definition, Implementation and references that land in another file now open that
   file (Cmd+click on an import or a symbol included). Monaco can only move the caret inside the file it is showing;
   Caret never registered an editor opener, so every cross-file jump was silently dropped.
