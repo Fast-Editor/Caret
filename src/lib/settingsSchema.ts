@@ -69,7 +69,7 @@ export const DEFAULTS: Settings = {
     mcpAutoRun: false, autoRunMcpTools: [], largeContextMode: false, parallelToolCalls: true,
     permissionMode: undefined, maxPermissionMode: undefined,
   },
-  indexing: { enabled: true, embeddingsProviderId: undefined, embeddingsModel: undefined, maxFileSizeKb: 512, excludeGlobs: ['**/node_modules/**', '**/target/**', '**/dist/**', '**/build/**', '**/.git/**', '**/*.min.js', '**/*.lock', '**/package-lock.json', '**/*.map'], chunkLines: 60, chunkOverlap: 10, autoIndexNewFolders: true, hybridAlpha: 0.5, gitGraphIndexing: false },
+  indexing: { enabled: true, embeddingsProviderId: undefined, embeddingsModel: undefined, maxFileSizeKb: 512, excludeGlobs: ['**/node_modules/**', '**/target/**', '**/dist/**', '**/build/**', '**/.git/**', '**/*.min.js', '**/*.lock', '**/package-lock.json', '**/*.map'], chunkLines: 60, chunkOverlap: 10, autoIndexNewFolders: true, hybridAlpha: 0.5, gitGraphIndexing: false, quickOpenBudgetMs: 8000, quickOpenIgnoredBudgetMs: 1500 },
   ui: {
     theme: 'caret-dark', fontFamily: "JetBrains Mono, Menlo, Monaco, 'Courier New', monospace", fontSize: 13, lineHeight: 1.6, tabSize: 2, insertSpaces: true,
     wordWrap: 'off', minimap: true, renderWhitespace: 'selection', cursorBlinking: 'smooth', cursorStyle: 'line', bracketPairColorization: true, formatOnSave: false,
@@ -206,6 +206,8 @@ export const SETTINGS_FIELDS: SettingField[] = [
   { id: 'indexing.hybridAlpha', page: 'indexing', type: 'number', title: 'Hybrid weight', description: '0 = keyword only, 1 = vector only.', min: 0, max: 1, step: 0.05 },
   { id: 'indexing.autoIndexNewFolders', page: 'indexing', type: 'boolean', title: 'Index new folders automatically' },
   { id: 'indexing.gitGraphIndexing', page: 'indexing', type: 'boolean', title: 'Git graph indexing', description: 'Index commit history for @Git mentions.' },
+  { id: 'indexing.quickOpenBudgetMs', page: 'indexing', type: 'number', title: 'Quick Open walk budget', unit: 'ms', min: 500, max: 60000, step: 500, description: 'Time allowed to list the workspace for Quick Open before showing a partial list.' },
+  { id: 'indexing.quickOpenIgnoredBudgetMs', page: 'indexing', type: 'number', title: 'Quick Open ignored-files budget', unit: 'ms', min: 0, max: 30000, step: 250, description: 'Time allowed for the second pass that surfaces files hidden by ignore rules.' },
 
   // ── Appearance ──
   { id: 'ui.theme', page: 'appearance', type: 'theme', title: 'Theme', group: 'Appearance' },

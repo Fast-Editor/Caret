@@ -39,6 +39,8 @@ const apiBase = {
     copy: (from: string, to: string) => invoke<void>('fs_copy', { from, to }),
     move: (from: string, to: string) => invoke<void>('fs_move', { from, to }),
     quickOpen: (query: string, limit = 50) => invoke<T.QuickOpenResult[]>('fs_quick_open', { query, limit }),
+    /** State of the quick-open index (partial / ignored tier merged); never waits for a build. */
+    indexStatus: () => invoke<T.QuickOpenIndexStatus>('fs_index_status'),
     readImage: (path: string) => invoke<{ dataBase64: string; mime: string }>('fs_read_image', { path }),
     /** All non-ignored file paths (relative) — used for @-mention pickers; capped. */
     listFiles: (limit = 20000) => invoke<string[]>('fs_list_files', { limit }),

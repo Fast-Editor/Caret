@@ -167,9 +167,13 @@ pub struct IndexingSettings {
     pub auto_index_new_folders: bool,
     pub hybrid_alpha: f32,
     pub git_graph_indexing: bool,
+    /// Wall-clock budget (ms) for the Quick Open file walk; past it the list is published as partial. 0 = default.
+    pub quick_open_budget_ms: u64,
+    /// Wall-clock budget (ms) for the second walk that surfaces ignore-only files. 0 = default.
+    pub quick_open_ignored_budget_ms: u64,
 }
 impl Default for IndexingSettings {
-    fn default() -> Self { Self { enabled: true, embeddings_provider_id: None, embeddings_model: None, max_file_size_kb: 512, exclude_globs: vec!["**/node_modules/**".into(), "**/target/**".into(), "**/dist/**".into(), "**/build/**".into(), "**/.git/**".into(), "**/*.min.js".into(), "**/*.lock".into(), "**/package-lock.json".into(), "**/*.map".into()], chunk_lines: 60, chunk_overlap: 10, auto_index_new_folders: true, hybrid_alpha: 0.5, git_graph_indexing: false } }
+    fn default() -> Self { Self { enabled: true, embeddings_provider_id: None, embeddings_model: None, max_file_size_kb: 512, exclude_globs: vec!["**/node_modules/**".into(), "**/target/**".into(), "**/dist/**".into(), "**/build/**".into(), "**/.git/**".into(), "**/*.min.js".into(), "**/*.lock".into(), "**/package-lock.json".into(), "**/*.map".into()], chunk_lines: 60, chunk_overlap: 10, auto_index_new_folders: true, hybrid_alpha: 0.5, git_graph_indexing: false, quick_open_budget_ms: 8000, quick_open_ignored_budget_ms: 1500 } }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -5,6 +5,7 @@
 import type { AgentEvent, ContextItem, ReviewRequest, SendMessageRequest } from '@/types'
 import { api } from '@/lib/api'
 import { Events, on } from '@/lib/tauri'
+import { onWorkspaceChanged } from '@/lib/workspaceReload'
 import { registerCommands, runCommand, hasCommand } from '@/lib/commands'
 import { useChat, AUTO_MODEL, isSessionBusy } from '@/store/chat'
 import { emit as busEmit } from '@/lib/bus'
@@ -120,11 +121,18 @@ export function initChatModule(): void {
   const chat = useChat.getState()
   void chat.loadSessions()
   void chat.loadMeta()
-  on(Events.workspaceChanged, () => {
-    const c = useChat.getState(); const pending = c.pendingSelect
+  // Workspace switch: clear the old folder's threads immediately, list the new folder's threads after the explorer
+  // has painted, and load modes/commands/tools and reviews once the window is settled.
+  let selectAfterSwitch: string | null = null
+  onWorkspaceChanged('now', () => {
+    const c = useChat.getState(); selectAfterSwitch = c.pendingSelect
     c.reset(); useChat.setState({ pendingSelect: null })
-    void c.loadSessions().then(() => { if (pending) void useChat.getState().selectSession(pending) }); void c.loadMeta(); void useReview.getState().load()
   })
+  onWorkspaceChanged('soon', () => {
+    const pending = selectAfterSwitch; selectAfterSwitch = null
+    void useChat.getState().loadSessions().then(() => { if (pending) void useChat.getState().selectSession(pending) })
+  })
+  onWorkspaceChanged('later', () => { void useChat.getState().loadMeta(); void useReview.getState().load() })
   on(Events.rulesChanged, () => { void useChat.getState().loadMeta() })
 
   registerCommands([

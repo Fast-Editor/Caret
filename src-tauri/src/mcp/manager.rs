@@ -88,7 +88,12 @@ impl McpManager {
         self.inner.app.listen(events::WORKSPACE_CHANGED, move |ev| {
             let root = serde_json::from_str::<Value>(ev.payload()).ok().and_then(|v| v.get("root").and_then(|r| r.as_str()).map(PathBuf::from));
             let me = me.clone();
-            tauri::async_runtime::spawn(async move { *me.root.write() = root; me.reload().await; });
+            tauri::async_runtime::spawn(async move {
+                let t0 = std::time::Instant::now();
+                *me.root.write() = root;
+                me.reload().await;
+                tracing::info!(servers = me.conns.read().len(), ms = t0.elapsed().as_millis() as u64, "mcp configs reloaded for workspace change");
+            });
         });
         ports::set_mcp(Arc::new(McpPortImpl(self.inner.clone())));
         // user-scope servers do not need a workspace

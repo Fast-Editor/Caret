@@ -1,4 +1,5 @@
 //! File system commands + the quick-open fuzzy path index.
+use crate::core::generation::Generation;
 use crate::core::settings::SettingsState;
 use crate::core::workspace::{WorkspaceInfo, WorkspaceState};
 use crate::error::{CaretError, Result};
@@ -9,7 +10,8 @@ use serde::{Deserialize, Serialize};
 use std::collections::{BinaryHeap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
-use tauri::{AppHandle, Listener, Manager};
+use std::time::{Duration, Instant};
+use tauri::{AppHandle, Listener, Manager, State};
 
 // ───────────────────────── types ─────────────────────────
 
@@ -336,6 +338,12 @@ pub async fn fs_read_image(app: AppHandle, path: String) -> Result<ImageData> {
 }
 
 // ───────────────────────── quick-open index ─────────────────────────
+//
+// Two phases. Tier 1 walks the tree honouring ignore files and is published the moment it finishes; it is the only
+// thing Quick Open, @-mention pickers and the agent's file list may ever wait for. Tier 2 walks again with ignore
+// files off (heavy-directory skip list still on) to surface files that only the ignore rules hide, and merges its
+// results into the published index from the same background thread. Both walks stop at an entry cap, a wall-clock
+// budget, or when the workspace changes under them (generation ticket); a cap/budget stop publishes a `partial` list.
 
 pub const INDEX_CAP: usize = 200_000;
 
@@ -345,17 +353,80 @@ struct Entry { rel: String, lower: String, ignored: bool }
 pub struct FileIndexState {
     root: RwLock<Option<PathBuf>>,
     entries: RwLock<Vec<Entry>>,
+    /// Tier 1 is published for `root`.
     ready: AtomicBool,
+    /// Tier 1 stopped at its cap or budget: the list is a prefix of the tree.
+    tracked_partial: AtomicBool,
+    /// Tier 2 has merged (or was skipped) for `root`.
+    ignored_done: AtomicBool,
+    ignored_partial: AtomicBool,
+    /// Serialises tier-1 builds; a query that finds the index stale waits here, and only here.
     build_lock: Mutex<()>,
+    /// Bumped per workspace change so a walk in progress for the previous root stops and discards its results.
+    generation: Generation,
 }
+
+/// What the UI needs to label results ("showing the first N files").
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct QuickOpenIndexStatus { pub root: Option<String>, pub ready: bool, pub files: usize, pub ignored_files: usize, pub partial: bool, pub ignored_done: bool, pub ignored_partial: bool }
 
 impl FileIndexState {
     pub fn root(&self) -> Option<PathBuf> { self.root.read().clone() }
     pub fn len(&self) -> usize { self.entries.read().len() }
+    pub fn status(&self) -> QuickOpenIndexStatus {
+        let e = self.entries.read();
+        let ignored = e.iter().filter(|x| x.ignored).count();
+        QuickOpenIndexStatus { root: self.root().map(|r| r.to_string_lossy().to_string()), ready: self.ready.load(Ordering::Acquire), files: e.len() - ignored, ignored_files: ignored, partial: self.tracked_partial.load(Ordering::Acquire), ignored_done: self.ignored_done.load(Ordering::Acquire), ignored_partial: self.ignored_partial.load(Ordering::Acquire) }
+    }
 }
 
-/// Walk the workspace (honouring ignore files + settings) and collect relative file paths.
-pub fn collect_workspace_files(root: &Path, global_ignore: &[String], exclude_globs: &[String], cap: usize) -> Vec<String> {
+/// Stop conditions for a walk: an entry cap, a wall-clock deadline, and a generation ticket that goes stale when
+/// the workspace changes mid-walk.
+#[derive(Clone, Copy)]
+pub struct WalkLimits<'a> { pub cap: usize, pub deadline: Option<Instant>, pub ticket: Option<(&'a Generation, u64)> }
+impl WalkLimits<'static> {
+    pub fn cap_only(cap: usize) -> Self { Self { cap, deadline: None, ticket: None } }
+}
+
+#[derive(Debug, Default, PartialEq, Eq)]
+pub struct WalkOutcome {
+    /// Sorted workspace-relative paths.
+    pub files: Vec<String>,
+    /// The cap or the deadline stopped the walk: `files` is incomplete.
+    pub partial: bool,
+    /// The workspace changed mid-walk: `files` belongs to a root that is no longer open and must be discarded.
+    pub stale: bool,
+}
+
+/// Drive a parallel walk under `limits`, collecting regular files (skipping `known` paths) relative to `root`.
+fn run_walk(wb: ignore::WalkBuilder, root: &Path, limits: &WalkLimits<'_>, known: Option<&HashSet<String>>) -> WalkOutcome {
+    let out = Mutex::new(Vec::<String>::new());
+    let stop = AtomicBool::new(false);
+    let partial = AtomicBool::new(false);
+    let stale = AtomicBool::new(false);
+    wb.build_parallel().run(|| {
+        Box::new(|res| {
+            if stop.load(Ordering::Relaxed) { return ignore::WalkState::Quit; }
+            if let Some(dl) = limits.deadline { if Instant::now() >= dl { partial.store(true, Ordering::Relaxed); stop.store(true, Ordering::Relaxed); return ignore::WalkState::Quit; } }
+            if let Some((g, t)) = limits.ticket { if !g.is_current(t) { stale.store(true, Ordering::Relaxed); stop.store(true, Ordering::Relaxed); return ignore::WalkState::Quit; } }
+            let Ok(e) = res else { return ignore::WalkState::Continue };
+            if !e.file_type().map(|t| t.is_file()).unwrap_or(false) { return ignore::WalkState::Continue; }
+            let rel = paths::rel_to(root, e.path());
+            if known.map(|k| k.contains(&rel)).unwrap_or(false) { return ignore::WalkState::Continue; }
+            let mut g = out.lock();
+            if g.len() >= limits.cap { partial.store(true, Ordering::Relaxed); stop.store(true, Ordering::Relaxed); return ignore::WalkState::Quit; }
+            g.push(rel);
+            ignore::WalkState::Continue
+        })
+    });
+    let mut files = out.into_inner();
+    files.sort_unstable();
+    WalkOutcome { files, partial: partial.load(Ordering::Relaxed), stale: stale.load(Ordering::Relaxed) }
+}
+
+/// Tier 1: walk the workspace honouring ignore files + settings and collect relative file paths.
+pub fn collect_workspace_files(root: &Path, global_ignore: &[String], exclude_globs: &[String], limits: &WalkLimits<'_>) -> WalkOutcome {
     let mut wb = ignore::WalkBuilder::new(root);
     wb.hidden(false).git_ignore(true).git_global(true).git_exclude(true).ignore(true).parents(true).require_git(false).follow_links(false).same_file_system(false)
         .threads(std::thread::available_parallelism().map(|n| n.get().min(8)).unwrap_or(4));
@@ -369,34 +440,22 @@ pub fn collect_workspace_files(root: &Path, global_ignore: &[String], exclude_gl
     }
     if let Ok(ov) = ob.build() { wb.overrides(ov); }
     wb.filter_entry(|e| !(e.file_type().map(|t| t.is_dir()).unwrap_or(false) && e.file_name() == ".git"));
-    let out = std::sync::Arc::new(Mutex::new(Vec::<String>::new()));
-    let stop = std::sync::Arc::new(AtomicBool::new(false));
-    let root_b = root.to_path_buf();
-    wb.build_parallel().run(|| {
-        let out = out.clone(); let stop = stop.clone(); let root_b = root_b.clone();
-        Box::new(move |res| {
-            if stop.load(Ordering::Relaxed) { return ignore::WalkState::Quit; }
-            let Ok(e) = res else { return ignore::WalkState::Continue };
-            if !e.file_type().map(|t| t.is_file()).unwrap_or(false) { return ignore::WalkState::Continue; }
-            let rel = paths::rel_to(&root_b, e.path());
-            let mut g = out.lock();
-            if g.len() >= cap { stop.store(true, Ordering::Relaxed); return ignore::WalkState::Quit; }
-            g.push(rel);
-            ignore::WalkState::Continue
-        })
-    });
-    let mut v = std::mem::take(&mut *out.lock());
-    v.sort_unstable();
-    v
+    run_walk(wb, root, limits, None)
 }
 
 /// Directories never surfaced even as low-priority "ignored" results: generated output, dependency trees and tool state.
-const IGNORED_TIER_SKIP: &[&str] = &[".git", ".hg", ".svn", ".caret", "node_modules", "bower_components", "__pycache__", ".venv", "venv", ".next", ".nuxt", ".turbo", ".cache", ".pytest_cache", ".mypy_cache", ".gradle", ".idea", "target", "dist", "build", "out", "coverage", ".terraform", ".tox", ".parcel-cache", ".yarn", ".pnpm-store", "Pods", "DerivedData", ".dart_tool"];
+/// Bare names match at any depth (`website/node_modules`); entries with a slash are anchored to the workspace root.
+/// This list is what keeps the second-tier walk cheap on a repository whose `target/` holds tens of thousands of files.
+pub const IGNORED_TIER_SKIP: &[&str] = &[".git", ".hg", ".svn", ".caret", "node_modules", "bower_components", "__pycache__", ".venv", "venv", ".next", ".nuxt", ".turbo", ".cache", ".pytest_cache", ".mypy_cache", ".gradle", ".idea", "target", "dist", "build", "out", "coverage", ".terraform", ".tox", ".parcel-cache", ".yarn", ".pnpm-store", "Pods", "DerivedData", ".dart_tool", "vendor/bundle"];
 pub const IGNORED_CAP: usize = 50_000;
+/// Default wall-clock budgets; `indexing.quickOpenBudgetMs` / `indexing.quickOpenIgnoredBudgetMs` override them.
+pub const DEFAULT_TRACKED_BUDGET_MS: u64 = 8_000;
+pub const DEFAULT_IGNORED_BUDGET_MS: u64 = 1_500;
 
-/// Files that only the ignore rules hide (a repo's own `tmp/`, scratch dirs, logs): a second walk with ignore files off but
-/// the heavy-directory skip list, settings excludes and global ignores still applied. `known` are the first-tier paths.
-pub fn collect_ignored_files(root: &Path, global_ignore: &[String], exclude_globs: &[String], known: &HashSet<String>, cap: usize) -> Vec<String> {
+/// Tier 2: files that only the ignore rules hide (a repo's own `tmp/`, scratch dirs, logs): a second walk with ignore
+/// files off but the heavy-directory skip list, settings excludes and global ignores still applied. `known` are the
+/// first-tier paths.
+pub fn collect_ignored_files(root: &Path, global_ignore: &[String], exclude_globs: &[String], known: &HashSet<String>, limits: &WalkLimits<'_>) -> WalkOutcome {
     let mut wb = ignore::WalkBuilder::new(root);
     wb.hidden(false).git_ignore(false).git_global(false).git_exclude(false).ignore(false).parents(false).require_git(false).follow_links(false).same_file_system(false)
         .threads(std::thread::available_parallelism().map(|n| n.get().min(8)).unwrap_or(4));
@@ -409,51 +468,96 @@ pub fn collect_ignored_files(root: &Path, global_ignore: &[String], exclude_glob
     }
     if let Ok(ov) = ob.build() { wb.overrides(ov); }
     wb.filter_entry(|e| { let is_dir = e.file_type().map(|t| t.is_dir()).unwrap_or(false); let n = e.file_name().to_string_lossy(); !(is_dir && IGNORED_TIER_SKIP.iter().any(|s| *s == n.as_ref())) });
-    let out = std::sync::Arc::new(Mutex::new(Vec::<String>::new()));
-    let stop = std::sync::Arc::new(AtomicBool::new(false));
-    let root_b = root.to_path_buf();
-    wb.build_parallel().run(|| {
-        let out = out.clone(); let stop = stop.clone(); let root_b = root_b.clone();
-        Box::new(move |res| {
-            if stop.load(Ordering::Relaxed) { return ignore::WalkState::Quit; }
-            let Ok(e) = res else { return ignore::WalkState::Continue };
-            if !e.file_type().map(|t| t.is_file()).unwrap_or(false) { return ignore::WalkState::Continue; }
-            let rel = paths::rel_to(&root_b, e.path());
-            if known.contains(&rel) { return ignore::WalkState::Continue; }
-            let mut g = out.lock();
-            if g.len() >= cap { stop.store(true, Ordering::Relaxed); return ignore::WalkState::Quit; }
-            g.push(rel);
-            ignore::WalkState::Continue
-        })
-    });
-    let mut v = std::mem::take(&mut *out.lock());
-    v.sort_unstable();
-    v
+    run_walk(wb, root, limits, Some(known))
 }
 
-fn rebuild_index(app: &AppHandle) {
+fn budget(ms: u64, default_ms: u64) -> Duration { Duration::from_millis(if ms == 0 { default_ms } else { ms }) }
+
+/// Tier 1 under `build_lock`: builds (or finds already built) the ignore-aware index for the current root and publishes
+/// it. Returns `false` when there is no root or the workspace changed meanwhile. This is the only wait a caller sees.
+fn ensure_tracked(app: &AppHandle, ticket: u64) -> bool {
     let st = app.state::<FileIndexState>();
+    let t_lock = Instant::now();
     let _g = st.build_lock.lock();
-    let Some(root) = app.state::<WorkspaceState>().root() else { *st.root.write() = None; st.entries.write().clear(); st.ready.store(false, Ordering::Release); return; };
+    let lock_wait_ms = t_lock.elapsed().as_millis() as u64;
+    if lock_wait_ms > 1000 { tracing::warn!(lock_wait_ms, "quick-open index build waited for a previous build to finish"); }
+    if !st.generation.is_current(ticket) { return false; }
+    let Some(root) = app.state::<WorkspaceState>().root() else { *st.root.write() = None; st.entries.write().clear(); st.ready.store(false, Ordering::Release); return false; };
+    // The listener thread and a query racing on a folder switch both arrive here; the second finds the first's index.
+    if st.ready.load(Ordering::Acquire) && st.root().as_deref() == Some(root.as_path()) { return true; }
     let settings = app.state::<SettingsState>().effective();
-    let t0 = std::time::Instant::now();
-    let files = collect_workspace_files(&root, &settings.general.global_ignore, &settings.indexing.exclude_globs, INDEX_CAP);
-    let known: HashSet<String> = files.iter().cloned().collect();
-    let extra = collect_ignored_files(&root, &settings.general.global_ignore, &settings.indexing.exclude_globs, &known, IGNORED_CAP);
-    let n_ignored = extra.len();
-    let mut entries: Vec<Entry> = files.into_iter().map(|rel| Entry { lower: rel.to_lowercase(), rel, ignored: false })
-        .chain(extra.into_iter().map(|rel| Entry { lower: rel.to_lowercase(), rel, ignored: true })).collect();
-    entries.sort_unstable_by(|a, b| a.rel.cmp(&b.rel));
-    tracing::info!(files = entries.len(), ignored = n_ignored, ms = t0.elapsed().as_millis() as u64, "quick-open index built");
-    *st.root.write() = Some(root);
-    *st.entries.write() = entries;
-    st.ready.store(true, Ordering::Release);
+    let t0 = Instant::now();
+    let limits = WalkLimits { cap: INDEX_CAP, deadline: Some(t0 + budget(settings.indexing.quick_open_budget_ms, DEFAULT_TRACKED_BUDGET_MS)), ticket: Some((&st.generation, ticket)) };
+    let out = collect_workspace_files(&root, &settings.general.global_ignore, &settings.indexing.exclude_globs, &limits);
+    if out.stale { tracing::debug!(root = %root.display(), "quick-open index build superseded by a newer workspace"); return false; }
+    let n = out.files.len();
+    let entries: Vec<Entry> = out.files.into_iter().map(|rel| Entry { lower: rel.to_lowercase(), rel, ignored: false }).collect();
+    {
+        // Publish atomically with respect to readers: root, entries, flags, then `ready`.
+        let mut e = st.entries.write();
+        *st.root.write() = Some(root.clone());
+        *e = entries;
+        st.tracked_partial.store(out.partial, Ordering::Release);
+        st.ignored_done.store(false, Ordering::Release);
+        st.ignored_partial.store(false, Ordering::Release);
+        st.ready.store(true, Ordering::Release);
+    }
+    tracing::info!(files = n, partial = out.partial, lock_wait_ms, ms = t0.elapsed().as_millis() as u64, "quick-open index built");
+    true
 }
 
+/// Tier 2, never on a caller's path: walk the ignore-only files and merge them into the published index. Skipped
+/// when the workspace changed, and discarded if it changes during the walk.
+fn merge_ignored(app: &AppHandle, ticket: u64) {
+    let st = app.state::<FileIndexState>();
+    if !st.generation.is_current(ticket) { return; }
+    let Some(root) = st.root() else { return };
+    let settings = app.state::<SettingsState>().effective();
+    let known: HashSet<String> = st.entries.read().iter().map(|e| e.rel.clone()).collect();
+    let t0 = Instant::now();
+    let limits = WalkLimits { cap: IGNORED_CAP, deadline: Some(t0 + budget(settings.indexing.quick_open_ignored_budget_ms, DEFAULT_IGNORED_BUDGET_MS)), ticket: Some((&st.generation, ticket)) };
+    let out = collect_ignored_files(&root, &settings.general.global_ignore, &settings.indexing.exclude_globs, &known, &limits);
+    if out.stale || !st.generation.is_current(ticket) { return; }
+    let n = out.files.len();
+    {
+        let mut e = st.entries.write();
+        if st.root().as_deref() != Some(root.as_path()) { return; }
+        let extra = out.files.into_iter().map(|rel| Entry { lower: rel.to_lowercase(), rel, ignored: true });
+        *e = merge_sorted(std::mem::take(&mut *e), extra);
+        st.ignored_partial.store(out.partial, Ordering::Release);
+        st.ignored_done.store(true, Ordering::Release);
+    }
+    tracing::info!(ignored = n, partial = out.partial, ms = t0.elapsed().as_millis() as u64, "quick-open ignored tier merged");
+}
+
+/// Merge two `rel`-sorted lists; on a duplicate path the existing entry wins (the watcher may have inserted it since).
+fn merge_sorted(base: Vec<Entry>, extra: impl Iterator<Item = Entry>) -> Vec<Entry> {
+    let mut out: Vec<Entry> = Vec::with_capacity(base.len() + extra.size_hint().0);
+    let mut base = base.into_iter().peekable();
+    let mut extra = extra.peekable();
+    loop {
+        match (base.peek(), extra.peek()) {
+            (Some(b), Some(x)) => match b.rel.cmp(&x.rel) {
+                std::cmp::Ordering::Less => out.push(base.next().unwrap()),
+                std::cmp::Ordering::Greater => out.push(extra.next().unwrap()),
+                std::cmp::Ordering::Equal => { out.push(base.next().unwrap()); extra.next(); }
+            },
+            (Some(_), None) => out.push(base.next().unwrap()),
+            (None, Some(_)) => out.push(extra.next().unwrap()),
+            (None, None) => break,
+        }
+    }
+    out
+}
+
+/// Make sure tier 1 is published for the current root (waiting for it if a build is in progress). Joins the current
+/// generation rather than starting one, so it never cancels the listener's build.
 fn ensure_index(app: &AppHandle) {
     let st = app.state::<FileIndexState>();
     let ws_root = app.state::<WorkspaceState>().root();
-    if !st.ready.load(Ordering::Acquire) || st.root() != ws_root { rebuild_index(app); }
+    if st.ready.load(Ordering::Acquire) && st.root() == ws_root { return; }
+    let ticket = st.generation.current();
+    ensure_tracked(app, ticket);
 }
 
 /// Called by the watcher / fs ops: add a file to the index if it lives in the workspace.
@@ -488,8 +592,14 @@ pub fn init(app: &AppHandle) {
     app.listen(crate::events::WORKSPACE_CHANGED, move |_ev| {
         let h2 = h.clone();
         let info: Option<WorkspaceInfo> = serde_json::from_str(_ev.payload()).ok().flatten();
-        if info.is_none() { h2.state::<FileIndexState>().ready.store(false, Ordering::Release); return; }
-        std::thread::Builder::new().name("caret-file-index".into()).spawn(move || rebuild_index(&h2)).ok();
+        // New generation: any walk still running for the previous root stops and discards its results. Mark the index
+        // stale before the build starts so queries wait for the new root (and re-opening the same folder still
+        // refreshes); the build itself runs off the emitting thread, tier 1 first, tier 2 merged afterwards.
+        let st = h2.state::<FileIndexState>();
+        let ticket = st.generation.begin();
+        st.ready.store(false, Ordering::Release);
+        if info.is_none() { return; }
+        std::thread::Builder::new().name("caret-file-index".into()).spawn(move || { if ensure_tracked(&h2, ticket) { merge_ignored(&h2, ticket); } }).ok();
     });
 }
 
@@ -576,6 +686,10 @@ pub async fn fs_list_files(app: AppHandle, limit: Option<usize>) -> Result<Vec<S
     tokio::task::spawn_blocking(move || { ensure_index(&app); let st = app.state::<FileIndexState>(); let v: Vec<String> = st.entries.read().iter().filter(|e| !e.ignored).take(limit).map(|e| e.rel.clone()).collect(); Ok(v) }).await.map_err(|e| CaretError::internal(e.to_string()))?
 }
 
+/// Current state of the quick-open index (never waits for a build).
+#[tauri::command(async)]
+pub fn fs_index_status(st: State<'_, FileIndexState>) -> Result<QuickOpenIndexStatus> { Ok(st.status()) }
+
 // ───────────────────────── tests ─────────────────────────
 #[cfg(test)]
 mod tests {
@@ -587,11 +701,66 @@ mod tests {
         std::fs::write(r.join(".gitignore"), "tmp/\nnode_modules\n").unwrap();
         std::fs::write(r.join("src/a.txt"), "a").unwrap(); std::fs::write(r.join("tmp/x.txt"), "x").unwrap();
         std::fs::write(r.join("tmp/node_modules/n.js"), "n").unwrap(); std::fs::write(r.join("node_modules/m.js"), "m").unwrap();
-        let tier0 = collect_workspace_files(r, &[], &[], 1000);
-        assert!(tier0.iter().any(|p| p == "src/a.txt") && !tier0.iter().any(|p| p.starts_with("tmp/")));
-        let known: HashSet<String> = tier0.iter().cloned().collect();
-        let tier1 = collect_ignored_files(r, &[], &[], &known, 1000);
-        assert_eq!(tier1, vec!["tmp/x.txt".to_string()]);
+        let tier0 = collect_workspace_files(r, &[], &[], &WalkLimits::cap_only(1000));
+        assert!(!tier0.partial && !tier0.stale);
+        assert!(tier0.files.iter().any(|p| p == "src/a.txt") && !tier0.files.iter().any(|p| p.starts_with("tmp/")));
+        let known: HashSet<String> = tier0.files.iter().cloned().collect();
+        let tier1 = collect_ignored_files(r, &[], &[], &known, &WalkLimits::cap_only(1000));
+        assert_eq!(tier1.files, vec!["tmp/x.txt".to_string()]);
+    }
+    #[test]
+    fn walk_limits_cap_and_deadline_publish_a_partial_list() {
+        let d = tempfile::tempdir().unwrap(); let r = d.path();
+        for i in 0..20 { std::fs::write(r.join(format!("f{i:02}.txt")), "x").unwrap(); }
+        let capped = collect_workspace_files(r, &[], &[], &WalkLimits::cap_only(5));
+        assert_eq!(capped.files.len(), 5);
+        assert!(capped.partial && !capped.stale, "hitting the cap is reported as partial");
+        let expired = collect_workspace_files(r, &[], &[], &WalkLimits { cap: 1000, deadline: Some(Instant::now() - Duration::from_millis(1)), ticket: None });
+        assert!(expired.partial && expired.files.is_empty(), "an exhausted budget stops before the first entry");
+        let full = collect_workspace_files(r, &[], &[], &WalkLimits { cap: 1000, deadline: Some(Instant::now() + Duration::from_secs(30)), ticket: None });
+        assert_eq!(full.files.len(), 20);
+        assert!(!full.partial);
+    }
+    #[test]
+    fn a_stale_generation_ticket_stops_the_walk_and_marks_it_stale() {
+        let d = tempfile::tempdir().unwrap(); let r = d.path();
+        for i in 0..5 { std::fs::write(r.join(format!("f{i}.txt")), "x").unwrap(); }
+        let g = Generation::new();
+        let ticket = g.begin();
+        let fresh = collect_workspace_files(r, &[], &[], &WalkLimits { cap: 1000, deadline: None, ticket: Some((&g, ticket)) });
+        assert_eq!(fresh.files.len(), 5);
+        assert!(!fresh.stale);
+        g.begin(); // the workspace changed
+        let stale = collect_workspace_files(r, &[], &[], &WalkLimits { cap: 1000, deadline: None, ticket: Some((&g, ticket)) });
+        assert!(stale.stale && !stale.partial && stale.files.is_empty(), "a superseded walk quits without results");
+    }
+    #[test]
+    fn merge_sorted_keeps_order_and_prefers_existing_entries() {
+        let e = |rel: &str, ignored: bool| Entry { rel: rel.into(), lower: rel.to_lowercase(), ignored };
+        let base = vec![e("a.txt", false), e("src/main.rs", false), e("tmp/x.txt", false)];
+        let extra = vec![e("b.txt", true), e("tmp/x.txt", true), e("tmp/y.txt", true), e("zz.log", true)];
+        let merged = merge_sorted(base, extra.into_iter());
+        let rels: Vec<&str> = merged.iter().map(|x| x.rel.as_str()).collect();
+        assert_eq!(rels, vec!["a.txt", "b.txt", "src/main.rs", "tmp/x.txt", "tmp/y.txt", "zz.log"]);
+        assert!(!merged.iter().find(|x| x.rel == "tmp/x.txt").unwrap().ignored, "the watcher-inserted tracked entry wins over the tier-2 duplicate");
+        assert!(merged.windows(2).all(|w| w[0].rel < w[1].rel));
+    }
+    #[test]
+    fn heavy_build_dirs_are_skipped_by_the_ignored_tier_walk() {
+        for name in ["target", "build", "dist", "out", ".gradle", "Pods", "DerivedData", ".terraform", "vendor/bundle", "node_modules"] {
+            assert!(IGNORED_TIER_SKIP.contains(&name), "{name} must be on the heavy-directory skip list");
+        }
+        let d = tempfile::tempdir().unwrap(); let r = d.path();
+        // A Rust + Node repository: everything below is gitignored, only `scratch/` is small enough to be worth surfacing.
+        for dir in ["src", "target/debug/deps", "target/node-src/pkg", "dist", "build", "vendor/bundle/ruby", "website/node_modules/lib", "scratch"] { std::fs::create_dir_all(r.join(dir)).unwrap(); }
+        std::fs::write(r.join(".gitignore"), "target/\ndist/\nbuild/\nvendor/bundle/\nnode_modules/\nscratch/\n").unwrap();
+        for f in ["src/main.rs", "target/debug/deps/libx.rlib", "target/node-src/pkg/index.js", "dist/app.js", "build/out.o", "vendor/bundle/ruby/gem.rb", "website/node_modules/lib/i.js", "scratch/keep.txt"] { std::fs::write(r.join(f), "x").unwrap(); }
+        let tier0 = collect_workspace_files(r, &[], &[], &WalkLimits::cap_only(1000));
+        assert_eq!(tier0.files, vec![".gitignore".to_string(), "src/main.rs".to_string()]);
+        let known: HashSet<String> = tier0.files.iter().cloned().collect();
+        let tier1 = collect_ignored_files(r, &[], &[], &known, &WalkLimits::cap_only(1000));
+        assert_eq!(tier1.files, vec!["scratch/keep.txt".to_string()], "target/, dist/, build/, vendor/bundle/ and nested node_modules/ are never walked");
+        assert!(!tier1.partial);
     }
     #[test]
     fn line_endings() {
@@ -665,7 +834,7 @@ mod tests {
         std::fs::write(r.join("secret.env"), "x").unwrap();
         std::fs::write(r.join(".gitignore"), "node_modules\n").unwrap();
         std::fs::write(r.join(".cursorignore"), "*.env\n").unwrap();
-        let files = collect_workspace_files(r, &[], &[], 1000);
+        let files = collect_workspace_files(r, &[], &[], &WalkLimits::cap_only(1000)).files;
         assert!(files.contains(&"src/a.ts".to_string()));
         assert!(!files.iter().any(|f| f.contains("node_modules")));
         assert!(!files.iter().any(|f| f.ends_with(".env")));

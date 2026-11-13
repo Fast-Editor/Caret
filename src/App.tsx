@@ -14,6 +14,7 @@ import { initTheme } from '@/lib/theme'
 import { initCliOpen } from '@/lib/cliOpen'
 import { initDebugModule } from '@/components/debug'
 import { Events, on, isTauri } from '@/lib/tauri'
+import { onWorkspaceChanged } from '@/lib/workspaceReload'
 import { api } from '@/lib/api'
 import { initSettingsStore, useSettings } from '@/store/settings'
 import { initWorkspaceStore, useWorkspace } from '@/store/workspace'
@@ -60,7 +61,8 @@ function boot(): () => void {
   // native menu routing
   offs.push(on<string>(Events.menu, (id) => { const m = MENU_MAP[id]; if (m && hasCommand(m.id)) void runCommand(m.id, m.args); else if (m) console.warn(`[menu] command not available: ${m.id}`) }))
   // workspace restore / welcome
-  offs.push(on<WorkspaceInfo | null>(Events.workspaceChanged, (ws) => { if (ws && hasCommand('editor.onWorkspaceChanged')) void runCommand('editor.onWorkspaceChanged', ws) }))
+  // The editor reacts in the `now` tier so it renders with the explorer; see src/lib/workspaceReload.ts for the ordering.
+  offs.push(onWorkspaceChanged('now', (ws) => { if (ws && hasCommand('editor.onWorkspaceChanged')) void runCommand('editor.onWorkspaceChanged', ws) }))
   void (async () => {
     const wsState = useWorkspace.getState()
     await wsState.load().catch(() => {})

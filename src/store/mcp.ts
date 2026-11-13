@@ -2,6 +2,7 @@ import { create } from 'zustand'
 import type { McpServerStatus, McpServerConfig, McpToolInfo, McpResourceInfo, McpPromptInfo } from '@/types'
 import { api } from '@/lib/api'
 import { Events, on } from '@/lib/tauri'
+import { onWorkspaceChanged } from '@/lib/workspaceReload'
 
 interface McpStore {
   servers: McpServerStatus[]
@@ -46,5 +47,6 @@ export function initMcpStore(): void {
   subscribed = true
   useMcp.getState().load().catch(() => {})
   on(Events.mcpChanged, () => useMcp.getState().load().catch(() => {}))
-  on(Events.workspaceChanged, () => useMcp.getState().load().catch(() => {}))
+  // The backend reloads workspace MCP configs itself and broadcasts `mcpChanged`; this is the settled-state refresh.
+  onWorkspaceChanged('later', () => useMcp.getState().load().catch(() => {}))
 }
