@@ -33,7 +33,7 @@ fn setup(name: &str) -> (Arc<AcpInner>, Arc<AgentManager>, PathBuf) {
 }
 
 async fn new_session(mgr: &Arc<AgentManager>, agent: &str) -> Arc<SessionHandle> {
-    let h = mgr.create_session(None, None, Some("acp test".into()), false, None).await.unwrap();
+    let h = mgr.create_session(mgr.workspace_root(), None, None, Some("acp test".into()), false, None).await.unwrap();
     { let mut s = h.session.lock(); s.agent_id = Some(agent.into()); s.title_generated = false; }
     h
 }

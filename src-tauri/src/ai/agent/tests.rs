@@ -49,7 +49,7 @@ async fn new_mgr(ws: &std::path::Path) -> (Arc<AgentManager>, Arc<SessionHandle>
     test_home();
     let mgr = Arc::new(AgentManager::new());
     mgr.set_fallback_root(Some(ws.to_path_buf()));
-    let h = mgr.create_session(Some("agent".into()), None, Some("Test".into()), false, None).await.unwrap();
+    let h = mgr.create_session(Some(ws.to_path_buf()), Some("agent".into()), None, Some("Test".into()), false, None).await.unwrap();
     (mgr, h)
 }
 
@@ -558,6 +558,56 @@ async fn list_all_spans_workspace_keys() {
     let mut s3 = ws_session(ws2.path(), "Searchable"); s3.messages.push(text_msg(MessageRole::User, "find the quokka")); mgr.store.save_now(&k2, &s3).unwrap();
     let hits = mgr.store.search_messages(&crate::core::sessions::all_workspace_keys(), "QUOKKA", false, 10);
     assert_eq!(hits.len(), 1); assert_eq!(hits[0].workspace_root, s3.workspace_root);
+}
+
+// ───────── per-window roots (docs/MULTI_WINDOW.md, phase 1C) ─────────
+
+#[tokio::test]
+async fn ws_key_for_and_session_roots_follow_the_given_root_not_focus() {
+    let ws = temp_workspace();
+    let key = workspace_key(Some(ws.path()));
+    assert_eq!(AgentManager::ws_key_for(Some(ws.path())), key);
+    assert_eq!(AgentManager::ws_key_for(None), "global", "no folder: the global store");
+    let mgr = Arc::new(AgentManager::new());
+    mgr.set_fallback_root(None); // the "focused window" has no folder; explicit roots must not care
+    // window with a folder
+    let h = mgr.create_session(Some(ws.path().to_path_buf()), Some("agent".into()), None, Some("In folder".into()), false, None).await.unwrap();
+    { let s = h.session.lock(); assert_eq!(std::path::PathBuf::from(&s.workspace_root), ws.path()); assert_eq!(s.cwd, s.workspace_root); assert_eq!(mgr.ws_key_of(&s), key); }
+    assert!(mgr.store.exists(&key, &h.id()), "persisted under the folder's key");
+    // window without a folder: a folderless thread under "global"
+    let g = mgr.create_session(None, Some("agent".into()), None, Some("No folder".into()), false, None).await.unwrap();
+    { let s = g.session.lock(); assert!(s.workspace_root.is_empty()); assert_eq!(mgr.ws_key_of(&s), "global"); }
+    assert!(mgr.store.exists("global", &g.id()));
+    // `handle` loads from any workspace store without a focused root
+    let other = temp_workspace();
+    let s2 = ws_session(other.path(), "Elsewhere");
+    mgr.store.save_now(&workspace_key(Some(other.path())), &s2).unwrap();
+    assert_eq!(mgr.handle(&s2.id).unwrap().session.lock().title, "Elsewhere");
+    assert!(mgr.handle("no-such-session").is_err());
+}
+
+#[tokio::test]
+async fn list_sessions_for_filters_by_root_and_lists_scratch_everywhere() {
+    let ws1 = temp_workspace();
+    let ws2 = temp_workspace();
+    let mgr = Arc::new(AgentManager::new());
+    let a = mgr.create_session(Some(ws1.path().to_path_buf()), Some("agent".into()), None, Some("A".into()), false, None).await.unwrap();
+    let b = mgr.create_session(Some(ws2.path().to_path_buf()), Some("agent".into()), None, Some("B".into()), false, None).await.unwrap();
+    let g = mgr.create_session(None, Some("agent".into()), None, Some("G".into()), false, None).await.unwrap();
+    let scratch = { let mut s = Session::default(); s.title = "Scratch".into(); s.scratch = true; s.workspace_root = ws2.path().join("scratch").to_string_lossy().to_string(); mgr.adopt(SessionHandle::new(s)) };
+    let ids = |v: Vec<SessionSummary>| v.into_iter().map(|s| s.id).collect::<Vec<_>>();
+    let l1 = ids(mgr.list_sessions_for(Some(ws1.path()), true));
+    assert!(l1.contains(&a.id()) && l1.contains(&scratch.id()), "{l1:?}");
+    assert!(!l1.contains(&b.id()) && !l1.contains(&g.id()), "another folder's and folderless threads stay out: {l1:?}");
+    let l2 = ids(mgr.list_sessions_for(Some(ws2.path()), true));
+    assert!(l2.contains(&b.id()) && l2.contains(&scratch.id()) && !l2.contains(&a.id()) && !l2.contains(&g.id()), "{l2:?}");
+    let l0 = ids(mgr.list_sessions_for(None, true));
+    assert!(l0.contains(&g.id()) && l0.contains(&scratch.id()), "no folder: folderless and scratch threads: {l0:?}");
+    assert!(!l0.contains(&a.id()) && !l0.contains(&b.id()));
+    // the compatibility listing (no window) follows the focused / fallback root
+    mgr.set_fallback_root(Some(ws2.path().to_path_buf()));
+    let lc = ids(mgr.list_sessions(true));
+    assert!(lc.contains(&b.id()) && !lc.contains(&a.id()));
 }
 
 // ───────────────────────── forks / handoff / fan-out (agent/handoff.rs) ─────────────────────────

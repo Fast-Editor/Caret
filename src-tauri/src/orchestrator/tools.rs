@@ -244,7 +244,8 @@ async fn create_thread(ctx: &Arc<Ctx>, args: &Value) -> Result<Value> {
         if acp::registry::find_config(&settings, &agent).filter(|c| c.enabled).is_none() { return Err(CaretError::not_found(format!("agent `{agent}` (see list_agents)"))); }
     }
     if let Some(m) = arg_str(args, "model_id") { if m != "auto" && settings.model(&m).is_none() { return Err(CaretError::not_found(format!("model `{m}` (see list_agents for configured models)"))); } }
-    let h = ctx.mgr.create_session(arg_str(args, "mode"), arg_str(args, "model_id"), arg_str(args, "title"), arg_bool(args, "use_worktree", false), None).await?;
+    // External MCP client, no window of its own: new threads are rooted in the focused window's folder.
+    let h = ctx.mgr.create_session(ctx.mgr.workspace_root(), arg_str(args, "mode"), arg_str(args, "model_id"), arg_str(args, "title"), arg_bool(args, "use_worktree", false), None).await?;
     if agent != BUILTIN_AGENT {
         // Same binding as `chat_create_session`: the agent id lives on the session; the UI reloads it.
         { let mut s = h.session.lock(); s.agent_id = Some(agent.clone()); }

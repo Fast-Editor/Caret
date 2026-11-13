@@ -142,17 +142,15 @@ pub fn wrap_options(settings: &crate::core::settings::Settings) -> WrapOptions {
 // ───────────────────────── commands ─────────────────────────
 
 #[tauri::command(async)]
-pub fn sandbox_status(app: AppHandle, _st: State<'_, SandboxState>) -> Result<SandboxStatus> {
-    use tauri::Manager;
-    let root = app.state::<crate::core::workspace::WorkspaceState>().root();
-    Ok(status(root.as_deref()))
+pub fn sandbox_status(ws: State<'_, crate::core::workspace::WorkspaceState>, window: tauri::Window, _st: State<'_, SandboxState>) -> Result<SandboxStatus> {
+    Ok(status(ws.root_for(window.label()).as_deref()))
 }
 
 #[tauri::command(async)]
-pub fn sandbox_classify(app: AppHandle, command: String, cwd: Option<String>) -> Result<CommandClassification> {
+pub fn sandbox_classify(app: AppHandle, ws: State<'_, crate::core::workspace::WorkspaceState>, window: tauri::Window, command: String, cwd: Option<String>) -> Result<CommandClassification> {
     use tauri::Manager;
-    let s = app.state::<crate::core::settings::SettingsState>().effective();
-    let root = app.state::<crate::core::workspace::WorkspaceState>().root();
+    let root = ws.root_for(window.label());
+    let s = app.state::<crate::core::settings::SettingsState>().effective_for(root.as_deref());
     let cwd = cwd.map(|c| crate::paths::resolve(root.as_deref(), &c)).or_else(|| root.clone());
     Ok(classify_with(&command, cwd.as_deref(), root.as_deref(), &s.agent.command_allowlist, &s.agent.command_denylist))
 }

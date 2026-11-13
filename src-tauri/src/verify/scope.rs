@@ -145,8 +145,9 @@ fn mk(root: &Path, rel: &str, before: Option<String>, after: Option<String>, dif
 
 fn read_opt(p: &Path) -> Option<String> { std::fs::read(p).ok().filter(|b| b.len() <= 4 * 1024 * 1024 && !b.contains(&0u8)).map(|b| String::from_utf8_lossy(&b).to_string()) }
 
-pub async fn resolve(app: &AppHandle, scope: &VerifyScope) -> Result<ResolvedScope> {
-    let root = app.state::<crate::core::workspace::WorkspaceState>().root().ok_or_else(CaretError::no_workspace)?;
+/// Resolve the files a scope touches under `root` (the report's workspace root, captured when the run started).
+pub async fn resolve(app: &AppHandle, root: &Path, scope: &VerifyScope) -> Result<ResolvedScope> {
+    let root = root.to_path_buf();
     let mut files: Vec<TouchedFile> = vec![];
     let mut final_text = None;
     match scope.kind.as_str() {

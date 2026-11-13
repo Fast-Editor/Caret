@@ -38,14 +38,19 @@ pub async fn ai_commit_message(app: AppHandle, req: commit::CommitMessageRequest
 #[tauri::command]
 pub async fn ai_review(app: AppHandle, req: review::ReviewRequest, on_event: Channel<review::ReviewStreamEvent>) -> Result<String> { review::start_review(app, req, on_event).await }
 
+/// `REVIEW_CHANGED` for the windows showing `root` (app-wide when the window has no folder).
+fn review_changed(app: &AppHandle, root: Option<&std::path::Path>) {
+    match root { Some(r) => crate::events::emit_for_root(app, r, crate::events::REVIEW_CHANGED, ()), None => crate::events::emit(app, crate::events::REVIEW_CHANGED, ()) }
+}
+
 #[tauri::command(async)]
-pub fn ai_review_list(app: AppHandle) -> Result<Vec<review::ReviewResult>> { let root = crate::ai::util::workspace_root(&app); Ok(app.state::<review::ReviewState>().list(root.as_deref())) }
+pub fn ai_review_list(app: AppHandle, window: tauri::Window) -> Result<Vec<review::ReviewResult>> { let root = crate::ai::util::workspace_root_for(&app, window.label()); Ok(app.state::<review::ReviewState>().list(root.as_deref())) }
 
 #[tauri::command]
-pub fn ai_review_dismiss(app: AppHandle, review_id: String) -> Result<()> { let root = crate::ai::util::workspace_root(&app); app.state::<review::ReviewState>().dismiss(root.as_deref(), &review_id); crate::events::emit(&app, crate::events::REVIEW_CHANGED, ()); Ok(()) }
+pub fn ai_review_dismiss(app: AppHandle, window: tauri::Window, review_id: String) -> Result<()> { let root = crate::ai::util::workspace_root_for(&app, window.label()); app.state::<review::ReviewState>().dismiss(root.as_deref(), &review_id); review_changed(&app, root.as_deref()); Ok(()) }
 
 #[tauri::command]
-pub fn ai_review_dismiss_finding(app: AppHandle, review_id: String, finding_id: String) -> Result<()> { let root = crate::ai::util::workspace_root(&app); app.state::<review::ReviewState>().dismiss_finding(root.as_deref(), &review_id, &finding_id); crate::events::emit(&app, crate::events::REVIEW_CHANGED, ()); Ok(()) }
+pub fn ai_review_dismiss_finding(app: AppHandle, window: tauri::Window, review_id: String, finding_id: String) -> Result<()> { let root = crate::ai::util::workspace_root_for(&app, window.label()); app.state::<review::ReviewState>().dismiss_finding(root.as_deref(), &review_id, &finding_id); review_changed(&app, root.as_deref()); Ok(()) }
 
 #[tauri::command]
 pub async fn models_list_remote(app: AppHandle, provider_id: String) -> Result<Vec<String>> {

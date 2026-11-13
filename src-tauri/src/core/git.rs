@@ -73,7 +73,8 @@ pub struct GitRemote { pub name: String, pub url: String }
 
 // ───────────────────────── helpers ─────────────────────────
 
-fn root_of(app: &AppHandle) -> Result<PathBuf> { app.state::<WorkspaceState>().require_root() }
+/// The calling window's repository root (every command takes `window`; two windows may show different repositories).
+fn root_of(app: &AppHandle, label: &str) -> Result<PathBuf> { app.state::<WorkspaceState>().require_root_for(label) }
 
 fn open(root: &Path) -> Result<Repository> {
     Repository::discover(root).map_err(|_| CaretError::new("not_a_repo", format!("{} is not inside a git repository", root.display())))
@@ -89,7 +90,13 @@ fn abs(repo: &Repository, p: &Path) -> String { workdir(repo).join(p).to_string_
 async fn blocking<T: Send + 'static>(f: impl FnOnce() -> Result<T> + Send + 'static) -> Result<T> {
     tokio::task::spawn_blocking(f).await.map_err(|e| CaretError::internal(e.to_string()))?
 }
-fn changed(app: &AppHandle) { events::emit(app, events::GIT_CHANGED, serde_json::Value::Null); }
+/// Tell the windows showing this window's repository (and Rust listeners) that git state changed.
+fn changed(app: &AppHandle, label: &str) {
+    match app.state::<WorkspaceState>().root_for(label) {
+        Some(root) => events::emit_for_root(app, &root, events::GIT_CHANGED, serde_json::Value::Null),
+        None => events::emit(app, events::GIT_CHANGED, serde_json::Value::Null),
+    }
+}
 
 fn head_commit(repo: &Repository) -> Option<git2::Commit<'_>> { repo.head().ok().and_then(|h| h.peel_to_commit().ok()) }
 
@@ -158,8 +165,8 @@ pub fn status_sync(root: &Path) -> Result<GitStatus> {
 }
 
 #[tauri::command]
-pub async fn git_status(app: AppHandle) -> Result<GitStatus> {
-    let root = match root_of(&app) { Ok(r) => r, Err(_) => return Ok(GitStatus::empty()) };
+pub async fn git_status(app: AppHandle, window: tauri::Window) -> Result<GitStatus> {
+    let root = match root_of(&app, window.label()) { Ok(r) => r, Err(_) => return Ok(GitStatus::empty()) };
     blocking(move || status_sync(&root)).await
 }
 
@@ -205,14 +212,14 @@ pub fn diff_sync(root: &Path, path: Option<&str>, staged: bool, base: Option<&st
 }
 
 #[tauri::command]
-pub async fn git_diff(app: AppHandle, path: Option<String>, staged: Option<bool>, base: Option<String>) -> Result<String> {
-    let root = root_of(&app)?;
+pub async fn git_diff(app: AppHandle, window: tauri::Window, path: Option<String>, staged: Option<bool>, base: Option<String>) -> Result<String> {
+    let root = root_of(&app, window.label())?;
     blocking(move || diff_sync(&root, path.as_deref(), staged.unwrap_or(false), base.as_deref())).await
 }
 
 #[tauri::command]
-pub async fn git_diff_stat(app: AppHandle, base: Option<String>) -> Result<GitDiffStat> {
-    let root = root_of(&app)?;
+pub async fn git_diff_stat(app: AppHandle, window: tauri::Window, base: Option<String>) -> Result<GitDiffStat> {
+    let root = root_of(&app, window.label())?;
     blocking(move || {
         let repo = open(&root)?;
         let mut opts = DiffOptions::new();
@@ -257,21 +264,21 @@ pub fn unstage_sync(root: &Path, paths: Option<&[String]>) -> Result<()> {
 }
 
 #[tauri::command]
-pub async fn git_stage(app: AppHandle, paths: Vec<String>) -> Result<()> { let root = root_of(&app)?; blocking(move || stage_sync(&root, &paths)).await?; changed(&app); Ok(()) }
+pub async fn git_stage(app: AppHandle, window: tauri::Window, paths: Vec<String>) -> Result<()> { let root = root_of(&app, window.label())?; blocking(move || stage_sync(&root, &paths)).await?; changed(&app, window.label()); Ok(()) }
 #[tauri::command]
-pub async fn git_unstage(app: AppHandle, paths: Vec<String>) -> Result<()> { let root = root_of(&app)?; blocking(move || unstage_sync(&root, Some(&paths))).await?; changed(&app); Ok(()) }
+pub async fn git_unstage(app: AppHandle, window: tauri::Window, paths: Vec<String>) -> Result<()> { let root = root_of(&app, window.label())?; blocking(move || unstage_sync(&root, Some(&paths))).await?; changed(&app, window.label()); Ok(()) }
 #[tauri::command]
-pub async fn git_stage_all(app: AppHandle) -> Result<()> {
-    let root = root_of(&app)?;
+pub async fn git_stage_all(app: AppHandle, window: tauri::Window) -> Result<()> {
+    let root = root_of(&app, window.label())?;
     blocking(move || { let repo = open(&root)?; let mut index = repo.index()?; index.add_all(["*"], git2::IndexAddOption::DEFAULT, None)?; index.update_all(["*"], None)?; index.write()?; Ok(()) }).await?;
-    changed(&app); Ok(())
+    changed(&app, window.label()); Ok(())
 }
 #[tauri::command]
-pub async fn git_unstage_all(app: AppHandle) -> Result<()> { let root = root_of(&app)?; blocking(move || unstage_sync(&root, None)).await?; changed(&app); Ok(()) }
+pub async fn git_unstage_all(app: AppHandle, window: tauri::Window) -> Result<()> { let root = root_of(&app, window.label())?; blocking(move || unstage_sync(&root, None)).await?; changed(&app, window.label()); Ok(()) }
 
 #[tauri::command]
-pub async fn git_discard(app: AppHandle, paths: Vec<String>) -> Result<()> {
-    let root = root_of(&app)?;
+pub async fn git_discard(app: AppHandle, window: tauri::Window, paths: Vec<String>) -> Result<()> {
+    let root = root_of(&app, window.label())?;
     blocking(move || {
         let repo = open(&root)?;
         let wd = workdir(&repo);
@@ -290,7 +297,7 @@ pub async fn git_discard(app: AppHandle, paths: Vec<String>) -> Result<()> {
         }
         Ok(())
     }).await?;
-    changed(&app); Ok(())
+    changed(&app, window.label()); Ok(())
 }
 
 pub fn commit_sync(root: &Path, message: &str, amend: bool, signoff: bool) -> Result<String> {
@@ -316,10 +323,10 @@ pub fn commit_sync(root: &Path, message: &str, amend: bool, signoff: bool) -> Re
 }
 
 #[tauri::command]
-pub async fn git_commit(app: AppHandle, message: String, amend: Option<bool>, signoff: Option<bool>) -> Result<String> {
-    let root = root_of(&app)?;
+pub async fn git_commit(app: AppHandle, window: tauri::Window, message: String, amend: Option<bool>, signoff: Option<bool>) -> Result<String> {
+    let root = root_of(&app, window.label())?;
     let sha = blocking(move || commit_sync(&root, &message, amend.unwrap_or(false), signoff.unwrap_or(false))).await?;
-    changed(&app);
+    changed(&app, window.label());
     Ok(sha)
 }
 
@@ -356,8 +363,8 @@ fn touches_path(repo: &Repository, c: &git2::Commit, rel_path: &Path) -> bool {
 }
 
 #[tauri::command]
-pub async fn git_log(app: AppHandle, limit: Option<usize>, skip: Option<usize>, path: Option<String>, rev: Option<String>) -> Result<Vec<GitCommit>> {
-    let root = root_of(&app)?;
+pub async fn git_log(app: AppHandle, window: tauri::Window, limit: Option<usize>, skip: Option<usize>, path: Option<String>, rev: Option<String>) -> Result<Vec<GitCommit>> {
+    let root = root_of(&app, window.label())?;
     blocking(move || {
         let repo = open(&root)?;
         let mut walk = repo.revwalk()?;
@@ -381,8 +388,8 @@ pub async fn git_log(app: AppHandle, limit: Option<usize>, skip: Option<usize>, 
 }
 
 #[tauri::command]
-pub async fn git_commit_files(app: AppHandle, sha: String) -> Result<Vec<GitCommitFile>> {
-    let root = root_of(&app)?;
+pub async fn git_commit_files(app: AppHandle, window: tauri::Window, sha: String) -> Result<Vec<GitCommitFile>> {
+    let root = root_of(&app, window.label())?;
     blocking(move || {
         let repo = open(&root)?;
         let commit = repo.revparse_single(&sha)?.peel_to_commit()?;
@@ -409,8 +416,8 @@ pub async fn git_commit_files(app: AppHandle, sha: String) -> Result<Vec<GitComm
 }
 
 #[tauri::command]
-pub async fn git_show_file(app: AppHandle, path: String, rev: String) -> Result<String> {
-    let root = root_of(&app)?;
+pub async fn git_show_file(app: AppHandle, window: tauri::Window, path: String, rev: String) -> Result<String> {
+    let root = root_of(&app, window.label())?;
     blocking(move || {
         let repo = open(&root)?;
         let r = rel(&repo, &path);
@@ -431,8 +438,8 @@ pub async fn git_show_file(app: AppHandle, path: String, rev: String) -> Result<
 }
 
 #[tauri::command]
-pub async fn git_blame(app: AppHandle, path: String) -> Result<Vec<GitBlameLine>> {
-    let root = root_of(&app)?;
+pub async fn git_blame(app: AppHandle, window: tauri::Window, path: String) -> Result<Vec<GitBlameLine>> {
+    let root = root_of(&app, window.label())?;
     blocking(move || {
         let repo = open(&root)?;
         let r = rel(&repo, &path);
@@ -465,8 +472,8 @@ pub async fn git_blame(app: AppHandle, path: String) -> Result<Vec<GitBlameLine>
 // ───────────────────────── branches ─────────────────────────
 
 #[tauri::command]
-pub async fn git_branches(app: AppHandle) -> Result<Vec<GitBranch>> {
-    let root = root_of(&app)?;
+pub async fn git_branches(app: AppHandle, window: tauri::Window) -> Result<Vec<GitBranch>> {
+    let root = root_of(&app, window.label())?;
     blocking(move || {
         let repo = open(&root)?;
         let mut out = vec![];
@@ -509,15 +516,15 @@ pub fn checkout_sync(root: &Path, reference: &str, create: bool) -> Result<()> {
 }
 
 #[tauri::command]
-pub async fn git_checkout(app: AppHandle, r#ref: String, create: Option<bool>) -> Result<()> {
-    let root = root_of(&app)?;
+pub async fn git_checkout(app: AppHandle, window: tauri::Window, r#ref: String, create: Option<bool>) -> Result<()> {
+    let root = root_of(&app, window.label())?;
     blocking(move || checkout_sync(&root, &r#ref, create.unwrap_or(false))).await?;
-    changed(&app); Ok(())
+    changed(&app, window.label()); Ok(())
 }
 
 #[tauri::command]
-pub async fn git_create_branch(app: AppHandle, name: String, checkout: Option<bool>) -> Result<()> {
-    let root = root_of(&app)?;
+pub async fn git_create_branch(app: AppHandle, window: tauri::Window, name: String, checkout: Option<bool>) -> Result<()> {
+    let root = root_of(&app, window.label())?;
     blocking(move || {
         let repo = open(&root)?;
         let head = head_commit(&repo).ok_or_else(|| CaretError::invalid("Repository has no commits yet"))?;
@@ -525,12 +532,12 @@ pub async fn git_create_branch(app: AppHandle, name: String, checkout: Option<bo
         if checkout.unwrap_or(true) { repo.set_head(&format!("refs/heads/{name}"))?; }
         Ok(())
     }).await?;
-    changed(&app); Ok(())
+    changed(&app, window.label()); Ok(())
 }
 
 #[tauri::command]
-pub async fn git_delete_branch(app: AppHandle, name: String, force: Option<bool>) -> Result<()> {
-    let root = root_of(&app)?;
+pub async fn git_delete_branch(app: AppHandle, window: tauri::Window, name: String, force: Option<bool>) -> Result<()> {
+    let root = root_of(&app, window.label())?;
     blocking(move || {
         let repo = open(&root)?;
         let mut b = repo.find_branch(&name, BranchType::Local).map_err(|_| CaretError::not_found(format!("branch {name}")))?;
@@ -543,18 +550,18 @@ pub async fn git_delete_branch(app: AppHandle, name: String, force: Option<bool>
         b.delete()?;
         Ok(())
     }).await?;
-    changed(&app); Ok(())
+    changed(&app, window.label()); Ok(())
 }
 
 #[tauri::command]
-pub async fn git_remotes(app: AppHandle) -> Result<Vec<GitRemote>> {
-    let root = root_of(&app)?;
+pub async fn git_remotes(app: AppHandle, window: tauri::Window) -> Result<Vec<GitRemote>> {
+    let root = root_of(&app, window.label())?;
     blocking(move || { let repo = open(&root)?; let names = repo.remotes()?; Ok(names.iter().flatten().flatten().filter_map(|n| repo.find_remote(n).ok().map(|r| GitRemote { name: n.to_string(), url: r.url().unwrap_or("").to_string() })).collect()) }).await
 }
 
 #[tauri::command]
-pub async fn git_default_branch(app: AppHandle) -> Result<Option<String>> {
-    let root = root_of(&app)?;
+pub async fn git_default_branch(app: AppHandle, window: tauri::Window) -> Result<Option<String>> {
+    let root = root_of(&app, window.label())?;
     blocking(move || {
         let repo = open(&root)?;
         if let Ok(r) = repo.find_reference("refs/remotes/origin/HEAD") { if let Some(t) = r.symbolic_target().ok().flatten() { return Ok(t.strip_prefix("refs/remotes/origin/").map(String::from)); } }
@@ -564,10 +571,10 @@ pub async fn git_default_branch(app: AppHandle) -> Result<Option<String>> {
 }
 
 #[tauri::command]
-pub async fn git_init(app: AppHandle) -> Result<()> {
-    let root = root_of(&app)?;
+pub async fn git_init(app: AppHandle, window: tauri::Window) -> Result<()> {
+    let root = root_of(&app, window.label())?;
     blocking(move || { Repository::init(&root)?; Ok(()) }).await?;
-    changed(&app); Ok(())
+    changed(&app, window.label()); Ok(())
 }
 
 // ───────────────────────── git CLI ops ─────────────────────────
@@ -592,34 +599,34 @@ pub async fn run_git(root: &Path, args: &[&str], timeout: std::time::Duration) -
 const NET_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(120);
 
 #[tauri::command]
-pub async fn git_push(app: AppHandle, remote: Option<String>, branch: Option<String>, set_upstream: Option<bool>, force: Option<bool>) -> Result<GitRemoteOpResult> {
-    let root = root_of(&app)?;
+pub async fn git_push(app: AppHandle, window: tauri::Window, remote: Option<String>, branch: Option<String>, set_upstream: Option<bool>, force: Option<bool>) -> Result<GitRemoteOpResult> {
+    let root = root_of(&app, window.label())?;
     let mut args: Vec<String> = vec!["push".into()];
     if force.unwrap_or(false) { args.push("--force-with-lease".into()); }
     if set_upstream.unwrap_or(false) { args.push("-u".into()); }
     if let Some(r) = remote.filter(|r| !r.is_empty()) { args.push(r); if let Some(b) = branch.filter(|b| !b.is_empty()) { args.push(b); } }
     else if set_upstream.unwrap_or(false) { args.push("origin".into()); if let Some(b) = branch.filter(|b| !b.is_empty()) { args.push(b); } else if let Some(cur) = status_sync(&root).ok().and_then(|s| s.branch) { args.push(cur); } }
     let r = run_git(&root, &args.iter().map(String::as_str).collect::<Vec<_>>(), NET_TIMEOUT).await?;
-    changed(&app); Ok(r)
+    changed(&app, window.label()); Ok(r)
 }
 #[tauri::command]
-pub async fn git_pull(app: AppHandle, rebase: Option<bool>) -> Result<GitRemoteOpResult> {
-    let root = root_of(&app)?;
+pub async fn git_pull(app: AppHandle, window: tauri::Window, rebase: Option<bool>) -> Result<GitRemoteOpResult> {
+    let root = root_of(&app, window.label())?;
     let args: Vec<&str> = if rebase.unwrap_or(false) { vec!["pull", "--rebase"] } else { vec!["pull"] };
-    let r = run_git(&root, &args, NET_TIMEOUT).await?; changed(&app); Ok(r)
+    let r = run_git(&root, &args, NET_TIMEOUT).await?; changed(&app, window.label()); Ok(r)
 }
 #[tauri::command]
-pub async fn git_fetch(app: AppHandle) -> Result<GitRemoteOpResult> { let root = root_of(&app)?; let r = run_git(&root, &["fetch", "--all", "--prune"], NET_TIMEOUT).await?; changed(&app); Ok(r) }
+pub async fn git_fetch(app: AppHandle, window: tauri::Window) -> Result<GitRemoteOpResult> { let root = root_of(&app, window.label())?; let r = run_git(&root, &["fetch", "--all", "--prune"], NET_TIMEOUT).await?; changed(&app, window.label()); Ok(r) }
 #[tauri::command]
-pub async fn git_stash(app: AppHandle, message: Option<String>) -> Result<GitRemoteOpResult> {
-    let root = root_of(&app)?;
+pub async fn git_stash(app: AppHandle, window: tauri::Window, message: Option<String>) -> Result<GitRemoteOpResult> {
+    let root = root_of(&app, window.label())?;
     let mut args = vec!["stash", "push", "--include-untracked"];
     let m = message.unwrap_or_default();
     if !m.is_empty() { args.push("-m"); args.push(&m); }
-    let r = run_git(&root, &args, NET_TIMEOUT).await?; changed(&app); Ok(r)
+    let r = run_git(&root, &args, NET_TIMEOUT).await?; changed(&app, window.label()); Ok(r)
 }
 #[tauri::command]
-pub async fn git_stash_pop(app: AppHandle) -> Result<GitRemoteOpResult> { let root = root_of(&app)?; let r = run_git(&root, &["stash", "pop"], NET_TIMEOUT).await?; changed(&app); Ok(r) }
+pub async fn git_stash_pop(app: AppHandle, window: tauri::Window) -> Result<GitRemoteOpResult> { let root = root_of(&app, window.label())?; let r = run_git(&root, &["stash", "pop"], NET_TIMEOUT).await?; changed(&app, window.label()); Ok(r) }
 
 pub fn parse_worktrees(porcelain: &str) -> Vec<GitWorktree> {
     let mut out = vec![];
@@ -637,37 +644,37 @@ pub fn parse_worktrees(porcelain: &str) -> Vec<GitWorktree> {
 }
 
 #[tauri::command]
-pub async fn git_worktrees(app: AppHandle) -> Result<Vec<GitWorktree>> {
-    let root = root_of(&app)?;
+pub async fn git_worktrees(app: AppHandle, window: tauri::Window) -> Result<Vec<GitWorktree>> {
+    let root = root_of(&app, window.label())?;
     let r = run_git(&root, &["worktree", "list", "--porcelain"], std::time::Duration::from_secs(20)).await?;
     if !r.ok { return Err(CaretError::new("git", r.output)); }
     Ok(parse_worktrees(&r.output))
 }
 
 #[tauri::command]
-pub async fn git_worktree_add(app: AppHandle, path: String, branch: String, create_branch: Option<bool>) -> Result<GitWorktree> {
-    let root = root_of(&app)?;
+pub async fn git_worktree_add(app: AppHandle, window: tauri::Window, path: String, branch: String, create_branch: Option<bool>) -> Result<GitWorktree> {
+    let root = root_of(&app, window.label())?;
     let target = crate::paths::resolve(Some(&root), &path);
     if let Some(parent) = target.parent() { std::fs::create_dir_all(parent)?; }
     let t = target.to_string_lossy().to_string();
     let args: Vec<&str> = if create_branch.unwrap_or(true) { vec!["worktree", "add", "-b", &branch, &t] } else { vec!["worktree", "add", &t, &branch] };
     let r = run_git(&root, &args, std::time::Duration::from_secs(60)).await?;
     if !r.ok { return Err(CaretError::new("git", r.output)); }
-    changed(&app);
+    changed(&app, window.label());
     let list = run_git(&root, &["worktree", "list", "--porcelain"], std::time::Duration::from_secs(20)).await?;
     let canon = std::fs::canonicalize(&target).unwrap_or(target.clone());
     Ok(parse_worktrees(&list.output).into_iter().find(|w| Path::new(&w.path) == canon || Path::new(&w.path) == target).unwrap_or(GitWorktree { path: t, branch: Some(branch), head: String::new(), is_main: false, is_locked: false }))
 }
 
 #[tauri::command]
-pub async fn git_worktree_remove(app: AppHandle, path: String, force: Option<bool>) -> Result<()> {
-    let root = root_of(&app)?;
+pub async fn git_worktree_remove(app: AppHandle, window: tauri::Window, path: String, force: Option<bool>) -> Result<()> {
+    let root = root_of(&app, window.label())?;
     let target = crate::paths::resolve(Some(&root), &path).to_string_lossy().to_string();
     let mut args = vec!["worktree", "remove"]; if force.unwrap_or(false) { args.push("--force"); } args.push(&target);
     let r = run_git(&root, &args, std::time::Duration::from_secs(60)).await?;
     if !r.ok { return Err(CaretError::new("git", r.output)); }
     let _ = run_git(&root, &["worktree", "prune"], std::time::Duration::from_secs(20)).await;
-    changed(&app); Ok(())
+    changed(&app, window.label()); Ok(())
 }
 
 // ───────────────────────── tests ─────────────────────────

@@ -9,11 +9,14 @@ pub mod store;
 
 use crate::ai::agent::manager::AgentManager;
 use crate::ai::agent::session::AgentEvent;
+use crate::core::settings::SettingsState;
+use crate::core::workspace::WorkspaceState;
 use crate::error::{CaretError, Result};
 use crate::events;
 use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::path::PathBuf;
 use std::sync::Arc;
 use tauri::ipc::Channel;
 use tauri::{AppHandle, Manager, State};
@@ -174,11 +177,11 @@ impl Emitter {
 
 fn now_ms() -> u64 { crate::ai::agent::session::now_ms() }
 
-/// Start a verification; returns the report id immediately and streams progress.
-pub async fn start(app: AppHandle, st: Arc<VerifyInner>, scope: VerifyScope, channel: Option<Channel<VerifyEvent>>) -> Result<String> {
-    let root = app.state::<crate::core::workspace::WorkspaceState>().root().ok_or_else(CaretError::no_workspace)?;
+/// Start a verification of `root` (captured by the caller: the run outlives the command and must not follow window
+/// focus); returns the report id immediately and streams progress.
+pub async fn start(app: AppHandle, root: PathBuf, st: Arc<VerifyInner>, scope: VerifyScope, channel: Option<Channel<VerifyEvent>>) -> Result<String> {
     let id = crate::ai::agent::session::new_id();
-    let settings = app.state::<crate::core::settings::SettingsState>().effective();
+    let settings = app.state::<SettingsState>().effective_for(Some(&root));
     let session_id = scope.session_id.clone();
     let report = VerificationReport { id: id.clone(), scope: scope.clone(), session_id: session_id.clone(), workspace_root: root.to_string_lossy().to_string(), started_at: now_ms(), finished_at: None, status: "running".into(), checks: checks::initial(&settings), risk_tier: 0, risk_reasons: vec![], facts: vec![], claims: vec![], files_touched: vec![], additions: 0, deletions: 0, summary: "Verifying…".into() };
     st.put(report.clone());
@@ -215,8 +218,9 @@ pub async fn start(app: AppHandle, st: Arc<VerifyInner>, scope: VerifyScope, cha
 }
 
 async fn run(app: &AppHandle, st: &Arc<VerifyInner>, report: &mut VerificationReport, emitter: &Emitter, cancel: &CancellationToken) -> Result<()> {
-    let settings = app.state::<crate::core::settings::SettingsState>().effective();
-    let resolved = scope::resolve(app, &report.scope).await?;
+    let root = PathBuf::from(&report.workspace_root);
+    let settings = app.state::<SettingsState>().effective_for(Some(&root));
+    let resolved = scope::resolve(app, &root, &report.scope).await?;
     report.files_touched = resolved.files.iter().map(|f| f.path.clone()).collect();
     report.additions = resolved.additions; report.deletions = resolved.deletions;
     report.claims = resolved.final_assistant_text.as_deref().map(risk::extract_claims).unwrap_or_default();
@@ -266,36 +270,40 @@ fn overall_status(checks: &[VerifyCheck]) -> String {
 
 /// Runner hook: verify the changes of one finished turn (never blocks the turn).
 pub async fn auto_run_after_turn(app: AppHandle, session_id: String, turn_id: String) {
-    let settings = app.state::<crate::core::settings::SettingsState>().effective();
-    if !settings.verify.auto_run_after_turn { return; }
-    let change_ids: Vec<String> = {
+    // The session's own root and settings: the turn may have outlived a focus change (or its window).
+    let (root, change_ids): (Option<PathBuf>, Vec<String>) = {
         let mgr = app.state::<Arc<AgentManager>>();
-        match mgr.get_loaded(&session_id) { Some(h) => { let s = h.session.lock(); s.changes.iter().filter(|c| c.turn_id.as_deref() == Some(turn_id.as_str())).map(|c| c.change_id.clone()).collect() } None => vec![] }
+        match mgr.get_loaded(&session_id) { Some(h) => { let s = h.session.lock(); (s.root(), s.changes.iter().filter(|c| c.turn_id.as_deref() == Some(turn_id.as_str())).map(|c| c.change_id.clone()).collect()) } None => (None, vec![]) }
     };
+    let Some(root) = root else { return }; // folderless thread: nothing to verify against
+    if !app.state::<SettingsState>().effective_for(Some(&root)).verify.auto_run_after_turn { return; }
     if change_ids.is_empty() { return; }
     let st = app.state::<VerifyState>().0.clone();
     let scope = VerifyScope { kind: "session".into(), session_id: Some(session_id.clone()), change_ids: Some(change_ids), files: None, base: None };
-    if let Err(e) = start(app.clone(), st, scope, None).await { tracing::warn!(error=%e, session=%session_id, "auto verification failed to start"); }
+    if let Err(e) = start(app.clone(), root, st, scope, None).await { tracing::warn!(error=%e, session=%session_id, "auto verification failed to start"); }
 }
 
 // ───────────────────────── commands ─────────────────────────
 
 #[tauri::command]
-pub async fn verify_run(app: AppHandle, st: State<'_, VerifyState>, scope: VerifyScope, on_event: Channel<VerifyEvent>) -> Result<String> { start(app, st.0.clone(), scope, Some(on_event)).await }
+pub async fn verify_run(app: AppHandle, ws: State<'_, WorkspaceState>, window: tauri::Window, st: State<'_, VerifyState>, scope: VerifyScope, on_event: Channel<VerifyEvent>) -> Result<String> {
+    let root = ws.require_root_for(window.label())?;
+    start(app, root, st.0.clone(), scope, Some(on_event)).await
+}
 
 #[tauri::command]
-pub async fn verify_get(app: AppHandle, st: State<'_, VerifyState>, report_id: String) -> Result<VerificationReport> {
+pub async fn verify_get(ws: State<'_, WorkspaceState>, window: tauri::Window, st: State<'_, VerifyState>, report_id: String) -> Result<VerificationReport> {
     if let Some(r) = st.0.get(&report_id) { return Ok(r); }
-    let root = app.state::<crate::core::workspace::WorkspaceState>().root();
+    let root = ws.root_for(window.label());
     store::load(root.as_deref(), &report_id).ok_or_else(|| CaretError::not_found(format!("report {report_id}")))
 }
 
 #[tauri::command]
-pub async fn verify_list(app: AppHandle, st: State<'_, VerifyState>, session_id: Option<String>, limit: Option<usize>) -> Result<Vec<VerificationReport>> {
+pub async fn verify_list(ws: State<'_, WorkspaceState>, window: tauri::Window, st: State<'_, VerifyState>, session_id: Option<String>, limit: Option<usize>) -> Result<Vec<VerificationReport>> {
     let limit = limit.unwrap_or(20).clamp(1, 200);
     let mut v = st.0.list(session_id.as_deref(), limit);
     if v.len() < limit {
-        let root = app.state::<crate::core::workspace::WorkspaceState>().root();
+        let root = ws.root_for(window.label());
         for r in store::list(root.as_deref(), session_id.as_deref(), limit) { if !v.iter().any(|x| x.id == r.id) { v.push(r); } }
         v.sort_by(|a, b| b.started_at.cmp(&a.started_at)); v.truncate(limit);
     }
@@ -306,16 +314,16 @@ pub async fn verify_list(app: AppHandle, st: State<'_, VerifyState>, session_id:
 pub async fn verify_cancel(st: State<'_, VerifyState>, report_id: String) -> Result<()> { if let Some(t) = st.0.running.get(&report_id) { t.cancel(); } Ok(()) }
 
 #[tauri::command]
-pub async fn verify_latest(app: AppHandle, st: State<'_, VerifyState>, session_id: String) -> Result<Option<VerificationReport>> {
+pub async fn verify_latest(ws: State<'_, WorkspaceState>, window: tauri::Window, st: State<'_, VerifyState>, session_id: String) -> Result<Option<VerificationReport>> {
     if let Some(r) = st.0.list(Some(&session_id), 1).into_iter().next() { return Ok(Some(r)); }
-    let root = app.state::<crate::core::workspace::WorkspaceState>().root();
+    let root = ws.root_for(window.label());
     Ok(store::list(root.as_deref(), Some(&session_id), 1).into_iter().next())
 }
 
 /// Apply a deterministic fix for a `fixable` finding. Returns a PendingChange-shaped JSON (or null when not fixable).
 #[tauri::command]
-pub async fn verify_apply_fix(app: AppHandle, st: State<'_, VerifyState>, report_id: String, finding_id: String) -> Result<Option<serde_json::Value>> {
-    let report = match st.0.get(&report_id) { Some(r) => r, None => { let root = app.state::<crate::core::workspace::WorkspaceState>().root(); store::load(root.as_deref(), &report_id).ok_or_else(|| CaretError::not_found(format!("report {report_id}")))? } };
+pub async fn verify_apply_fix(app: AppHandle, ws: State<'_, WorkspaceState>, window: tauri::Window, st: State<'_, VerifyState>, report_id: String, finding_id: String) -> Result<Option<serde_json::Value>> {
+    let report = match st.0.get(&report_id) { Some(r) => r, None => { let root = ws.root_for(window.label()); store::load(root.as_deref(), &report_id).ok_or_else(|| CaretError::not_found(format!("report {report_id}")))? } };
     let finding = report.checks.iter().flat_map(|c| c.findings.iter()).find(|f| f.id == finding_id).cloned().ok_or_else(|| CaretError::not_found(format!("finding {finding_id}")))?;
     if finding.fixable != Some(true) { return Ok(None); }
     let (Some(rel), Some(line), Some(rule)) = (finding.path.clone(), finding.line, finding.rule.clone()) else { return Ok(None) };

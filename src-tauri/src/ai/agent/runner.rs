@@ -184,8 +184,9 @@ pub(crate) async fn execute_one(mgr: Arc<AgentManager>, h: Arc<SessionHandle>, c
 /// Run one user turn to completion (may span many LLM round-trips). Returns the final assistant text.
 pub async fn run_turn(mgr: Arc<AgentManager>, h: Arc<SessionHandle>, mut req: SendMessageRequest, mode_override: Option<ModeSpec>, cancel: CancellationToken) -> Result<String> {
     let app = mgr.app_opt();
-    let settings = mgr.settings();
     let (session_id, root, cwd, is_subagent) = { let s = h.session.lock(); (s.id.clone(), s.root(), s.cwd_path(), s.is_subagent) };
+    // Settings of the session's folder (user + its `.caret/settings.json`), not of whichever window is focused.
+    let settings = mgr.settings_for(root.as_deref());
     let mode: Arc<ModeSpec> = Arc::new(match &mode_override { Some(m) => m.clone(), None => { let id = if req.mode.is_empty() { h.session.lock().mode.clone() } else { req.mode.clone() }; { let mut s = h.session.lock(); s.mode = id.clone(); } modes::resolve(&settings, &id) } });
     if let Some(m) = &req.model_id { if !m.is_empty() { h.session.lock().model_id = Some(m.clone()); } }
     let model_pref = { let s = h.session.lock(); s.model_id.clone() }.or_else(|| mode.model_id.clone());

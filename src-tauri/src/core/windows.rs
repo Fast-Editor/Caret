@@ -225,6 +225,10 @@ pub fn on_window_event(window: &tauri::Window, event: &WindowEvent) {
             if !registry.contains(label) { return; }
             let changed = registry.focused().as_deref() != Some(label);
             registry.set_focused(label);
+            // Workspace-scope settings follow the focused window (`set_workspace` is a no-op for the same root). When
+            // the effective settings differ, only this window is told so the others keep showing their own.
+            let settings = app.state::<crate::core::settings::SettingsState>();
+            if settings.set_workspace(registry.root_of(label).as_deref()) { crate::events::emit_to(app, label, crate::events::SETTINGS_CHANGED, settings.effective()); }
             if changed { crate::menu::rebuild_window_items(app); }
         }
         WindowEvent::Destroyed => {

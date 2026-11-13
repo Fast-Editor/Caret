@@ -343,6 +343,8 @@ pub struct FanOutRequest {
     pub images: Vec<ImageAttachment>,
     pub thinking: Option<String>,
     pub effort: Option<String>,
+    /// Root for fresh sessions (no source session to fork): the calling window's folder; `None` = folderless.
+    pub root: Option<std::path::PathBuf>,
 }
 
 fn first_line(text: &str, max: usize) -> String {
@@ -358,7 +360,7 @@ pub async fn fan_out(mgr: &Arc<AgentManager>, settings: &Settings, req: FanOutRe
     if req.text.trim().is_empty() && req.images.is_empty() { return Err(CaretError::invalid("Type a message to send to the selected models")); }
     let budget = settings.chat.handoff_budget_tokens.max(500) as usize;
     let source = match &req.session_id { Some(id) => Some(mgr.handle(id)?).filter(|h| !h.session.lock().messages.is_empty()), None => None };
-    let root = mgr.workspace_root();
+    let root = req.root.clone();
     let (base_title, mode) = match &source {
         Some(h) => { let s = h.session.lock(); (s.title.clone(), req.mode.clone().filter(|m| !m.is_empty()).unwrap_or_else(|| s.mode.clone())) }
         None => (first_line(&req.text, 48), req.mode.clone().filter(|m| !m.is_empty()).unwrap_or_else(|| settings.agent.default_mode.clone())),
@@ -373,7 +375,8 @@ pub async fn fan_out(mgr: &Arc<AgentManager>, settings: &Settings, req: FanOutRe
         };
         s.title = title.clone(); s.title_generated = true; s.mode = mode.clone(); s.model_id = Some(m.clone()); s.agent_id = None; s.fan_out_group = Some(group.clone());
         if req.use_worktree {
-            let root = root.clone().ok_or_else(CaretError::no_workspace)?;
+            // the session's own folder: a fork keeps the source's root, a fresh session has the window's
+            let root = s.root().ok_or_else(CaretError::no_workspace)?;
             let (path, branch, base) = create_worktree(&root, &settings.worktrees, &title, &s.id, Some(m.as_str())).await?;
             s.worktree_path = Some(path.to_string_lossy().to_string()); s.branch = Some(branch); s.cwd = path.to_string_lossy().to_string(); s.worktree_base = base;
         }

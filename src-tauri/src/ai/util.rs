@@ -31,6 +31,11 @@ pub fn pick_model_auto(app: Option<&AppHandle>, settings: &Settings, secrets: &S
     pick_model(settings, secrets, explicit, prefer_fast)
 }
 
+/// Workspace root of the window `label` (commands take `window: tauri::Window` and pass `window.label()`).
+pub fn workspace_root_for(app: &AppHandle, label: &str) -> Option<PathBuf> { app.state::<crate::core::workspace::WorkspaceState>().root_for(label) }
+/// The focused window's root. Compatibility for the single-shot features that only receive an `AppHandle` (tab,
+/// inline edit, apply, commit message, review, terminal history): they act for the window the user is typing in,
+/// which is the focused one. Commands take the window and use `workspace_root_for`.
 pub fn workspace_root(app: &AppHandle) -> Option<PathBuf> { app.state::<crate::core::workspace::WorkspaceState>().root() }
 
 /// Strip a single surrounding markdown fence (```lang … ```), if present.

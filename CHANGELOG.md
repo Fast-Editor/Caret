@@ -14,6 +14,13 @@ All notable changes to Caret. The version here must match `package.json`, `src-t
   window. Per-folder scoping of Quick Open, the file watcher, LSP, git status and MCP across windows lands in the
   follow-up: in this release those background services follow the folder most recently opened in the focused
   window. See docs/MULTI_WINDOW.md.
+- Windows: git, terminals, Run and Debug, Verify, the sandbox classifier, rules / memories / skills / commands /
+  subagents / hooks / plans, review results and the chat commands now act on the calling window's folder instead of
+  the focused one, so two windows on different projects no longer see each other's threads, git status or knowledge.
+  Agent threads are rooted in the window that created them (a window without a folder gets a folderless thread) and
+  a run keeps that root and that folder's `.caret/settings.json` for its whole duration, even when another window is
+  focused; thread lists, message search, fan-out and plan builds are per window, and threads started elsewhere stay
+  out of a window's history. Workspace-scope settings follow window focus.
 - Fixed: Go to Definition, Type Definition, Implementation and references that land in another file now open that
   file (Cmd+click on an import or a symbol included). Monaco can only move the caret inside the file it is showing;
   Caret never registered an editor opener, so every cross-file jump was silently dropped.
