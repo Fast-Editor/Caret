@@ -1,18 +1,22 @@
 //! `caret` command-line launcher.
 //!
 //! * Parses argv (`caret . src/a.ts:10:5 -g b.ts:3`) and macOS open-documents / `caret://open?...` URLs into
-//!   [`OpenRequest`]s, queued in [`OpenQueue`] until the UI drains them (`cli_take_pending_opens`). The UI is
-//!   poked with the `caret://open-paths` event and always drains the queue, so each request is delivered once.
+//!   [`OpenRequest`]s. [`route_open`] decides which window each request belongs to (docs/CLI.md, "Which window
+//!   opens it"); the requests are queued per window label in [`OpenQueue`] until that window's UI drains them
+//!   (`cli_take_pending_opens`). The window is poked with the `caret://open-paths` event and always drains its own
+//!   queue, so each request is delivered once, to one window.
 //! * Installs the launcher the way VS Code does: the script in `src-tauri/cli/caret.sh` is rendered to
 //!   `~/.caret/bin/caret` and symlinked into `/usr/local/bin` when writable, else a user-writable PATH dir
 //!   (`~/.local/bin`, Homebrew, `~/bin`), else `/usr/local/bin` through the macOS admin prompt (osascript).
 //!   The rendered script is refreshed on every start so a moved or updated app keeps working.
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
 use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Manager, State};
 
+use crate::core::windows::{self, WindowEntry, WindowRegistry, MAIN_LABEL};
 use crate::error::{CaretError, Result};
 
 pub const SCRIPT_TEMPLATE: &str = include_str!("../../cli/caret.sh");
@@ -28,12 +32,131 @@ pub struct OpenRequest {
     #[serde(default, skip_serializing_if = "Option::is_none")] pub col: Option<u32>,
 }
 
-/// Open requests received before the UI was ready (or while it was busy); drained by `cli_take_pending_opens`.
+impl OpenRequest {
+    pub fn folder(path: &Path) -> Self { Self { path: path.to_string_lossy().to_string(), line: None, col: None } }
+}
+
+/// Open requests per window label, queued until that window's UI drains them (`cli_take_pending_opens`): the
+/// frontend may not be listening yet (cold start, a window created for the request) or may be busy. A label that
+/// was never pushed, or was already drained, yields nothing; `prune` drops the queues of windows that are gone.
 #[derive(Default)]
-pub struct OpenQueue(Mutex<Vec<OpenRequest>>);
+pub struct OpenQueue(Mutex<HashMap<String, Vec<OpenRequest>>>);
 impl OpenQueue {
-    pub fn push(&self, reqs: Vec<OpenRequest>) { if !reqs.is_empty() { self.0.lock().extend(reqs); } }
-    pub fn drain(&self) -> Vec<OpenRequest> { std::mem::take(&mut *self.0.lock()) }
+    pub fn push(&self, label: &str, reqs: Vec<OpenRequest>) {
+        if reqs.is_empty() { return; }
+        self.0.lock().entry(label.to_string()).or_default().extend(reqs);
+    }
+    /// Remove and return everything queued for `label` (empty for an unknown label).
+    pub fn take(&self, label: &str) -> Vec<OpenRequest> { self.0.lock().remove(label).unwrap_or_default() }
+    /// Drop the queues whose label `keep` rejects (windows that were destroyed before draining).
+    pub fn prune(&self, keep: impl Fn(&str) -> bool) { self.0.lock().retain(|l, _| keep(l)); }
+    pub fn pending(&self, label: &str) -> usize { self.0.lock().get(label).map(|v| v.len()).unwrap_or(0) }
+    /// Labels with queued requests (sorted).
+    pub fn labels(&self) -> Vec<String> { let mut v: Vec<String> = self.0.lock().keys().cloned().collect(); v.sort(); v }
+}
+
+// ───────────────────────────── routing ─────────────────────────────
+
+/// What the router needs to know about one window: its label and the folder it shows (`None` = empty window).
+/// A plain copy of the registry so [`route_open`] is a pure function (see `registry_view`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WindowView { pub label: String, pub root: Option<PathBuf> }
+impl WindowView {
+    pub fn new(label: &str, root: Option<&str>) -> Self { Self { label: label.to_string(), root: root.map(PathBuf::from) } }
+    pub fn is_empty(&self) -> bool { self.root.is_none() }
+}
+impl From<&WindowEntry> for WindowView {
+    fn from(e: &WindowEntry) -> Self { Self { label: e.label.clone(), root: e.root.clone() } }
+}
+/// The registry's windows in creation order (the router's "oldest" tie-break).
+pub fn registry_view(registry: &WindowRegistry) -> Vec<WindowView> { registry.entries().iter().map(WindowView::from).collect() }
+
+/// Where a group of requests goes: an existing window, or a window to create (showing `folder`, or empty for
+/// loose files when no Caret window exists).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Target { Window(String), NewWindow(Option<PathBuf>) }
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Routed { pub target: Target, pub reqs: Vec<OpenRequest> }
+
+/// Decide which window opens each request. Pure: `windows` is the registry in creation order (`registry_view`),
+/// `focused` the focused label (unknown or `None` → `main`, then the oldest window), `open_folders_in` the
+/// `window.openFoldersIn` setting (`"current"`; anything else means `"new"`), `is_dir` tells folders from files.
+/// Per request, in order:
+///
+/// 1. a folder that a window already shows (same root) → that window (focused first, then oldest);
+/// 2. a file under an open root → the window with the deepest such root (focused first, then oldest);
+/// 3. a folder while the focused window is empty → the focused window;
+/// 4. any other folder → a new window, or the focused window (replacing its folder) when the setting is
+///    `"current"`; a window is claimed by at most one folder per call, so `caret a b` never replaces twice;
+/// 5. a loose file → the focused window, or one new empty window when there is no window at all.
+///
+/// Folders claimed in this call count as roots for the requests after them, so `caret ~/proj ~/proj/a.ts` keeps
+/// `a.ts` with its folder; requests that resolve to the same new folder share one `NewWindow`. Groups come out in
+/// first-use order with the requests in input order.
+pub fn route_open(reqs: &[OpenRequest], windows: &[WindowView], focused: Option<&str>, open_folders_in: &str, is_dir: impl Fn(&Path) -> bool) -> Vec<Routed> {
+    // Effective roots: the registry's, updated as folder requests claim windows during this call.
+    let mut roots: Vec<(String, Option<PathBuf>)> = windows.iter().map(|w| (w.label.clone(), w.root.clone())).collect();
+    let focused: Option<String> = focused.filter(|f| roots.iter().any(|(l, _)| l == f)).map(str::to_string)
+        .or_else(|| roots.iter().find(|(l, _)| l == MAIN_LABEL).map(|(l, _)| l.clone()))
+        .or_else(|| roots.first().map(|(l, _)| l.clone()));
+    let replace_in_place = open_folders_in == "current";
+    let mut claimed: HashSet<String> = HashSet::new();
+    let mut out: Vec<Routed> = Vec::new();
+    for req in reqs {
+        let path = PathBuf::from(&req.path);
+        let target = if is_dir(&path) {
+            if let Some(label) = window_with_root(&roots, focused.as_deref(), &path) { Target::Window(label) }
+            else if out.iter().any(|g| g.target == Target::NewWindow(Some(path.clone()))) { Target::NewWindow(Some(path.clone())) }
+            else {
+                let claim = focused.as_ref().filter(|f| !claimed.contains(*f)).filter(|f| root_of(&roots, f).is_none() || replace_in_place).cloned();
+                match claim {
+                    Some(f) => {
+                        if let Some(slot) = roots.iter_mut().find(|(l, _)| *l == f) { slot.1 = Some(path.clone()); }
+                        claimed.insert(f.clone());
+                        Target::Window(f)
+                    }
+                    None => Target::NewWindow(Some(path.clone())),
+                }
+            }
+        } else if let Some(t) = containing(&roots, &out, focused.as_deref(), &path) { t }
+        else if let Some(f) = &focused { Target::Window(f.clone()) }
+        else { Target::NewWindow(None) };
+        match out.iter_mut().find(|g| g.target == target) {
+            Some(g) => g.reqs.push(req.clone()),
+            None => out.push(Routed { target, reqs: vec![req.clone()] }),
+        }
+    }
+    out
+}
+
+fn root_of<'a>(roots: &'a [(String, Option<PathBuf>)], label: &str) -> Option<&'a Path> {
+    roots.iter().find(|(l, _)| l == label).and_then(|(_, r)| r.as_deref())
+}
+
+/// Rule 1: a window whose root is exactly `path` (the focused one first, then the oldest).
+fn window_with_root(roots: &[(String, Option<PathBuf>)], focused: Option<&str>, path: &Path) -> Option<String> {
+    let mut matches = roots.iter().filter(|(_, r)| r.as_deref() == Some(path)).map(|(l, _)| l.as_str());
+    let first = matches.next()?;
+    if focused.map(|f| roots.iter().any(|(l, r)| l == f && r.as_deref() == Some(path))).unwrap_or(false) { return focused.map(str::to_string); }
+    Some(first.to_string())
+}
+
+/// Rule 2: the deepest root that is `path` or an ancestor of it, among the windows (focused first, then oldest) and
+/// the folders this call is already opening in new windows (a window beats a new group at equal depth).
+fn containing(roots: &[(String, Option<PathBuf>)], out: &[Routed], focused: Option<&str>, path: &Path) -> Option<Target> {
+    // key: (depth, window-over-new and focused-over-others, newer-is-worse) — the maximum wins
+    let mut best: Option<((usize, u8, std::cmp::Reverse<usize>), Target)> = None;
+    let mut consider = |key: (usize, u8, std::cmp::Reverse<usize>), t: Target| { if best.as_ref().map(|(k, _)| key > *k).unwrap_or(true) { best = Some((key, t)); } };
+    for (i, (label, root)) in roots.iter().enumerate() {
+        let Some(r) = root.as_deref().filter(|r| path.starts_with(r)) else { continue };
+        let prio = if focused == Some(label.as_str()) { 2 } else { 1 };
+        consider((r.components().count(), prio, std::cmp::Reverse(i)), Target::Window(label.clone()));
+    }
+    for g in out {
+        if let Target::NewWindow(Some(f)) = &g.target { if path.starts_with(f) { consider((f.components().count(), 0, std::cmp::Reverse(usize::MAX)), g.target.clone()); } }
+    }
+    best.map(|(_, t)| t)
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -150,27 +273,74 @@ pub fn parse_opened_urls(urls: &[tauri::Url]) -> Vec<OpenRequest> {
 
 // ───────────────────────────── app wiring ─────────────────────────────
 
-/// Called from `setup`: queue argv paths and refresh an already-installed launcher script.
+/// Called from `setup`: route argv paths to the (still booting) `main` window and refresh an already-installed
+/// launcher script. Nothing is focused or shown here (`caret serve --no-window` hides `main` right after).
 pub fn init(app: &AppHandle) {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let reqs = parse_open_args(&args);
-    if !reqs.is_empty() { tracing::info!(count = reqs.len(), "cli: queued open requests from argv"); }
-    app.state::<OpenQueue>().push(reqs);
+    if !reqs.is_empty() { tracing::info!(count = reqs.len(), "cli: open requests from argv"); }
+    dispatch(app, reqs, false);
     refresh_installed_script(app);
 }
 
-/// macOS `RunEvent::Opened`: queue the requests and poke the UI (which drains the queue).
+/// macOS `RunEvent::Opened` (`caret <path>`, Finder "Open with", `caret://open?…`): route the requests to their
+/// windows, creating windows as needed, and bring the target windows to the front.
 pub fn on_opened(app: &AppHandle, urls: &[tauri::Url]) {
     let reqs = parse_opened_urls(urls);
     tracing::info!(urls = urls.len(), parsed = reqs.len(), "cli: open event");
+    dispatch(app, reqs, true);
+}
+
+/// Run [`route_open`] over the registry and the `window.openFoldersIn` setting, then deliver every group: an
+/// existing window gets the requests queued under its label, an `OPEN_PATHS` poke and (with `focus`) the front;
+/// a `NewWindow` group creates the window with its folder already open and queues the remaining requests (the
+/// files) for the new label, which drains them when its frontend boots.
+pub fn dispatch(app: &AppHandle, reqs: Vec<OpenRequest>, focus: bool) {
     if reqs.is_empty() { return; }
-    app.state::<OpenQueue>().push(reqs.clone());
-    crate::events::emit(app, OPEN_PATHS_EVENT, serde_json::json!({ "paths": reqs }));
-    match crate::core::windows::focused_window(app) {
-        Some(w) => { let _ = w.show(); let _ = w.set_focus(); }
-        // No Caret window (macOS after the last one closed): a new one drains the queue when its frontend boots.
-        None => { if let Err(e) = crate::core::windows::create_window(app, None) { tracing::warn!(error = %e.message, "cli: could not create a window"); } }
+    let registry = app.state::<WindowRegistry>();
+    let view = registry_view(&registry);
+    let focused = registry.focused();
+    let open_folders_in = app.state::<crate::core::settings::SettingsState>().effective().window.open_folders_in;
+    let routed = route_open(&reqs, &view, focused.as_deref(), &open_folders_in, |p| p.is_dir());
+    for group in routed {
+        match group.target {
+            Target::Window(label) => {
+                tracing::info!(label, count = group.reqs.len(), "cli: routed to window");
+                deliver(app, &label, group.reqs);
+                if focus { if let Err(e) = windows::focus_window(app, &label) { tracing::debug!(label, error = %e.message, "cli: could not focus window"); } }
+            }
+            Target::NewWindow(folder) => {
+                // The folder request itself is satisfied by creating the window on that folder; only files remain.
+                let rest: Vec<OpenRequest> = match &folder {
+                    Some(f) => group.reqs.into_iter().filter(|r| Path::new(&r.path) != f.as_path()).collect(),
+                    None => group.reqs,
+                };
+                match windows::create_window(app, folder.clone()) {
+                    Ok(label) => { tracing::info!(label, folder = ?folder, count = rest.len(), "cli: routed to new window"); deliver(app, &label, rest); }
+                    Err(e) => {
+                        tracing::warn!(error = %e.message, folder = ?folder, "cli: could not create a window; using the focused one");
+                        // Do not lose the user's paths: the focused window gets them (the folder opens in place).
+                        if let Some(label) = windows::focused_label(app) {
+                            let mut all = rest;
+                            if let Some(f) = folder { all.insert(0, OpenRequest::folder(&f)); }
+                            deliver(app, &label, all);
+                            if focus { let _ = windows::focus_window(app, &label); }
+                        }
+                    }
+                }
+            }
+        }
     }
+}
+
+/// Queue `reqs` for window `label` and poke its frontend. Queues of windows that no longer exist are dropped first.
+fn deliver(app: &AppHandle, label: &str, reqs: Vec<OpenRequest>) {
+    if reqs.is_empty() { return; }
+    let registry = app.state::<WindowRegistry>();
+    let queue = app.state::<OpenQueue>();
+    queue.prune(|l| registry.contains(l));
+    queue.push(label, reqs.clone());
+    crate::events::emit_to(app, label, OPEN_PATHS_EVENT, serde_json::json!({ "paths": reqs }));
 }
 
 // ───────────────────────────── install ─────────────────────────────
@@ -349,8 +519,9 @@ pub fn uninstall(app: &AppHandle) -> Result<CliStatus> {
 
 // ───────────────────────────── commands ─────────────────────────────
 
+/// Drain the calling window's queue only (another window's requests stay where the router put them).
 #[tauri::command]
-pub fn cli_take_pending_opens(q: State<'_, OpenQueue>) -> Result<Vec<OpenRequest>> { Ok(q.drain()) }
+pub fn cli_take_pending_opens(window: tauri::Window, q: State<'_, OpenQueue>) -> Result<Vec<OpenRequest>> { Ok(q.take(window.label())) }
 
 #[tauri::command(async)]
 pub fn cli_status(app: AppHandle) -> Result<CliStatus> { Ok(status(&app)) }
@@ -548,5 +719,151 @@ mod tests {
     fn quoting_helpers() {
         assert_eq!(shell_single_quote("a'b"), "'a'\\''b'");
         assert_eq!(applescript_quote("say \"hi\" \\ there"), "\"say \\\"hi\\\" \\\\ there\"");
+    }
+
+    // ───────────── routing ─────────────
+
+    fn req(p: &str) -> OpenRequest { OpenRequest { path: p.into(), line: None, col: None } }
+    fn req_at(p: &str, line: u32, col: Option<u32>) -> OpenRequest { OpenRequest { path: p.into(), line: Some(line), col } }
+    fn win(label: &str, root: Option<&str>) -> WindowView { WindowView::new(label, root) }
+    /// Folder classifier for the pure router: exactly these paths are directories.
+    fn dirs(d: &[&str]) -> impl Fn(&Path) -> bool { let set: Vec<PathBuf> = d.iter().map(PathBuf::from).collect(); move |p| set.iter().any(|x| x == p) }
+    fn new_window(folder: &str) -> Target { Target::NewWindow(Some(PathBuf::from(folder))) }
+    fn window(label: &str) -> Target { Target::Window(label.into()) }
+    fn targets(r: &[Routed]) -> Vec<Target> { r.iter().map(|g| g.target.clone()).collect() }
+    fn paths(g: &Routed) -> Vec<&str> { g.reqs.iter().map(|r| r.path.as_str()).collect() }
+
+    #[test]
+    fn route_folder_already_open_goes_to_that_window() {
+        let is_dir = dirs(&["/a", "/b"]);
+        let w = [win("main", Some("/a")), win("w2", Some("/b"))];
+        assert_eq!(targets(&route_open(&[req("/b")], &w, Some("main"), "new", &is_dir)), vec![window("w2")]);
+        assert_eq!(targets(&route_open(&[req("/b/")], &w, Some("main"), "new", &is_dir)), vec![window("w2")], "a trailing slash is the same folder (component-wise comparison)");
+        // the setting does not matter for a folder that is already open
+        assert_eq!(targets(&route_open(&[req("/a")], &w, Some("w2"), "current", &is_dir)), vec![window("main")]);
+        // two windows on the same root: the focused one, else the oldest
+        let two = [win("main", Some("/a")), win("w2", Some("/b")), win("w3", Some("/b"))];
+        assert_eq!(targets(&route_open(&[req("/b")], &two, Some("w3"), "new", &is_dir)), vec![window("w3")]);
+        assert_eq!(targets(&route_open(&[req("/b")], &two, Some("main"), "new", &is_dir)), vec![window("w2")]);
+    }
+
+    #[test]
+    fn route_file_under_open_root_picks_deepest_then_focused_then_oldest() {
+        let is_dir = dirs(&["/repo", "/repo/pkg/app"]);
+        let w = [win("main", Some("/repo")), win("w2", Some("/repo/pkg/app")), win("w3", None)];
+        let r = route_open(&[req_at("/repo/pkg/app/src/x.ts", 3, Some(7)), req("/repo/lib/y.ts"), req("/repository/z.ts")], &w, Some("main"), "new", &is_dir);
+        assert_eq!(targets(&r), vec![window("w2"), window("main")]);
+        assert_eq!(r[0].reqs, vec![req_at("/repo/pkg/app/src/x.ts", 3, Some(7))], "line/column travel with the request");
+        assert_eq!(paths(&r[1]), vec!["/repo/lib/y.ts", "/repository/z.ts"], "a string prefix is not an ancestor: z.ts is a loose file for the focused window");
+        // the same root in two windows: the focused one wins, else the oldest
+        let two = [win("main", Some("/repo")), win("w2", Some("/repo"))];
+        assert_eq!(targets(&route_open(&[req("/repo/f.ts")], &two, Some("w2"), "new", &is_dir)), vec![window("w2")]);
+        assert_eq!(targets(&route_open(&[req("/repo/f.ts")], &two, Some("main"), "new", &is_dir)), vec![window("main")]);
+        assert_eq!(targets(&route_open(&[req("/repo/f.ts")], &two, None, "new", &is_dir)), vec![window("main")]);
+        let no_main = [win("w3", Some("/repo")), win("w2", Some("/repo"))];
+        assert_eq!(targets(&route_open(&[req("/repo/f.ts")], &no_main, None, "new", &is_dir)), vec![window("w3")], "oldest without focus and without main");
+        // a file in a window's root beats a loose-file destination even when that window is not focused
+        assert_eq!(targets(&route_open(&[req("/repo/pkg/app/a.ts")], &w, Some("w3"), "new", &is_dir)), vec![window("w2")]);
+    }
+
+    #[test]
+    fn route_folder_to_focused_empty_window_and_files_follow_it() {
+        let is_dir = dirs(&["/a", "/c"]);
+        let w = [win("main", Some("/a")), win("w2", None)];
+        let r = route_open(&[req("/c"), req("/c/x.ts"), req("/elsewhere/l.ts")], &w, Some("w2"), "new", &is_dir);
+        assert_eq!(targets(&r), vec![window("w2")]);
+        assert_eq!(paths(&r[0]), vec!["/c", "/c/x.ts", "/elsewhere/l.ts"], "the claimed folder is a root for later files; loose files go to the focused window");
+        // the empty window is not focused: the folder goes to a new window (setting "new") and the empty one stays empty
+        assert_eq!(targets(&route_open(&[req("/c")], &w, Some("main"), "new", &is_dir)), vec![new_window("/c")]);
+    }
+
+    #[test]
+    fn route_folder_new_window_or_replace_depending_on_setting() {
+        let is_dir = dirs(&["/a", "/c", "/d"]);
+        let w = [win("main", Some("/a"))];
+        let r = route_open(&[req("/c"), req_at("/c/x.ts", 10, None), req("/a/k.ts")], &w, Some("main"), "new", &is_dir);
+        assert_eq!(targets(&r), vec![new_window("/c"), window("main")]);
+        assert_eq!(paths(&r[0]), vec!["/c", "/c/x.ts"]);
+        assert_eq!(paths(&r[1]), vec!["/a/k.ts"]);
+        let r = route_open(&[req("/c"), req_at("/c/x.ts", 10, None), req("/a/k.ts")], &w, Some("main"), "current", &is_dir);
+        assert_eq!(targets(&r), vec![window("main")], "\"current\" replaces the focused window's folder");
+        assert_eq!(paths(&r[0]), vec!["/c", "/c/x.ts", "/a/k.ts"], "/a/k.ts is now a loose file in the focused window");
+        // a window is claimed by one folder per call: the second folder opens a new window even with "current"
+        let r = route_open(&[req("/c"), req("/d"), req("/d/y.ts")], &w, Some("main"), "current", &is_dir);
+        assert_eq!(targets(&r), vec![window("main"), new_window("/d")]);
+        assert_eq!(paths(&r[1]), vec!["/d", "/d/y.ts"]);
+        // an unknown setting value behaves like "new"
+        assert_eq!(targets(&route_open(&[req("/c")], &w, Some("main"), "", &is_dir)), vec![new_window("/c")]);
+        // a subfolder of an open root is a folder request, not a file inside that window
+        let is_dir = dirs(&["/a", "/a/sub"]);
+        assert_eq!(targets(&route_open(&[req("/a/sub")], &w, Some("main"), "new", &is_dir)), vec![new_window("/a/sub")]);
+        assert_eq!(targets(&route_open(&[req("/a/sub")], &w, Some("main"), "current", &is_dir)), vec![window("main")]);
+    }
+
+    #[test]
+    fn route_loose_files_to_focused_window_or_one_new_empty_window() {
+        let is_dir = dirs(&["/a", "/c"]);
+        let w = [win("main", Some("/a")), win("w2", None)];
+        assert_eq!(targets(&route_open(&[req("/z/f.ts")], &w, Some("main"), "new", &is_dir)), vec![window("main")]);
+        assert_eq!(targets(&route_open(&[req("/z/f.ts")], &w, Some("w2"), "new", &is_dir)), vec![window("w2")], "a focused empty window takes loose files and stays empty");
+        // no window at all: loose files share one new empty window; a folder gets its own window regardless of the setting
+        let r = route_open(&[req("/z/f.ts"), req("/y/g.ts"), req("/c"), req("/c/h.ts")], &[], None, "current", &is_dir);
+        assert_eq!(targets(&r), vec![Target::NewWindow(None), new_window("/c")]);
+        assert_eq!(paths(&r[0]), vec!["/z/f.ts", "/y/g.ts"]);
+        assert_eq!(paths(&r[1]), vec!["/c", "/c/h.ts"]);
+        assert!(route_open(&[], &w, Some("main"), "new", &is_dir).is_empty());
+    }
+
+    #[test]
+    fn route_groups_several_files_under_one_new_folder() {
+        let is_dir = dirs(&["/a", "/c"]);
+        let w = [win("main", Some("/a"))];
+        let r = route_open(&[req("/c/x.ts"), req("/c"), req_at("/c/y.ts", 3, Some(4)), req("/c"), req("/c/deep/z.ts")], &w, Some("main"), "new", &is_dir);
+        // the first file came before its folder and is a loose file at that point: it stays with the focused window
+        assert_eq!(targets(&r), vec![window("main"), new_window("/c")]);
+        assert_eq!(paths(&r[0]), vec!["/c/x.ts"]);
+        assert_eq!(r[1].reqs, vec![req("/c"), req_at("/c/y.ts", 3, Some(4)), req("/c"), req("/c/deep/z.ts")], "one group per new folder, requests in input order");
+    }
+
+    #[test]
+    fn route_focus_falls_back_to_main_then_the_oldest_window() {
+        let is_dir = dirs(&["/a", "/b", "/c"]);
+        let w = [win("w2", Some("/b")), win("main", Some("/a"))];
+        assert_eq!(targets(&route_open(&[req("/z.ts")], &w, None, "new", &is_dir)), vec![window("main")]);
+        assert_eq!(targets(&route_open(&[req("/z.ts")], &w, Some("ghost"), "new", &is_dir)), vec![window("main")], "an unregistered focused label is ignored");
+        assert_eq!(targets(&route_open(&[req("/c")], &w, None, "current", &is_dir)), vec![window("main")]);
+        let no_main = [win("w3", Some("/b")), win("w2", None)];
+        assert_eq!(targets(&route_open(&[req("/z.ts")], &no_main, None, "new", &is_dir)), vec![window("w3")]);
+        assert_eq!(targets(&route_open(&[req("/c")], &no_main, Some("w2"), "new", &is_dir)), vec![window("w2")], "focused empty window wins over the oldest");
+    }
+
+    #[test]
+    fn window_view_from_registry_keeps_creation_order() {
+        let registry = WindowRegistry::default();
+        registry.register("main"); registry.set_root("main", Some(PathBuf::from("/a")));
+        std::thread::sleep(std::time::Duration::from_millis(2));
+        registry.register("w2");
+        let v = registry_view(&registry);
+        assert_eq!(v, vec![win("main", Some("/a")), win("w2", None)]);
+        assert!(!v[0].is_empty()); assert!(v[1].is_empty());
+    }
+
+    #[test]
+    fn open_queue_is_per_label() {
+        let q = OpenQueue::default();
+        q.push("main", vec![req("/a")]);
+        q.push("w2", vec![req("/b")]);
+        q.push("main", vec![req_at("/c", 1, None)]);
+        q.push("w3", vec![]);
+        assert_eq!(q.labels(), vec!["main", "w2"], "an empty push creates no queue");
+        assert_eq!(q.pending("main"), 2);
+        assert_eq!(q.take("w2"), vec![req("/b")]);
+        assert!(q.take("w2").is_empty(), "drained");
+        assert!(q.take("nope").is_empty(), "unknown label");
+        assert_eq!(q.take("main"), vec![req("/a"), req_at("/c", 1, None)], "order kept across pushes");
+        q.push("w4", vec![req("/d")]); q.push("main", vec![req("/e")]);
+        q.prune(|l| l == "main");
+        assert_eq!(q.labels(), vec!["main"], "queues of destroyed windows are dropped");
+        assert_eq!(q.pending("w4"), 0);
     }
 }

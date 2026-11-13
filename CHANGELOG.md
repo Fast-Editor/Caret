@@ -21,6 +21,15 @@ All notable changes to Caret. The version here must match `package.json`, `src-t
   window. Per-folder scoping of Quick Open, the file watcher, LSP, git status and MCP across windows lands in the
   follow-up: in this release those background services follow the folder most recently opened in the focused
   window. See docs/MULTI_WINDOW.md.
+- Windows: `caret <path>`, Finder "Open with" and `caret://open?…` pick a window. A folder that is already open
+  focuses its window; a file inside an open folder opens there (deepest folder first); a folder goes to the focused
+  window when that one is empty, otherwise to a new window (`window.openFoldersIn: "new"`) or in place
+  (`"current"`); loose files go to the focused window, or to one new window when Caret has none. Files named together
+  with their folder stay with it (`caret ~/proj ~/proj/a.ts:3`). Each request now reaches exactly one window (the
+  pending-open queue is per window; `cli_take_pending_opens` drains the calling window's). `caret serve --no-window`
+  hides the focused window. The dev automation bridge targets a window: `scripts/e2e.mjs --window w2 eval …` (or
+  `CARET_E2E_WINDOW`), `?window=<label>` on `/eval` and `/screenshot`, new `GET /windows` and `e2e.mjs windows`. See
+  docs/CLI.md, "Which window opens it".
 - Fixed: Go to Definition, Type Definition, Implementation and references that land in another file now open that
   file (Cmd+click on an import or a symbol included). Monaco can only move the caret inside the file it is showing;
   Caret never registered an editor opener, so every cross-file jump was silently dropped.

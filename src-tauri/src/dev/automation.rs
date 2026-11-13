@@ -1,6 +1,8 @@
 //! Dev-only automation bridge (enabled with `CARET_AUTOMATION=1`): a tiny localhost HTTP server
-//! used by scripted testing to eval JS in the main webview and capture screenshots.
-//! Endpoints: GET /health · POST /eval (body = JS, may `return` a value) · GET /screenshot
+//! used by scripted testing to eval JS in a Caret webview and capture screenshots.
+//! Endpoints: GET /health · GET /windows · POST /eval[?window=<label>] (body = JS, may `return` a value) ·
+//! GET /screenshot[?window=<label>]. Without `window=` the focused Caret window is used (then `main`); see
+//! scripts/e2e.mjs (`--window <label>` / `CARET_E2E_WINDOW`).
 use dashmap::DashMap;
 use once_cell::sync::Lazy;
 use std::sync::Arc;
@@ -55,11 +57,32 @@ pub fn start(app: AppHandle) {
     });
 }
 
+/// `key=value` lookup in a raw query string (labels are plain ASCII, so no percent-decoding).
+fn query_param<'a>(query: &'a str, key: &str) -> Option<&'a str> {
+    query.split('&').find_map(|kv| { let (k, v) = kv.split_once('=').unwrap_or((kv, "")); (k == key && !v.is_empty()).then_some(v) })
+}
+
+/// The webview a request targets: `?window=<label>` when given (an unknown label is an error), else the focused
+/// Caret window, falling back to `main`.
+fn target_window(app: &AppHandle, query: &str) -> std::result::Result<tauri::WebviewWindow, String> {
+    match query_param(query, "window") {
+        Some(label) => app.get_webview_window(label).ok_or_else(|| format!("no window {label}")),
+        None => crate::core::windows::focused_window(app).or_else(|| app.get_webview_window(crate::core::windows::MAIN_LABEL)).ok_or_else(|| "no Caret window".to_string()),
+    }
+}
+
+fn no_window(err: String) -> (&'static str, String) { ("404 Not Found", serde_json::json!({"ok": false, "error": err}).to_string()) }
+
 async fn handle(app: &AppHandle, method: &str, path: &str, body: String) -> (&'static str, String) {
-    match (method, path) {
+    let (route, query) = path.split_once('?').unwrap_or((path, ""));
+    match (method, route) {
         ("GET", "/health") => ("200 OK", r#"{"ok":true}"#.into()),
+        ("GET", "/windows") => {
+            let windows = crate::core::windows::summaries(&app.state::<crate::core::windows::WindowRegistry>());
+            ("200 OK", serde_json::json!({"ok": true, "windows": windows}).to_string())
+        }
         ("POST", "/eval") => {
-            let Some(w) = app.get_webview_window("main") else { return ("500 Internal Server Error", r#"{"ok":false,"error":"no main window"}"#.into()) };
+            let w = match target_window(app, query) { Ok(w) => w, Err(e) => return no_window(e) };
             let id = uuid::Uuid::new_v4().to_string();
             let (tx, rx) = oneshot::channel();
             PENDING.insert(id.clone(), tx);
@@ -68,12 +91,12 @@ async fn handle(app: &AppHandle, method: &str, path: &str, body: String) -> (&'s
             );
             if let Err(e) = w.eval(&js) { PENDING.remove(&id); return ("500 Internal Server Error", format!(r#"{{"ok":false,"error":{}}}"#, serde_json::json!(e.to_string()))); }
             match tokio::time::timeout(std::time::Duration::from_secs(30), rx).await {
-                Ok(Ok((ok, value))) => ("200 OK", serde_json::json!({"ok": ok, "value": value}).to_string()),
+                Ok(Ok((ok, value))) => ("200 OK", serde_json::json!({"ok": ok, "value": value, "window": w.label()}).to_string()),
                 _ => { PENDING.remove(&id); ("504 Gateway Timeout", r#"{"ok":false,"error":"timeout"}"#.into()) }
             }
         }
-        ("GET", p) if p.starts_with("/screenshot") => {
-            let Some(w) = app.get_webview_window("main") else { return ("500 Internal Server Error", r#"{"ok":false,"error":"no main window"}"#.into()) };
+        ("GET", "/screenshot") => {
+            let w = match target_window(app, query) { Ok(w) => w, Err(e) => return no_window(e) };
             let _ = w.show(); let _ = w.set_focus(); let _ = w.unminimize();
             tokio::time::sleep(std::time::Duration::from_millis(450)).await;
             let scale = w.scale_factor().unwrap_or(2.0);
@@ -82,7 +105,7 @@ async fn handle(app: &AppHandle, method: &str, path: &str, body: String) -> (&'s
             let out = std::env::temp_dir().join(format!("caret-shot-{}.png", chrono::Utc::now().format("%H%M%S%3f")));
             let region = format!("{},{},{},{}", pos.0 as i64, pos.1 as i64, size.0 as i64, size.1 as i64);
             let status = tokio::process::Command::new("screencapture").args(["-x", "-R", &region, out.to_str().unwrap_or("")]).status().await;
-            match status { Ok(s) if s.success() => ("200 OK", serde_json::json!({"ok": true, "path": out, "region": region}).to_string()), other => ("500 Internal Server Error", serde_json::json!({"ok": false, "error": format!("{other:?}")}).to_string()) }
+            match status { Ok(s) if s.success() => ("200 OK", serde_json::json!({"ok": true, "path": out, "region": region, "window": w.label()}).to_string()), other => ("500 Internal Server Error", serde_json::json!({"ok": false, "error": format!("{other:?}")}).to_string()) }
         }
         _ => ("404 Not Found", r#"{"ok":false,"error":"not found"}"#.into()),
     }

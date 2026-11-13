@@ -12,8 +12,35 @@ caret serve            # run Caret and serve its UI to browsers on your LAN / Ta
 ```
 
 `-n/--new-window`, `-r/--reuse-window`, `-w/--wait` and `-a/--add` are accepted for muscle-memory compatibility and
-ignored (Caret is a single-window app and does not block). Unknown flags exit 2; a missing path prints
-`caret: no such file or directory` and exits 1 after opening the others.
+ignored (which window a path opens in is decided by the rules below, and Caret does not block). Unknown flags exit 2;
+a missing path prints `caret: no such file or directory` and exits 1 after opening the others.
+
+## Which window opens it
+
+With several Caret windows open (docs/MULTI_WINDOW.md), every path from `caret <path>`, Finder "Open with" and
+`caret://open?…` is routed to one window by `route_open` in `src-tauri/src/core/cli.rs`. The rules, tried in this
+order for each path:
+
+1. **A folder that a window already shows** focuses that window (the focused one when two windows show it, else the
+   oldest). Nothing is reopened.
+2. **A file inside an open folder** opens in the window showing that folder; with nested folders the deepest one
+   wins (`/repo/packages/app` beats `/repo` for `/repo/packages/app/src/x.ts`), then the focused window, then the
+   oldest.
+3. **A folder while the focused window is empty** (Welcome screen) opens in that window.
+4. **Any other folder** opens in a **new window** when `window.openFoldersIn` is `"new"` (the default) and replaces
+   the focused window's folder when it is `"current"`. A subfolder of an open folder (`caret packages/app` while the
+   window shows the repo) is a folder request like any other, not a file inside the repo window. One folder per
+   window per invocation: `caret a b` with `"current"` opens `a` in place and `b` in a new window.
+5. **A loose file** (under no open folder) opens in the focused window. When Caret has no window at all (macOS after
+   the last one closed), loose files share one new window.
+
+Files given together with their folder stay with it: `caret ~/proj ~/proj/src/a.ts:12` opens `~/proj` (rule 3 or 4)
+and `a.ts` in that same window, whether it is the focused window or a brand-new one. A window created for a folder
+starts with the folder already open and receives the files once its UI is up. Each request is handed to exactly one
+window: the backend keeps one queue per window label and a window only drains its own (`cli_take_pending_opens`).
+
+`window.openFoldersIn` (Settings → Window, `"new"` | `"current"`) is the same setting that decides where Open Folder /
+Open Recent put a folder from a window that already shows one; it only matters for rule 4.
 
 ## Install
 
@@ -57,11 +84,14 @@ The script resolves each argument to an absolute, symlink-resolved path and hand
 dry runs never depend on LaunchServices.
 
 In the app, `tauri::RunEvent::Opened` (`src-tauri/src/core/cli.rs::on_opened`) parses the URLs into
-`OpenRequest { path, line?, col? }`, pushes them on the `OpenQueue` and emits `caret://open-paths`. The UI
-(`src/lib/cliOpen.ts`) drains the queue — at boot and on every poke — so a cold start and a running app behave the
-same: a folder becomes the workspace; a file opens in the editor, opening its folder as the workspace first when
-none is open. Arguments passed directly to the binary (`Caret.app/Contents/MacOS/caret .`) are parsed the same way
-at startup.
+`OpenRequest { path, line?, col? }`, runs `route_open` over the window registry and `window.openFoldersIn` (see
+"Which window opens it"), creates a window for each `NewWindow` group (with its folder already open), pushes every
+group on that window's `OpenQueue` and emits `caret://open-paths` to that window only, then focuses it. The UI
+(`src/lib/cliOpen.ts`) drains its own queue — at boot and on every poke — so a cold start, a running app and a window
+created for the request behave the same: a folder routed to a window opens there (or just focuses it when it is
+already that window's folder); a file opens in the editor, opening its folder as the workspace first when the window
+has none. Arguments passed directly to the binary (`Caret.app/Contents/MacOS/caret .`) are routed the same way at
+startup (the `main` window is the focused, empty window at that point).
 
 `CARET_CLI_DRY_RUN=1 caret . a.ts:3` prints the `open` commands instead of running them, including the target that
 would be chosen on this machine right now (used by the Rust tests together with `CARET_CLI_RUNNING_APP`).
@@ -73,7 +103,8 @@ to `/Applications`, the Homebrew cask in `~/Applications`, a `cargo tauri build`
 LaunchServices also remembers every mounted DMG (`mdfind "kMDItemCFBundleIdentifier == 'dev.caret.editor'"` and
 `lsregister -dump | grep Caret.app` list them). With plain `open -b dev.caret.editor`, LaunchServices chooses one of
 those copies by its own rules, and when it picks a copy that is not running you wait for a cold start and get a second
-Caret next to the one you were working in, even though Caret is single-window (File → New Window is not available).
+Caret *process* next to the one you were working in (not a second window of it: the window routing above only sees
+the windows of one process).
 
 The launcher therefore prefers the running copy (step 1 above), whichever path it lives at; `caret .` then arrives as an
 open event in that window. To stop the ambiguity for Finder and other apps as well, keep one copy:
