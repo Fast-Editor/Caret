@@ -5,8 +5,9 @@ use crate::paths;
 use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
+use std::time::SystemTime;
 use tauri::{AppHandle, State};
 
 // ───────────────────────── schema ─────────────────────────
@@ -616,11 +617,17 @@ pub struct SettingsState {
     workspace_root: RwLock<Option<PathBuf>>,
     effective: RwLock<Settings>,
     secrets: RwLock<BTreeMap<String, String>>,
+    /// `.caret/settings.json` of every root `effective_for` / `set_workspace` has read, keyed by root.
+    root_overlays: RwLock<HashMap<PathBuf, RootOverlay>>,
 }
+
+/// A root's `.caret/settings.json` as last read; `sig` is the file's `(mtime, len)` (`None`: no file).
+struct RootOverlay { sig: Option<(SystemTime, u64)>, value: Value }
 
 fn user_path() -> PathBuf { paths::config_dir().join("settings.json") }
 fn secrets_path() -> PathBuf { paths::config_dir().join("secrets.json") }
 fn workspace_settings_path(root: &Path) -> PathBuf { root.join(".caret").join("settings.json") }
+fn file_sig(p: &Path) -> Option<(SystemTime, u64)> { std::fs::metadata(p).ok().map(|m| (m.modified().unwrap_or(SystemTime::UNIX_EPOCH), m.len())) }
 
 fn read_json(p: &Path) -> Value {
     std::fs::read_to_string(p).ok().and_then(|s| serde_json::from_str::<Value>(&s).ok()).unwrap_or(Value::Object(Default::default()))
@@ -660,7 +667,7 @@ impl SettingsState {
     pub fn load() -> Self {
         let user = read_json(&user_path());
         let secrets: BTreeMap<String, String> = std::fs::read_to_string(secrets_path()).ok().and_then(|s| serde_json::from_str(&s).ok()).unwrap_or_default();
-        let st = Self { user: RwLock::new(user), workspace: RwLock::new(None), workspace_root: RwLock::new(None), effective: RwLock::new(Settings::default()), secrets: RwLock::new(secrets) };
+        let st = Self { user: RwLock::new(user), workspace: RwLock::new(None), workspace_root: RwLock::new(None), effective: RwLock::new(Settings::default()), secrets: RwLock::new(secrets), root_overlays: RwLock::new(HashMap::new()) };
         st.recompute();
         st
     }
@@ -674,10 +681,34 @@ impl SettingsState {
     pub fn scopes(&self) -> SettingsScopes {
         SettingsScopes { user: to_settings(&self.user.read()), workspace: self.workspace.read().clone(), effective: self.effective(), user_path: user_path().to_string_lossy().to_string(), workspace_path: self.workspace_root.read().as_ref().map(|r| workspace_settings_path(r).to_string_lossy().to_string()) }
     }
-    pub fn set_workspace(&self, root: Option<&Path>) {
+    /// Point the workspace scope (what `effective()`, `scopes()` and `patch("workspace")` act on) at `root`: the
+    /// focused window's folder. A no-op when the root is unchanged, so focus events may call it on every switch.
+    /// Returns whether the effective settings changed.
+    pub fn set_workspace(&self, root: Option<&Path>) -> bool {
+        if self.workspace_root.read().as_deref() == root { return false; }
+        let before = serde_json::to_value(&*self.effective.read()).ok();
         *self.workspace_root.write() = root.map(Path::to_path_buf);
-        *self.workspace.write() = root.map(|r| { let p = workspace_settings_path(r); if p.exists() { read_json(&p) } else { Value::Object(Default::default()) } });
+        *self.workspace.write() = root.map(|r| self.overlay_for(r));
         self.recompute();
+        serde_json::to_value(&*self.effective.read()).ok() != before
+    }
+    /// Settings for one root, independent of which window is focused: defaults + user + that root's
+    /// `.caret/settings.json` (`None`: no overlay). Long-running work (agent turns, verification) uses this with the
+    /// root it captured at start. Overlays are cached per root and re-read when the file's mtime or size changes.
+    pub fn effective_for(&self, root: Option<&Path>) -> Settings {
+        let mut merged = serde_json::to_value(Settings::default()).unwrap_or_default();
+        deep_merge(&mut merged, &self.user.read());
+        if let Some(r) = root { let overlay = self.overlay_for(r); deep_merge(&mut merged, &overlay); }
+        to_settings(&merged)
+    }
+    /// `<root>/.caret/settings.json` as a JSON object (empty when absent), through the per-root cache.
+    fn overlay_for(&self, root: &Path) -> Value {
+        let p = workspace_settings_path(root);
+        let sig = file_sig(&p);
+        if let Some(e) = self.root_overlays.read().get(root) { if e.sig == sig { return e.value.clone(); } }
+        let value = if sig.is_some() { read_json(&p) } else { Value::Object(Default::default()) };
+        self.root_overlays.write().insert(root.to_path_buf(), RootOverlay { sig, value: value.clone() });
+        value
     }
     pub fn patch(&self, patch: &Value, scope: &str) -> Result<Settings> {
         match scope {
@@ -687,6 +718,7 @@ impl SettingsState {
                 let mut cur = ws.clone().unwrap_or(Value::Object(Default::default()));
                 deep_merge(&mut cur, patch);
                 write_json_atomic(&workspace_settings_path(&root), &cur, false)?;
+                self.root_overlays.write().remove(&root);
                 *ws = Some(cur);
             }
             _ => {
@@ -700,7 +732,7 @@ impl SettingsState {
     }
     pub fn reset(&self, scope: &str) -> Result<Settings> {
         match scope {
-            "workspace" => { if let Some(root) = self.workspace_root.read().clone() { let _ = std::fs::remove_file(workspace_settings_path(&root)); } *self.workspace.write() = Some(Value::Object(Default::default())); }
+            "workspace" => { if let Some(root) = self.workspace_root.read().clone() { let _ = std::fs::remove_file(workspace_settings_path(&root)); self.root_overlays.write().remove(&root); } *self.workspace.write() = Some(Value::Object(Default::default())); }
             _ => { *self.user.write() = Value::Object(Default::default()); write_json_atomic(&user_path(), &Value::Object(Default::default()), false)?; }
         }
         self.recompute();
@@ -773,4 +805,54 @@ pub fn settings_path(st: State<'_, SettingsState>, scope: String) -> Result<Stri
         "keybindings" => paths::config_dir().join("keybindings.json"),
         _ => user_path(),
     }.to_string_lossy().to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A state with the given user settings and no files read (the user file is never touched).
+    fn state(user: Value) -> SettingsState {
+        let st = SettingsState { user: RwLock::new(user), workspace: RwLock::new(None), workspace_root: RwLock::new(None), effective: RwLock::new(Settings::default()), secrets: RwLock::new(BTreeMap::new()), root_overlays: RwLock::new(HashMap::new()) };
+        st.recompute();
+        st
+    }
+    fn write_overlay(root: &Path, json: &str) { let p = workspace_settings_path(root); std::fs::create_dir_all(p.parent().unwrap()).unwrap(); std::fs::write(p, json).unwrap(); }
+
+    #[test]
+    fn effective_for_overlays_that_roots_settings_file() {
+        let st = state(serde_json::json!({ "agent": { "defaultMode": "ask" } }));
+        let a = tempfile::tempdir().unwrap();
+        let b = tempfile::tempdir().unwrap();
+        write_overlay(a.path(), r#"{ "agent": { "defaultMode": "plan" } }"#);
+        assert_eq!(st.effective_for(Some(a.path())).agent.default_mode, "plan", "the root's overlay wins over user settings");
+        assert_eq!(st.effective_for(Some(b.path())).agent.default_mode, "ask", "no overlay file: user settings");
+        assert_eq!(st.effective_for(None).agent.default_mode, "ask", "no root: user settings");
+        assert_eq!(st.effective().agent.default_mode, "ask", "the focused scope is not touched");
+        // cached per root, re-read when the file changes or disappears
+        write_overlay(a.path(), r#"{ "agent": { "defaultMode": "debug" } }"#);
+        assert_eq!(st.effective_for(Some(a.path())).agent.default_mode, "debug");
+        std::fs::remove_file(workspace_settings_path(a.path())).unwrap();
+        assert_eq!(st.effective_for(Some(a.path())).agent.default_mode, "ask");
+    }
+
+    #[test]
+    fn set_workspace_follows_the_root_and_is_a_no_op_for_the_same_root() {
+        let st = state(serde_json::json!({}));
+        let a = tempfile::tempdir().unwrap();
+        let b = tempfile::tempdir().unwrap();
+        let c = tempfile::tempdir().unwrap();
+        write_overlay(a.path(), r#"{ "agent": { "defaultMode": "plan" } }"#);
+        assert!(st.set_workspace(Some(a.path())), "overlay changes the effective settings");
+        assert_eq!(st.effective().agent.default_mode, "plan");
+        assert!(!st.set_workspace(Some(a.path())), "same root: nothing to do");
+        assert!(st.set_workspace(Some(b.path())), "back to user settings");
+        assert_eq!(st.effective().agent.default_mode, "agent");
+        assert!(!st.set_workspace(Some(c.path())), "root changed, effective settings did not");
+        assert_eq!(st.scopes().workspace_path.as_deref(), Some(workspace_settings_path(c.path()).to_string_lossy().as_ref()));
+        assert!(!st.set_workspace(None));
+        assert!(st.scopes().workspace_path.is_none());
+        // the overlay the focused scope reads is the same cached one `effective_for` sees
+        assert_eq!(st.effective_for(Some(a.path())).agent.default_mode, "plan");
+    }
 }

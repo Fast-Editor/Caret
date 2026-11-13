@@ -10,6 +10,7 @@ use portable_pty::{native_pty_system, ChildKiller, CommandBuilder, MasterPty, Pt
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, VecDeque};
 use std::io::{Read, Write};
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -449,13 +450,19 @@ pub fn spawn_session_with(sessions: Arc<DashMap<String, Arc<PtySession>>>, shell
     Ok(session)
 }
 
+/// Working directory for a new terminal or one-off command: the requested folder, else the calling window's
+/// workspace root, else `home`; a pick that is not a directory falls back to `home`.
+pub fn select_cwd(requested: Option<&str>, root: Option<&Path>, home: &Path) -> PathBuf {
+    let pick = requested.filter(|c| !c.is_empty()).map(PathBuf::from).or_else(|| root.map(Path::to_path_buf)).unwrap_or_else(|| home.to_path_buf());
+    if pick.is_dir() { pick } else { home.to_path_buf() }
+}
+
 #[tauri::command]
-pub async fn pty_spawn(app: AppHandle, st: State<'_, PtyState>, options: PtySpawnOptions, on_event: Channel<PtyEvent>) -> Result<PtyInfo> {
+pub async fn pty_spawn(app: AppHandle, window: tauri::Window, st: State<'_, PtyState>, options: PtySpawnOptions, on_event: Channel<PtyEvent>) -> Result<PtyInfo> {
     let settings = app.state::<SettingsState>();
     let shell = options.shell.clone().filter(|s| !s.is_empty()).unwrap_or_else(|| default_shell(&settings));
-    let root = app.state::<WorkspaceState>().root();
-    let cwd = options.cwd.clone().filter(|c| !c.is_empty()).map(std::path::PathBuf::from).or(root).unwrap_or_else(crate::paths::home_dir);
-    let cwd = if cwd.is_dir() { cwd } else { crate::paths::home_dir() };
+    let root = app.state::<WorkspaceState>().root_for(window.label());
+    let cwd = select_cwd(options.cwd.as_deref(), root.as_deref(), &crate::paths::home_dir());
     let shell_name = std::path::Path::new(&shell).file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_else(|| shell.clone());
     let user_args = options.args.clone().filter(|a| !a.is_empty());
     let login = user_args.is_none() && cfg!(unix) && matches!(shell_name.as_str(), "zsh" | "bash" | "fish" | "sh");
@@ -537,11 +544,11 @@ pub fn last_block_output(st: &PtyState, id: &str) -> Option<String> { st.session
 
 /// Non-interactive helper for UI features (e.g. running a formatter, `which`, version checks).
 #[tauri::command]
-pub async fn pty_run_command(app: AppHandle, command: String, cwd: Option<String>, timeout_ms: Option<u64>) -> Result<RunCommandResult> {
+pub async fn pty_run_command(app: AppHandle, window: tauri::Window, command: String, cwd: Option<String>, timeout_ms: Option<u64>) -> Result<RunCommandResult> {
     let settings = app.state::<SettingsState>();
     let shell = default_shell(&settings);
-    let root = app.state::<WorkspaceState>().root();
-    let dir = cwd.map(std::path::PathBuf::from).or(root).filter(|d| d.is_dir()).unwrap_or_else(crate::paths::home_dir);
+    let root = app.state::<WorkspaceState>().root_for(window.label());
+    let dir = select_cwd(cwd.as_deref(), root.as_deref(), &crate::paths::home_dir());
     let timeout = Duration::from_millis(timeout_ms.unwrap_or(60_000).clamp(100, 30 * 60_000));
     let fut = tokio::process::Command::new(&shell).arg("-lc").arg(&command).current_dir(&dir).env("TERM", "dumb").env("CARET", "1")
         .stdin(std::process::Stdio::null()).stdout(std::process::Stdio::piped()).stderr(std::process::Stdio::piped()).kill_on_drop(true).output();
@@ -557,6 +564,19 @@ pub async fn pty_run_command(app: AppHandle, command: String, cwd: Option<String
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn select_cwd_prefers_the_request_then_the_window_root_then_home() {
+        let root = tempfile::tempdir().unwrap();
+        let req = tempfile::tempdir().unwrap();
+        let home = tempfile::tempdir().unwrap();
+        assert_eq!(select_cwd(Some(req.path().to_str().unwrap()), Some(root.path()), home.path()), req.path());
+        assert_eq!(select_cwd(None, Some(root.path()), home.path()), root.path(), "no request: the window's folder");
+        assert_eq!(select_cwd(Some(""), Some(root.path()), home.path()), root.path(), "an empty request is no request");
+        assert_eq!(select_cwd(None, None, home.path()), home.path(), "window without a folder");
+        assert_eq!(select_cwd(Some("/definitely/not/a/dir"), Some(root.path()), home.path()), home.path(), "a missing request falls back to home, not to the root");
+        assert_eq!(select_cwd(None, Some(&root.path().join("gone")), home.path()), home.path(), "a vanished root falls back to home");
+    }
     #[test]
     fn ring_buffer_bounds() {
         let mut r = RingBuf::new(10);

@@ -37,6 +37,13 @@ All notable changes to Caret. The version here must match `package.json`, `src-t
   (an empty window sees user-scope MCP servers only), and LSP status/diagnostics, index status and MCP changes reach
   only the windows showing that folder. Agent runs resolve MCP tools and codebase search against their thread's
   workspace root rather than the focused window's.
+- Windows: git, terminals, Run and Debug, Verify, the sandbox classifier, rules / memories / skills / commands /
+  subagents / hooks / plans, review results and the chat commands now act on the calling window's folder instead of
+  the focused one, so two windows on different projects no longer see each other's threads, git status or knowledge.
+  Agent threads are rooted in the window that created them (a window without a folder gets a folderless thread) and
+  a run keeps that root and that folder's `.caret/settings.json` for its whole duration, even when another window is
+  focused; thread lists, message search, fan-out and plan builds are per window, and threads started elsewhere stay
+  out of a window's history. Workspace-scope settings follow window focus.
 - Fixed: Go to Definition, Type Definition, Implementation and references that land in another file now open that
   file (Cmd+click on an import or a symbol included). Monaco can only move the caret inside the file it is showing;
   Caret never registered an editor opener, so every cross-file jump was silently dropped.

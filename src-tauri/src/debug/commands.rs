@@ -25,14 +25,14 @@ pub async fn debug_install_adapter(app: AppHandle, st: State<'_, Arc<DebugState>
 
 /// Launch configurations for the Start dropdown (`file` = the active editor file for `${file}` defaults).
 #[tauri::command(async)]
-pub fn debug_list_configs(ws: State<'_, WorkspaceState>, file: Option<String>) -> Result<Vec<LaunchConfig>> {
-    Ok(configs::discover(ws.root().as_deref(), file.as_deref()))
+pub fn debug_list_configs(ws: State<'_, WorkspaceState>, window: tauri::Window, file: Option<String>) -> Result<Vec<LaunchConfig>> {
+    Ok(configs::discover(ws.root_for(window.label()).as_deref(), file.as_deref()))
 }
 
 #[tauri::command]
-pub async fn debug_start(app: AppHandle, st: State<'_, Arc<DebugState>>, ws: State<'_, WorkspaceState>, config: LaunchConfig) -> Result<DebugSessionInfo> {
+pub async fn debug_start(app: AppHandle, window: tauri::Window, st: State<'_, Arc<DebugState>>, ws: State<'_, WorkspaceState>, config: LaunchConfig) -> Result<DebugSessionInfo> {
     ensure_sink(&app, &st);
-    let root = ws.root();
+    let root = ws.root_for(window.label()); // the calling window's folder is the default cwd
     let cwd = config.config.get("cwd").and_then(|c| c.as_str()).map(std::path::PathBuf::from).filter(|p| p.is_dir()).or(root.clone()).unwrap_or_else(crate::paths::home_dir);
     let custom = if config.kind == "custom" { config.config.get("adapterCommand").and_then(|c| c.as_str()).map(|c| { let mut parts = c.split_whitespace().map(String::from); (parts.next().unwrap_or_default(), parts.collect::<Vec<_>>()) }) } else { std::env::var("CARET_DAP_ADAPTER").ok().filter(|_| config.kind == "custom").map(|c| { let mut parts = c.split_whitespace().map(String::from); (parts.next().unwrap_or_default(), parts.collect()) }) };
     let adapter = if custom.is_some() { "custom".to_string() } else { adapters::adapter_for_type(&config.kind).ok_or_else(|| CaretError::invalid(format!("no debug adapter for type `{}` (supported: node, python)", config.kind)))?.to_string() };

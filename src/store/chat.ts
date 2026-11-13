@@ -199,6 +199,24 @@ function sameItem(a: ContextItem, b: ContextItem): boolean {
   return (a.path ?? '') === (b.path ?? '') && r(a) === r(b) && (a.url ?? '') === (b.url ?? '') && (a.query ?? '') === (b.query ?? '') && (a.sha ?? '') === (b.sha ?? '') && (a.terminalId ?? '') === (b.terminalId ?? '') && (a.sessionId ?? '') === (b.sessionId ?? '') && (a.ruleId ?? '') === (b.ruleId ?? '') && (a.docId ?? '') === (b.docId ?? '') && (a.uri ?? '') === (b.uri ?? '')
 }
 
+/**
+ * Does a thread belong in this window's history? Scratch threads belong everywhere; otherwise the thread's folder
+ * must be this window's folder (a window without a folder shows folderless threads).
+ */
+export function sessionBelongsHere(session: { workspaceRoot: string; scratch?: boolean }, windowRoot: string | null | undefined): boolean {
+  return session.scratch === true || (session.workspaceRoot || '') === (windowRoot || '')
+}
+
+/**
+ * Agent events are app-wide (one manager, N windows): drop `session-created` for threads of other folders so a thread
+ * started in window A never shows up in window B. Every other event only touches threads already in this window's
+ * list, so it passes through unchanged.
+ */
+export function dropForeignSessionEvents(events: AgentEvent[], windowRoot: string | null | undefined): AgentEvent[] {
+  if (!events.some((e) => e.type === 'session-created')) return events
+  return events.filter((e) => e.type !== 'session-created' || sessionBelongsHere(e.session, windowRoot))
+}
+
 export const useChat = create<ChatState>((set, get) => ({
   ...emptyCoreState(),
   activeSessionId: null,
@@ -222,14 +240,16 @@ export const useChat = create<ChatState>((set, get) => ({
   ingest: (events) => {
     if (!events.length) return
     const s = get()
+    // This window's list only tracks threads of its own folder; `allSessions` (group by project) sees every workspace.
+    const local = dropForeignSessionEvents(events, useWorkspace.getState().workspace?.root ?? null)
     const core: ChatCoreState = { sessions: s.sessions, loaded: s.loaded, approvals: s.approvals, questions: s.questions, versions: s.versions, streaming: s.streaming, steering: s.steering }
-    const next = applyAgentEvents(core, events)
+    const next = applyAgentEvents(core, local)
     if (next !== core) set(next)
     if (s.allSessions.length) { const all = applyToAll(s.allSessions, events); if (all !== s.allSessions) set({ allSessions: all }) }
     // external (ACP) agent status is UI-only state: fan out to the composer's agent picker
     for (const e of events) if (e.type === 'agent-status') busEmit('chat:agent-status', e)
-    // auto-activate newly created foreground sessions when none is active
-    if (!get().activeSessionId) { const created = events.find((e) => e.type === 'session-created'); if (created && created.type === 'session-created' && !created.session.isSubagent) set({ activeSessionId: created.session.id }) }
+    // auto-activate newly created foreground sessions (of this window) when none is active
+    if (!get().activeSessionId) { const created = local.find((e) => e.type === 'session-created'); if (created && created.type === 'session-created' && !created.session.isSubagent) set({ activeSessionId: created.session.id }) }
   },
 
   loadSessions: async () => {

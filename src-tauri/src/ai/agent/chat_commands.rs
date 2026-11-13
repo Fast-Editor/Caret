@@ -6,25 +6,31 @@ use crate::ai::agent::session::*;
 use crate::ai::agent::{plans, runner};
 use crate::core::sessions::SessionStore;
 use crate::core::settings::SettingsState;
+use crate::core::workspace::WorkspaceState;
 use crate::error::{CaretError, Result};
 use serde_json::Value;
+use std::path::PathBuf;
 use std::sync::Arc;
 use tauri::ipc::Channel;
 use tauri::{AppHandle, Manager, State};
 
 type Mgr<'a> = State<'a, Arc<AgentManager>>;
+/// Commands that depend on the workspace take the calling `window` and read its root through this.
+type Ws<'a> = State<'a, WorkspaceState>;
 
 #[tauri::command]
 pub fn chat_subscribe(mgr: Mgr<'_>, on_event: Channel<AgentEvent>, client: Option<String>) -> Result<()> { mgr.subscribe(client.as_deref().unwrap_or("default"), on_event); Ok(()) }
 
 #[tauri::command(async)]
-pub fn chat_list_sessions(mgr: Mgr<'_>, include_archived: Option<bool>) -> Result<Vec<SessionSummary>> { Ok(mgr.list_sessions(include_archived.unwrap_or(false))) }
+pub fn chat_list_sessions(ws: Ws<'_>, window: tauri::Window, mgr: Mgr<'_>, include_archived: Option<bool>) -> Result<Vec<SessionSummary>> { Ok(mgr.list_sessions_for(ws.root_for(window.label()).as_deref(), include_archived.unwrap_or(false))) }
 
 #[tauri::command]
-pub async fn chat_create_session(app: AppHandle, mgr: Mgr<'_>, mode: Option<String>, model_id: Option<String>, title: Option<String>, use_worktree: Option<bool>, agent_id: Option<String>) -> Result<ChatSessionView> {
-    let h = mgr.create_session(mode, model_id, title, use_worktree.unwrap_or(false), None).await?;
+pub async fn chat_create_session(app: AppHandle, ws: Ws<'_>, window: tauri::Window, mgr: Mgr<'_>, mode: Option<String>, model_id: Option<String>, title: Option<String>, use_worktree: Option<bool>, agent_id: Option<String>) -> Result<ChatSessionView> {
+    // The thread belongs to the calling window's folder; a window without a folder gets a folderless ("global") thread.
+    let root = ws.root_for(window.label());
+    let h = mgr.create_session(root.clone(), mode, model_id, title, use_worktree.unwrap_or(false), None).await?;
     // External (ACP) agent binding: explicit choice wins, else the configured default agent.
-    let default_agent = app.state::<SettingsState>().effective().acp.default_agent_id.clone();
+    let default_agent = app.state::<SettingsState>().effective_for(root.as_deref()).acp.default_agent_id.clone();
     let agent = agent_id.filter(|a| !a.is_empty()).unwrap_or(default_agent);
     if agent != "caret" { { let mut s = h.session.lock(); s.agent_id = Some(agent); } mgr.persist(&h); mgr.emit(AgentEvent::SessionReset { session_id: h.id() }); }
     let v = h.session.lock().view(); Ok(v)
@@ -198,27 +204,27 @@ pub fn chat_list_modes(mgr: Mgr<'_>) -> Result<Vec<ModeView>> {
     Ok(modes::all_modes(&settings).into_iter().map(|m| ModeView { id: m.id, name: m.name, description: m.description, icon: m.icon, builtin: m.builtin, tools: match m.tools { modes::ToolFilter::All => Value::String("all".into()), modes::ToolFilter::Readonly => Value::String("readonly".into()), modes::ToolFilter::Only { names } => Value::Array(names.into_iter().map(Value::String).collect()) } }).collect())
 }
 
-fn env_for<'a>(app: &'a AppHandle, mgr: &'a AgentManager, settings: &'a crate::core::settings::Settings, files: Arc<Vec<String>>) -> ContextEnv<'a> {
-    let root = mgr.workspace_root();
+/// Context environment for the calling window's folder (`root`).
+fn env_for<'a>(app: &'a AppHandle, root: Option<PathBuf>, mgr: &'a AgentManager, settings: &'a crate::core::settings::Settings, files: Arc<Vec<String>>) -> ContextEnv<'a> {
     let cwd = root.clone().unwrap_or_else(crate::paths::home_dir);
-    ContextEnv { app: Some(app), root: root.clone(), cwd, settings, ws_key: crate::core::sessions::workspace_key(root.as_deref()), store: &mgr.store, files }
+    ContextEnv { app: Some(app), ws_key: AgentManager::ws_key_for(root.as_deref()), root, cwd, settings, store: &mgr.store, files }
 }
 
 #[tauri::command]
-pub async fn chat_context_preview(app: AppHandle, mgr: Mgr<'_>, items: Vec<ContextItem>) -> Result<ContextPreview> {
-    let settings = mgr.settings();
-    let root = mgr.workspace_root();
+pub async fn chat_context_preview(app: AppHandle, ws: Ws<'_>, window: tauri::Window, mgr: Mgr<'_>, items: Vec<ContextItem>) -> Result<ContextPreview> {
+    let root = ws.root_for(window.label());
+    let settings = mgr.settings_for(root.as_deref());
     let files = match &root { Some(r) => mgr.file_list(r).await, None => Arc::new(vec![]) }; // no folder open → nothing to enumerate
-    let env = env_for(&app, &mgr, &settings, files);
+    let env = env_for(&app, root, &mgr, &settings, files);
     Ok(context::preview(&env, &items).await)
 }
 
 #[tauri::command]
-pub async fn chat_mention_candidates(app: AppHandle, mgr: Mgr<'_>, kind: String, query: String, limit: Option<usize>) -> Result<Vec<ContextItem>> {
-    let settings = mgr.settings();
-    let root = mgr.workspace_root();
+pub async fn chat_mention_candidates(app: AppHandle, ws: Ws<'_>, window: tauri::Window, mgr: Mgr<'_>, kind: String, query: String, limit: Option<usize>) -> Result<Vec<ContextItem>> {
+    let root = ws.root_for(window.label());
+    let settings = mgr.settings_for(root.as_deref());
     let files = match &root { Some(r) => mgr.file_list(r).await, None => Arc::new(vec![]) };
-    let env = env_for(&app, &mgr, &settings, files);
+    let env = env_for(&app, root, &mgr, &settings, files);
     Ok(context::mention_candidates(&env, &kind, &query, limit.unwrap_or(30)).await)
 }
 
@@ -230,12 +236,13 @@ pub async fn chat_tool_catalog(mgr: Mgr<'_>) -> Result<Vec<ToolCatalogEntry>> {
     Ok(v)
 }
 
-/// Used by `plans_build`: start an agent session that implements a plan file. Returns the session id.
-pub async fn start_plan_build(app: &AppHandle, plan_path: &str, session_id: Option<String>, model_id: Option<String>, use_worktree: bool) -> Result<String> {
+/// Used by `plans_build`: start an agent session that implements a plan file; `root` is the calling window's folder
+/// (a new session is rooted there). Returns the session id.
+pub async fn start_plan_build(app: &AppHandle, root: Option<PathBuf>, plan_path: &str, session_id: Option<String>, model_id: Option<String>, use_worktree: bool) -> Result<String> {
     let mgr = app.state::<Arc<AgentManager>>().inner().clone();
     let content = plans::read(plan_path).unwrap_or_default();
     let title = content.lines().find(|l| l.starts_with("# ")).map(|l| l.trim_start_matches("# ").to_string()).unwrap_or_else(|| "Build plan".into());
-    let h = match session_id { Some(id) => mgr.handle(&id)?, None => mgr.create_session(Some("agent".into()), model_id, Some(format!("Build: {title}")), use_worktree, None).await? };
+    let h = match session_id { Some(id) => mgr.handle(&id)?, None => mgr.create_session(root, Some("agent".into()), model_id, Some(format!("Build: {title}")), use_worktree, None).await? };
     let _ = plans::set_status(plan_path, "building");
     let sid = h.id();
     mgr.submit(SendMessageRequest { session_id: sid.clone(), text: format!("Implement the following plan completely. Work through the steps in order, verify as you go, and report what was done.\n\nPlan file: {plan_path}\n\n{content}"), mode: "agent".into(), context: vec![ContextItem { id: format!("plan:{plan_path}"), kind: "plan".into(), label: title, path: Some(plan_path.to_string()), ..Default::default() }], ..Default::default() }).await?;
@@ -309,8 +316,8 @@ pub async fn chat_regenerate_title(app: AppHandle, mgr: Mgr<'_>, session_id: Str
 
 /// Case-insensitive substring search over message text in session files (this workspace or all), newest first.
 #[tauri::command(async)]
-pub fn chat_search_messages(mgr: Mgr<'_>, query: String, include_archived: Option<bool>, all_workspaces: Option<bool>, limit: Option<usize>) -> Result<Vec<MessageSearchHit>> {
-    let keys = if all_workspaces.unwrap_or(false) { crate::core::sessions::all_workspace_keys() } else { vec![mgr.ws_key()] };
+pub fn chat_search_messages(ws: Ws<'_>, window: tauri::Window, mgr: Mgr<'_>, query: String, include_archived: Option<bool>, all_workspaces: Option<bool>, limit: Option<usize>) -> Result<Vec<MessageSearchHit>> {
+    let keys = if all_workspaces.unwrap_or(false) { crate::core::sessions::all_workspace_keys() } else { vec![AgentManager::ws_key_for(ws.root_for(window.label()).as_deref())] };
     Ok(mgr.store.search_messages(&keys, &query, include_archived.unwrap_or(false), limit.unwrap_or(50).min(500)))
 }
 
@@ -371,9 +378,10 @@ pub async fn chat_set_permission_mode(app: AppHandle, mgr: Mgr<'_>, session_id: 
 /// Send one prompt to several models at once: one session per model (forks of `session_id` when it has messages),
 /// all sharing a `fan_out_group`. Returns the session ids in `model_ids` order.
 #[tauri::command]
-pub async fn chat_fan_out(mgr: Mgr<'_>, session_id: Option<String>, text: String, model_ids: Vec<String>, use_worktree: Option<bool>, mode: Option<String>, context: Option<Vec<ContextItem>>, images: Option<Vec<ImageAttachment>>, thinking: Option<String>, effort: Option<String>) -> Result<Vec<String>> {
-    let settings = mgr.settings();
-    let req = crate::ai::agent::handoff::FanOutRequest { session_id: session_id.filter(|s| !s.is_empty()), text, model_ids, use_worktree: use_worktree.unwrap_or(false), mode, context: context.unwrap_or_default(), images: images.unwrap_or_default(), thinking, effort };
+pub async fn chat_fan_out(ws: Ws<'_>, window: tauri::Window, mgr: Mgr<'_>, session_id: Option<String>, text: String, model_ids: Vec<String>, use_worktree: Option<bool>, mode: Option<String>, context: Option<Vec<ContextItem>>, images: Option<Vec<ImageAttachment>>, thinking: Option<String>, effort: Option<String>) -> Result<Vec<String>> {
+    let root = ws.root_for(window.label()); // fresh (non-forked) sessions are rooted in the calling window's folder
+    let settings = mgr.settings_for(root.as_deref());
+    let req = crate::ai::agent::handoff::FanOutRequest { root, session_id: session_id.filter(|s| !s.is_empty()), text, model_ids, use_worktree: use_worktree.unwrap_or(false), mode, context: context.unwrap_or_default(), images: images.unwrap_or_default(), thinking, effort };
     crate::ai::agent::handoff::fan_out(mgr.inner(), &settings, req).await
 }
 

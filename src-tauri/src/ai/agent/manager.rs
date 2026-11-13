@@ -73,11 +73,19 @@ impl AgentManager {
     pub fn app_opt(&self) -> Option<AppHandle> { self.app.get().cloned() }
     /// Headless mode (no Tauri app): set the workspace root explicitly.
     pub fn set_fallback_root(&self, root: Option<PathBuf>) { *self.fallback_root.lock() = root; }
+    /// Settings of the focused window's scope. Prefer `settings_for(root)` whenever a root is known (a session's, a
+    /// window's): it does not change under a running turn when the user focuses another window.
     pub fn settings(&self) -> Arc<Settings> { Arc::new(self.app_opt().map(|a| a.state::<SettingsState>().effective()).unwrap_or_else(|| SettingsState::load().effective())) }
+    /// Effective settings for `root` (user + that folder's `.caret/settings.json`), independent of window focus.
+    pub fn settings_for(&self, root: Option<&Path>) -> Arc<Settings> { Arc::new(self.app_opt().map(|a| a.state::<SettingsState>().effective_for(root)).unwrap_or_else(|| SettingsState::load().effective_for(root))) }
+    /// The focused window's root (headless: the fallback root). Only for callers that have neither a window nor a
+    /// session to take the root from: the orchestrator MCP server and the ACP status probes (external clients act on
+    /// the focused window) and the worktree auto-cleanup. Commands take `window`; a run uses its session's root.
     pub fn workspace_root(&self) -> Option<PathBuf> { match self.app_opt() { Some(a) => a.state::<WorkspaceState>().root(), None => self.fallback_root.lock().clone() } }
-    pub fn ws_key(&self) -> String { workspace_key(self.workspace_root().as_deref()) }
+    /// Session-store key for a root: its workspace hash, or `"global"` for none (folderless and scratch threads).
+    pub fn ws_key_for(root: Option<&Path>) -> String { workspace_key(root) }
     /// Scratch threads always live under the "global" key so they are reachable from any (or no) workspace.
-    pub fn ws_key_of(&self, s: &Session) -> String { if s.scratch { "global".into() } else { workspace_key(s.root().as_deref()) } }
+    pub fn ws_key_of(&self, s: &Session) -> String { if s.scratch { "global".into() } else { Self::ws_key_for(s.root().as_deref()) } }
 
     // ───────── events ─────────
     pub fn subscribe(&self, client: &str, ch: Channel<AgentEvent>) { self.channels.write().insert(client.to_string(), ch); }
@@ -98,8 +106,8 @@ impl AgentManager {
     pub fn get_loaded(&self, id: &str) -> Option<Arc<SessionHandle>> { self.sessions.get(id).map(|h| { h.touch(); h.clone() }) }
     pub fn handle(&self, id: &str) -> Result<Arc<SessionHandle>> {
         if let Some(h) = self.get_loaded(id) { return Ok(h); }
-        let key = self.ws_key();
-        let s = self.store.load(&key, id).or_else(|_| self.store.load("global", id))?;
+        let key = self.locate_key(id, None)?;
+        let s = self.store.load(&key, id)?;
         let h = SessionHandle::new(s);
         self.sessions.insert(id.to_string(), h.clone());
         self.evict_idle();
@@ -133,9 +141,11 @@ impl AgentManager {
         }
     }
 
-    pub async fn create_session(&self, mode: Option<String>, model_id: Option<String>, title: Option<String>, use_worktree: bool, parent: Option<(&str, bool)>) -> Result<Arc<SessionHandle>> {
-        let settings = self.settings();
-        let root = self.workspace_root();
+    /// Create a session rooted at `root`, which the caller chooses: the calling window's folder for commands (a
+    /// window without a folder passes `None` and gets a folderless thread under the "global" key), the parent's root
+    /// for subagents. The session's `workspace_root` is the source of truth for the whole run.
+    pub async fn create_session(&self, root: Option<PathBuf>, mode: Option<String>, model_id: Option<String>, title: Option<String>, use_worktree: bool, parent: Option<(&str, bool)>) -> Result<Arc<SessionHandle>> {
+        let settings = self.settings_for(root.as_deref());
         let mut s = Session::default();
         s.mode = mode.unwrap_or_else(|| settings.agent.default_mode.clone());
         // "Auto" (None/"auto") stays unresolved on the session so every turn can route through the Auto router or the
@@ -160,15 +170,19 @@ impl AgentManager {
         Ok(h)
     }
 
-    pub fn list_sessions(&self, include_archived: bool) -> Vec<SessionSummary> {
-        let key = self.ws_key();
+    /// Sessions of the workspace `root` (`None`: folderless threads) plus scratch threads, which are listed everywhere.
+    pub fn list_sessions_for(&self, root: Option<&Path>, include_archived: bool) -> Vec<SessionSummary> {
+        let key = Self::ws_key_for(root);
         let mut list = self.store.read_index(&key);
         // Scratch threads are workspace-independent: list them everywhere.
         if key != "global" { list.extend(self.store.read_index("global").into_iter().filter(|s| s.scratch == Some(true))); }
         self.merge_loaded(&mut list, &key);
-        self.apply_lifecycle(&mut list, self.settings().chat.auto_settle_days);
+        self.apply_lifecycle(&mut list, self.settings_for(root).chat.auto_settle_days);
         Self::finish_list(list, include_archived)
     }
+    /// `list_sessions_for` the focused window's root. Compatibility for callers without a window (worktree cleanup,
+    /// orchestrator MCP); `chat_list_sessions` uses the calling window's root.
+    pub fn list_sessions(&self, include_archived: bool) -> Vec<SessionSummary> { self.list_sessions_for(self.workspace_root().as_deref(), include_archived) }
     /// Summaries from every workspace's session store ("group by project"); each summary carries `workspace_root`.
     pub fn list_sessions_all(&self, include_archived: bool) -> Vec<SessionSummary> {
         let days = self.settings().chat.auto_settle_days;
@@ -227,12 +241,11 @@ impl AgentManager {
         self.emit(AgentEvent::SessionUpdated { session: sv.clone() });
         Ok(sv)
     }
-    /// Workspace key holding `<id>.json`: current workspace, then global, then the hinted root, then every store.
+    /// Workspace key holding `<id>.json`: the hinted root, then global (scratch and folderless threads), then every
+    /// store. Session ids are unique across workspaces, so the answer never depends on which window is focused.
     fn locate_key(&self, id: &str, root: Option<&str>) -> Result<String> {
-        let ws = self.ws_key();
-        if self.store.exists(&ws, id) { return Ok(ws); }
-        if self.store.exists("global", id) { return Ok("global".into()); }
         if let Some(r) = root.filter(|r| !r.is_empty()) { let k = workspace_key(Some(Path::new(r))); if self.store.exists(&k, id) { return Ok(k); } }
+        if self.store.exists("global", id) { return Ok("global".into()); }
         self.store.find_workspace_key(id).ok_or_else(|| CaretError::not_found(format!("session {id}")))
     }
     pub fn set_pinned(&self, id: &str, pinned: bool) -> Result<SessionSummary> { self.mutate_session(id, None, |s| { s.pinned = pinned; s.pinned_at = if pinned { Some(now_ms()) } else { None }; }) }
@@ -243,11 +256,15 @@ impl AgentManager {
 
     pub async fn delete_session(&self, id: &str) -> Result<()> {
         self.stop(id);
-        let (worktree, branch, root, ws_key, scratch_dir) = match self.handle(id) { Ok(h) => { let s = h.session.lock(); (s.worktree_path.clone(), s.branch.clone(), s.root(), self.ws_key_of(&s), if s.scratch { Some(PathBuf::from(&s.workspace_root)) } else { None }) } Err(_) => (None, None, self.workspace_root(), self.ws_key(), None) };
+        let (worktree, branch, root, ws_key, scratch_dir) = match self.handle(id) {
+            Ok(h) => { let s = h.session.lock(); (s.worktree_path.clone(), s.branch.clone(), s.root(), self.ws_key_of(&s), if s.scratch { Some(PathBuf::from(&s.workspace_root)) } else { None }) }
+            // In no store at all: nothing on disk to remove; still tell the UI so a stale entry disappears.
+            Err(_) => { self.sessions.remove(id); self.emit(AgentEvent::SessionDeleted { session_id: id.to_string() }); return Ok(()); }
+        };
         if let (Some(wt), Some(root)) = (worktree, root) {
             let _ = tokio::process::Command::new("git").args(["worktree", "remove", "--force", &wt]).current_dir(&root).output().await;
             // Branch follows the worktree when the policy says so; `-d` keeps branches with unmerged commits.
-            if let Some(b) = branch { if self.settings().worktrees.delete_branch_with_worktree { let _ = tokio::process::Command::new("git").args(["branch", "-d", &b]).current_dir(&root).output().await; } }
+            if let Some(b) = branch { if self.settings_for(Some(&root)).worktrees.delete_branch_with_worktree { let _ = tokio::process::Command::new("git").args(["branch", "-d", &b]).current_dir(&root).output().await; } }
         }
         // A deleted scratch thread takes its throwaway repository with it.
         if let Some(dir) = scratch_dir { if dir.starts_with(crate::ai::agent::scratch::scratch_root()) { let _ = std::fs::remove_dir_all(&dir); } }
@@ -415,7 +432,7 @@ impl AgentManager {
     /// Accept (keep) pending changes. With auto-apply disabled, accepting writes `after` to disk.
     pub fn accept_changes(&self, session_id: &str, ids: Option<Vec<String>>) -> Result<()> {
         let h = self.handle(session_id)?;
-        let auto = self.settings().agent.auto_apply_edits;
+        let auto = { let s = h.session.lock(); self.settings_for(s.root().as_deref()).agent.auto_apply_edits };
         let mut done = vec![];
         { let mut s = h.session.lock(); let cwd = s.cwd_path();
           let targets: Vec<usize> = s.changes.iter().enumerate().filter(|(_, c)| c.status == ChangeStatus::Pending && ids.as_ref().map(|v| v.contains(&c.change_id)).unwrap_or(true)).map(|(i, _)| i).collect();
@@ -432,7 +449,7 @@ impl AgentManager {
     /// Reject pending changes: restores the pre-change content (earliest pending change per path wins).
     pub fn reject_changes(&self, session_id: &str, ids: Option<Vec<String>>) -> Result<()> {
         let h = self.handle(session_id)?;
-        let auto = self.settings().agent.auto_apply_edits;
+        let auto = { let s = h.session.lock(); self.settings_for(s.root().as_deref()).agent.auto_apply_edits };
         let mut done = vec![];
         { let mut s = h.session.lock(); let cwd = s.cwd_path();
           let targets: Vec<usize> = s.changes.iter().enumerate().filter(|(_, c)| c.status == ChangeStatus::Pending && ids.as_ref().map(|v| v.contains(&c.change_id)).unwrap_or(true)).map(|(i, _)| i).collect();
@@ -509,7 +526,7 @@ impl AgentManager {
         let tools = match &def { Some(d) if d.info.tools.as_ref().map(|t| !t.is_empty()).unwrap_or(false) => ToolFilter::Only { names: d.info.tools.clone().unwrap_or_default() }, _ if readonly => ToolFilter::Readonly, _ => ToolFilter::All };
         let instructions = def.as_ref().map(|d| d.system_prompt.clone()).unwrap_or_else(|| "You are a focused worker subagent. Complete exactly the delegated task using the tools available, then reply with a concise, information-dense report (findings with file paths and line numbers, what you changed, anything the parent agent must know). You cannot ask the user questions.".into());
         let mode = ModeSpec { id: "subagent".into(), name: def.as_ref().map(|d| d.info.name.clone()).unwrap_or_else(|| "Subagent".into()), description: description.into(), icon: None, instructions, tools, builtin: true, auto_run: None, model_id: def.as_ref().and_then(|d| d.info.model_id.clone()).or_else(|| ctx.settings.agent.subagent_model_id.clone()) };
-        let child = self.create_session(Some("agent".into()), mode.model_id.clone().or_else(|| ctx.manager.get_loaded(&ctx.session_id).and_then(|h| h.session.lock().model_id.clone())), Some(format!("↳ {description}")), false, Some((&ctx.session_id, true))).await?;
+        let child = self.create_session(ctx.root.clone(), Some("agent".into()), mode.model_id.clone().or_else(|| ctx.manager.get_loaded(&ctx.session_id).and_then(|h| h.session.lock().model_id.clone())), Some(format!("↳ {description}")), false, Some((&ctx.session_id, true))).await?;
         { let mut s = child.session.lock(); s.cwd = ctx.cwd.to_string_lossy().to_string(); }
         child.running.store(true, Ordering::SeqCst);
         let token = ctx.cancel.child_token();
