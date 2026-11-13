@@ -1,12 +1,13 @@
 import { create } from 'zustand'
-import type { LspServerConfig, LspServerStatus } from '@/types'
+import type { LspConfigEntry, LspServerConfig, LspServerStatus } from '@/types'
 
-export interface LspServerEntry { config: LspServerConfig; installed: boolean; status?: LspServerStatus; restarts: number }
+export interface LspServerEntry { config: LspServerConfig; installed: boolean; installable: boolean; resolved?: string; installing?: boolean; status?: LspServerStatus; restarts: number }
 interface LspStore {
   servers: Record<string, LspServerEntry>
   /** running server id by config id */
   running: Record<string, string>
-  setConfigs: (list: { config: LspServerConfig; installed: boolean }[]) => void
+  setConfigs: (list: LspConfigEntry[]) => void
+  setInstalling: (configId: string, installing: boolean) => void
   setStatus: (configId: string, status: LspServerStatus | undefined) => void
   bumpRestarts: (configId: string) => number
   reset: () => void
@@ -15,9 +16,10 @@ export const useLsp = create<LspStore>((set, get) => ({
   servers: {}, running: {},
   setConfigs: (list) => {
     const servers: Record<string, LspServerEntry> = {}
-    for (const e of list) servers[e.config.id] = { ...(get().servers[e.config.id] ?? { restarts: 0 }), config: e.config, installed: e.installed }
+    for (const e of list) servers[e.config.id] = { ...(get().servers[e.config.id] ?? { restarts: 0 }), config: e.config, installed: e.installed, installable: e.installable, resolved: e.resolved }
     set({ servers })
   },
+  setInstalling: (configId, installing) => { const servers = { ...get().servers }; if (!servers[configId]) return; servers[configId] = { ...servers[configId], installing }; set({ servers }) },
   setStatus: (configId, status) => {
     const servers = { ...get().servers }
     if (!servers[configId]) return

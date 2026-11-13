@@ -22,7 +22,52 @@ pub struct LspServerStatus { pub server_id: String, pub config_id: String, pub n
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub struct LspConfigEntry { pub config: LspServerConfig, pub installed: bool }
+pub struct LspConfigEntry {
+    pub config: LspServerConfig,
+    pub installed: bool,
+    /// Where the server binary was found (workspace `node_modules/.bin`, `~/.caret/lsp`, or PATH).
+    #[serde(skip_serializing_if = "Option::is_none")] pub resolved: Option<String>,
+    /// Caret can install this server itself (`lsp_install`): it is published on npm and npm is available.
+    pub installable: bool,
+}
+
+/// `~/.caret/lsp`: npm prefix for servers Caret installs itself (Java's jdtls lives here too).
+pub fn lsp_home() -> PathBuf { crate::paths::sub_dir("lsp") }
+fn lsp_bin_dir() -> PathBuf { lsp_home().join("node_modules").join(".bin") }
+
+/// Find a server binary. Order: an explicit path as given; the workspace's own `node_modules/.bin` (a repo that
+/// pins its language server wins over a global one); Caret's managed `~/.caret/lsp`; then the augmented PATH
+/// (Homebrew, nvm, ~/.local/bin, …) and plain `which`.
+pub fn resolve_server_command(command: &str, root: Option<&Path>) -> Option<PathBuf> {
+    if command.is_empty() { return None; }
+    if command.contains('/') { return crate::acp::process::resolve_command(command); }
+    if let Some(r) = root { let c = r.join("node_modules").join(".bin").join(command); if c.is_file() { return Some(c); } }
+    let managed = lsp_bin_dir().join(command);
+    if managed.is_file() { return Some(managed); }
+    crate::acp::process::resolve_command(command).or_else(|| which::which(command).ok())
+}
+
+/// A user's saved copy of the server list predates fields added later (`npm`); take those from the built-in entry
+/// with the same id when the user has not set them.
+fn with_defaults(mut c: LspServerConfig) -> LspServerConfig {
+    let Some(d) = crate::core::settings::default_lsp_servers().into_iter().find(|d| d.id == c.id) else { return c };
+    if c.npm.is_none() { c.npm = d.npm.clone(); }
+    if c.install_hint.is_none() { c.install_hint = d.install_hint.clone(); }
+    // A saved explicit path that no longer exists (a wiped checkout, a moved toolchain) must not pin the server to a
+    // dead binary forever: fall back to the built-in command name, which the resolver finds wherever it lives now.
+    if c.command.contains('/') && crate::acp::process::resolve_command(&c.command).is_none() && !d.command.is_empty() {
+        tracing::warn!(server = %c.id, stale = %c.command, fallback = %d.command, "lsp: configured server path is gone; using the default command");
+        c.command = d.command.clone();
+        if c.args.is_empty() { c.args = d.args.clone(); }
+    }
+    c
+}
+
+fn entry_for(c: LspServerConfig, root: Option<&Path>, npm_available: bool) -> LspConfigEntry {
+    let c = with_defaults(c);
+    let resolved = resolve_server_command(&c.command, root);
+    LspConfigEntry { installed: resolved.is_some(), resolved: resolved.map(|p| p.to_string_lossy().to_string()), installable: npm_available && c.npm.is_some(), config: c }
+}
 
 pub struct LspServer {
     pub id: String,
@@ -137,7 +182,7 @@ async fn spawn_server(app: AppHandle, config: LspServerConfig, root: PathBuf, on
     let key = format!("{}|{}", config.id, root.display());
     // Resolve against the augmented PATH (Homebrew, ~/.local/bin, nvm, …): a Finder-launched app inherits launchd's
     // minimal PATH, so plain `which` misses user-installed servers like rust-analyzer or jdtls.
-    let exe = crate::acp::process::resolve_command(&config.command).or_else(|| which::which(&config.command).ok()).ok_or_else(|| CaretError::new("missing", format!("{} not found on PATH{}", config.command, config.install_hint.as_ref().map(|h| format!(". Install: {h}")).unwrap_or_default())));
+    let exe = resolve_server_command(&config.command, Some(&root)).ok_or_else(|| CaretError::new("missing", format!("{} not found on PATH{}", config.command, config.install_hint.as_ref().map(|h| format!(". Install: {h}")).unwrap_or_default())));
     let make = |state: &str, error: Option<String>, pid, stdin, child| Arc::new(LspServer { id: id.clone(), config: config.clone(), root: root.clone(), stdin: tokio::sync::Mutex::new(stdin), child: tokio::sync::Mutex::new(child), state: RwLock::new(state.into()), error: RwLock::new(error), pid, channel: RwLock::new(on_message.clone()), stderr_tail: Mutex::new(VecDeque::new()), internal_id: AtomicI64::new(1) });
     let exe = match exe { Ok(e) => e, Err(e) => { let srv = make("missing", Some(e.message.clone()), None, None, None); st.servers.insert(id.clone(), srv.clone()); st.by_key.insert(key, id.clone()); broadcast(&app); return Ok(srv); } };
     let mut cmd = tokio::process::Command::new(&exe);
@@ -222,16 +267,42 @@ pub fn init(app: &AppHandle) {
 // ───────────────────────── commands ─────────────────────────
 
 #[tauri::command(async)]
-pub fn lsp_configs(settings: State<'_, SettingsState>) -> Result<Vec<LspConfigEntry>> {
+pub fn lsp_configs(settings: State<'_, SettingsState>, root: Option<String>) -> Result<Vec<LspConfigEntry>> {
     let s = settings.effective();
-    Ok(s.lsp.servers.into_iter().map(|c| { let installed = crate::acp::process::resolve_command(&c.command).is_some() || which::which(&c.command).is_ok(); LspConfigEntry { config: c, installed } }).collect())
+    let root = root.map(PathBuf::from);
+    let npm = crate::acp::process::resolve_command("npm").is_some();
+    Ok(s.lsp.servers.into_iter().map(|c| entry_for(c, root.as_deref(), npm)).collect())
+}
+
+/// Install an npm-distributed server into `~/.caret/lsp` (`npm install <pkgs>@latest` with that prefix) and return
+/// the refreshed entry. Streams npm's output to the log; the UI shows progress from the `installing` flag it keeps.
+#[tauri::command]
+pub async fn lsp_install(app: AppHandle, config_id: String, root: Option<String>) -> Result<LspConfigEntry> {
+    let settings = app.state::<SettingsState>().effective();
+    let config = settings.lsp.servers.iter().find(|c| c.id == config_id).cloned().map(with_defaults).ok_or_else(|| CaretError::not_found(format!("LSP config {config_id}")))?;
+    let pkgs = config.npm.clone().ok_or_else(|| CaretError::invalid(format!("{} is not installable from Caret{}", config.name, config.install_hint.as_deref().map(|h| format!("; install it yourself: {h}")).unwrap_or_default())))?;
+    let npm = crate::acp::process::resolve_command("npm").ok_or_else(|| CaretError::not_found("npm (install Node.js ≥ 18 from https://nodejs.org and retry)"))?;
+    let home = lsp_home();
+    if !home.join("package.json").exists() { let _ = std::fs::write(home.join("package.json"), "{\n  \"name\": \"caret-language-servers\",\n  \"private\": true\n}\n"); }
+    let specs: Vec<String> = pkgs.split_whitespace().map(|p| format!("{p}@latest")).collect();
+    tracing::info!(server = %config.id, packages = %pkgs, prefix = %home.display(), "lsp: installing language server");
+    let t0 = std::time::Instant::now();
+    let mut cmd = tokio::process::Command::new(&npm);
+    cmd.args(["install", "--no-fund", "--no-audit", "--loglevel", "error"]).args(&specs).current_dir(&home).env("PATH", crate::acp::process::augmented_path()).env("npm_config_prefix", &home).stdout(std::process::Stdio::piped()).stderr(std::process::Stdio::piped()).kill_on_drop(true);
+    let out = tokio::time::timeout(std::time::Duration::from_secs(600), cmd.output()).await.map_err(|_| CaretError::io("npm install timed out after 10 minutes"))?.map_err(|e| CaretError::io(format!("npm install failed to start: {e}")))?;
+    for l in String::from_utf8_lossy(&out.stdout).lines().chain(String::from_utf8_lossy(&out.stderr).lines()) { if !l.trim().is_empty() { tracing::info!(server = %config.id, "lsp install: {l}"); } }
+    if !out.status.success() { return Err(CaretError::io(format!("npm install {pkgs} failed (exit {}): {}", out.status.code().unwrap_or(-1), String::from_utf8_lossy(&out.stderr).chars().take(800).collect::<String>()))); }
+    let entry = entry_for(config, root.as_deref().map(Path::new), true);
+    tracing::info!(server = %entry.config.id, installed = entry.installed, resolved = ?entry.resolved, ms = t0.elapsed().as_millis() as u64, "lsp: language server installed");
+    if !entry.installed { return Err(CaretError::io(format!("npm install finished but `{}` is not in {}", entry.config.command, lsp_bin_dir().display()))); }
+    Ok(entry)
 }
 
 #[tauri::command]
 pub async fn lsp_start(app: AppHandle, config_id: String, root: String, on_message: Channel<Value>) -> Result<LspServerStatus> {
     let settings = app.state::<SettingsState>().effective();
     if !settings.lsp.enabled { return Err(CaretError::config("Language servers are disabled in settings")); }
-    let config = settings.lsp.servers.iter().find(|c| c.id == config_id).cloned().ok_or_else(|| CaretError::not_found(format!("LSP config {config_id}")))?;
+    let config = settings.lsp.servers.iter().find(|c| c.id == config_id).cloned().map(with_defaults).ok_or_else(|| CaretError::not_found(format!("LSP config {config_id}")))?;
     if !config.enabled { return Err(CaretError::config(format!("{} is disabled", config.name))); }
     let root = std::fs::canonicalize(&root).unwrap_or_else(|_| PathBuf::from(&root));
     let key = format!("{}|{}", config.id, root.display());
@@ -292,5 +363,48 @@ mod tests {
         assert!(u.starts_with("file:///"));
         assert_eq!(uri_to_path(&u).as_deref(), Some("/Users/me/pro ject/a.rs"));
         assert_eq!(uri_to_path("file:///tmp/x%20y.ts").as_deref(), Some("/tmp/x y.ts"));
+    }
+
+    #[test]
+    fn workspace_node_modules_wins_then_managed_prefix_then_path() {
+        let d = tempfile::tempdir().unwrap(); let root = d.path();
+        let bin = root.join("node_modules/.bin"); std::fs::create_dir_all(&bin).unwrap();
+        let local = bin.join("typescript-language-server"); std::fs::write(&local, "#!/bin/sh\n").unwrap();
+        assert_eq!(resolve_server_command("typescript-language-server", Some(root)).as_deref(), Some(local.as_path()), "a repo that pins its own server wins");
+        assert!(resolve_server_command("definitely-not-a-real-server-xyz", Some(root)).is_none());
+        assert!(resolve_server_command("", Some(root)).is_none());
+        // an explicit path is taken literally
+        assert_eq!(resolve_server_command(local.to_str().unwrap(), None).as_deref(), Some(local.as_path()));
+        assert!(resolve_server_command("/nonexistent/dir/typescript-language-server", Some(root)).is_none());
+        // the shell is always on PATH: the resolver falls through to it for bare names
+        assert!(resolve_server_command("sh", Some(root)).is_some());
+    }
+
+    #[test]
+    fn stale_saved_path_falls_back_to_the_default_command_and_keeps_npm_spec() {
+        let mut c = crate::core::settings::default_lsp_servers().into_iter().find(|c| c.id == "typescript").unwrap();
+        c.command = "/private/tmp/wiped-checkout/node_modules/.bin/typescript-language-server".into();
+        c.npm = None; c.install_hint = None;
+        let fixed = with_defaults(c);
+        assert_eq!(fixed.command, "typescript-language-server");
+        assert_eq!(fixed.args, vec!["--stdio".to_string()]);
+        assert_eq!(fixed.npm.as_deref(), Some("typescript-language-server typescript"));
+        assert!(fixed.install_hint.is_some());
+        // a user-defined server with no built-in counterpart is left alone
+        let custom = LspServerConfig { id: "mine".into(), command: "/nope/server".into(), ..Default::default() };
+        assert_eq!(with_defaults(custom).command, "/nope/server");
+        // an existing explicit path is respected
+        let mut ok = crate::core::settings::default_lsp_servers().into_iter().find(|c| c.id == "typescript").unwrap();
+        ok.command = "/bin/sh".into();
+        assert_eq!(with_defaults(ok).command, "/bin/sh");
+    }
+
+    #[test]
+    fn entries_report_installable_only_for_npm_servers_with_npm_present() {
+        let ts = crate::core::settings::default_lsp_servers().into_iter().find(|c| c.id == "typescript").unwrap();
+        let rust = crate::core::settings::default_lsp_servers().into_iter().find(|c| c.id == "rust").unwrap();
+        assert!(entry_for(ts.clone(), None, true).installable);
+        assert!(!entry_for(ts, None, false).installable, "no npm, nothing to install with");
+        assert!(!entry_for(rust, None, true).installable, "rust-analyzer is not on npm");
     }
 }

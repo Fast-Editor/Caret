@@ -8,6 +8,7 @@ import { useProblems } from '@/store/problems'
 import { useSettings } from '@/store/settings'
 import { useWorkspace } from '@/store/workspace'
 import { runCommand } from '@/lib/commands'
+import { notify, useNotifications } from '@/store/notifications'
 import type { LspServerConfig, LspDiagnostic } from '@/types'
 import { LspClient } from './client'
 import { pathToUri, uriToPath, toMonacoRange, SEVERITY_MAP, toLspContentChange } from './convert'
@@ -29,6 +30,8 @@ class LspManagerImpl {
   private providersRegistered = new Set<string>()
   private started = false
   private builtinTsEnabled = true
+  /** Servers we already offered to install this session (one prompt per server, not per file). */
+  private offered = new Set<string>()
 
   init(): void {
     if (this.started) return
@@ -50,11 +53,50 @@ class LspManagerImpl {
   private async refreshConfigs(): Promise<void> {
     if (!this.root) return
     try {
-      const configs = await api.lsp.configs()
+      const configs = await api.lsp.configs(this.root)
       useLsp.getState().setConfigs(configs)
       for (const { config } of configs) for (const lang of config.languages) this.ensureProviders(lang)
       for (const m of monaco.editor.getModels()) this.onModelCreated(m)
     } catch (e) { console.warn('[lsp] configs refresh failed', e) }
+  }
+
+  /**
+   * A file whose server is configured but not installed anywhere Caret looks (workspace node_modules, ~/.caret/lsp,
+   * PATH). For npm-distributed servers offer a one-click install; otherwise surface the install hint in the status bar.
+   */
+  private offerInstall(cfg: LspServerConfig): void {
+    if (this.offered.has(cfg.id) || !this.root) return
+    this.offered.add(cfg.id)
+    const entry = useLsp.getState().servers[cfg.id]
+    useLsp.getState().setStatus(cfg.id, { serverId: '', configId: cfg.id, name: cfg.name, state: 'missing', error: cfg.installHint, languages: cfg.languages, root: this.root })
+    if (!(useSettings.getState().settings?.lsp.offerInstall ?? true)) return
+    const langs = cfg.languages.slice(0, 3).join(', ')
+    if (entry?.installable) {
+      notify('info', `${cfg.name} language server is not installed`, `Go to Definition, hover and diagnostics for ${langs} need it. Caret can install it with npm into ~/.caret/lsp.`, { sticky: true, actions: [{ id: 'install', label: 'Install' }, { id: 'later', label: 'Not now' }], onAction: (id) => { if (id === 'install') void this.install(cfg.id) } })
+    } else if (cfg.installHint) {
+      notify('info', `${cfg.name} language server is not installed`, `Install it to get Go to Definition, hover and diagnostics for ${langs}: ${cfg.installHint}`, { timeoutMs: 12000 })
+    }
+  }
+
+  /** `npm install` the server into ~/.caret/lsp, then start it for the open files. */
+  async install(configId: string): Promise<boolean> {
+    const entry = useLsp.getState().servers[configId]; if (!entry) return false
+    const cfg = entry.config
+    useLsp.getState().setInstalling(configId, true)
+    const progress = notify('info', `Installing ${cfg.name} language server…`, `npm install ${cfg.npm ?? cfg.command} into ~/.caret/lsp`, { sticky: true })
+    try {
+      await api.lsp.install(configId, this.root)
+      await this.refreshConfigs()
+      useNotifications.getState().dismiss(progress)
+      notify('success', `${cfg.name} language server installed`, 'Language features are starting for the open files.', { timeoutMs: 6000 })
+      return true
+    } catch (e) {
+      useNotifications.getState().dismiss(progress)
+      const msg = String((e as Error)?.message ?? e)
+      notify('error', `Could not install ${cfg.name} language server`, `${msg}${cfg.installHint ? `. Manual install: ${cfg.installHint}` : ''}`, { sticky: true })
+      if (this.root) useLsp.getState().setStatus(configId, { serverId: '', configId, name: cfg.name, state: 'missing', error: msg, languages: cfg.languages, root: this.root })
+      return false
+    } finally { useLsp.getState().setInstalling(configId, false) }
   }
 
   /**
@@ -81,7 +123,7 @@ class LspManagerImpl {
     useLsp.getState().reset()
     if (!root) return
     try {
-      const configs = await api.lsp.configs()
+      const configs = await api.lsp.configs(root)
       useLsp.getState().setConfigs(configs)
       for (const { config } of configs) for (const lang of config.languages) this.ensureProviders(lang)
       // attach already-open models
@@ -96,14 +138,17 @@ class LspManagerImpl {
   }
 
   /** Config whose languages include the model language (first wins). */
-  private configFor(model: monaco.editor.ITextModel): LspServerConfig | null {
+  private configFor(model: monaco.editor.ITextModel): LspServerConfig | null { return this.matchConfig(model, true) }
+  /** Enabled config matching the model that is not installed anywhere Caret looks. */
+  private missingConfigFor(model: monaco.editor.ITextModel): LspServerConfig | null { return this.matchConfig(model, false) }
+  private matchConfig(model: monaco.editor.ITextModel, installed: boolean): LspServerConfig | null {
     if (model.uri.scheme !== 'file') return null
     const lang = model.getLanguageId()
     const path = model.uri.path
     const ext = path.split('.').pop()?.toLowerCase() ?? ''
     const entries = Object.values(useLsp.getState().servers)
     for (const e of entries) {
-      if (!e.config.enabled || !e.installed) continue
+      if (!e.config.enabled || e.installed !== installed) continue
       if (e.config.languages.includes(lang) || e.config.extensions.includes(ext)) return e.config
     }
     return null
@@ -185,7 +230,8 @@ class LspManagerImpl {
   async stopAll(): Promise<void> { const cs = [...this.clients.values()]; this.clients.clear(); this.setBuiltinTypescript(true); await Promise.all(cs.map((c) => c.stop().catch(() => {}))); for (const id of Object.keys(useLsp.getState().servers)) { useLsp.getState().setStatus(id, undefined); useProblems.getState().clearOwner(id) } }
 
   private onModelCreated(model: monaco.editor.ITextModel): void {
-    const cfg = this.configFor(model); if (!cfg) return
+    const cfg = this.configFor(model)
+    if (!cfg) { const missing = this.missingConfigFor(model); if (missing) this.offerInstall(missing); return }
     const client = this.clients.get(cfg.id)
     if (client && client.initialized && !client.isClosed) this.openModel(client, model)
     else void this.ensureClient(cfg)

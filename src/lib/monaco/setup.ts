@@ -33,6 +33,24 @@ export function initMonaco(): typeof monaco {
   }
   for (const [id, data] of Object.entries(THEMES)) monaco.editor.defineTheme(id, data)
 
+  // Cross-file navigation. Monaco's standalone service can only move the caret inside the model the source editor is
+  // showing; every "Go to Definition / Type Definition / Implementation / Reference" that lands in another file comes
+  // through this opener. Open handlers run newest first, so this one takes precedence over Monaco's own, which would
+  // otherwise swap the target model into the current tab when the file happens to be open elsewhere.
+  monaco.editor.registerEditorOpener({
+    openCodeEditor(_source, resource, selectionOrPosition) {
+      if (resource.scheme === 'http' || resource.scheme === 'https') { void import('@/lib/api').then(({ api }) => api.app.openExternal(resource.toString())); return true }
+      if (resource.scheme !== 'file') return false
+      let line: number | undefined, column: number | undefined, endLine: number | undefined
+      if (selectionOrPosition) {
+        if ('startLineNumber' in selectionOrPosition) { line = selectionOrPosition.startLineNumber; column = selectionOrPosition.startColumn; endLine = selectionOrPosition.endLineNumber }
+        else { line = selectionOrPosition.lineNumber; column = selectionOrPosition.column }
+      }
+      void import('@/lib/commands').then(({ runCommand }) => runCommand('editor.openFile', { path: resource.path, line, column, endLine, focus: true }))
+      return true
+    },
+  })
+
   const ts = monaco.typescript
   const compiler: Parameters<typeof ts.typescriptDefaults.setCompilerOptions>[0] = {
     target: ts.ScriptTarget.ESNext, module: ts.ModuleKind.ESNext, moduleResolution: ts.ModuleResolutionKind.NodeJs,

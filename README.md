@@ -187,8 +187,9 @@ export PATH="$HOME/.cargo/bin:$PATH"
 export PATH="$HOME/.rustup/toolchains/stable-aarch64-apple-darwin/bin:$PATH"
 ```
 
-Optional, only for features that call out to other tools: `git` (bundled with Xcode CLT), a language server such as
-`typescript-language-server` in the project you open, `node` for the ACP adapters, Ollama for local embeddings.
+Optional, only for features that call out to other tools: `git` (bundled with Xcode CLT), `node` for the ACP adapters
+and for language servers Caret installs itself (TypeScript, Pyright, JSON/CSS/HTML, YAML, Bash go into `~/.caret/lsp`
+on first use; see docs/LANGUAGE_SERVERS.md), Ollama for local embeddings.
 
 ### 2. Install dependencies
 

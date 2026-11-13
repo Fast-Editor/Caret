@@ -9,6 +9,8 @@ import { useGit } from '@/store/git'
 import { useSettings } from '@/store/settings'
 import { useUi } from '@/store/ui'
 import { useWorkspace } from '@/store/workspace'
+import { useLsp } from '@/store/lsp'
+import { lspManager } from '@/lib/lsp/manager'
 import { NotificationBell } from '@/components/notifications'
 import { cn } from '@/components/common'
 import { fmtCost } from '@/components/chat/util'
@@ -116,6 +118,7 @@ export function StatusBar() {
 function LspPopover({ servers }: { servers: LspServerStatus[] }) {
   const running = servers.filter((s) => s.state === 'running').length
   const configs = useSettings((s) => s.settings?.lsp.servers ?? [])
+  const entries = useLsp((s) => s.servers)
   return (
     <Popover.Root>
       <Popover.Trigger asChild><button className="h-full flex items-center gap-1 px-1.5 text-[11px] text-muted hover:bg-hover hover:text-fg" title="Language servers"><span className={cn('size-1.5 rounded-full', running ? 'bg-success' : 'bg-faint')} />LSP {running}/{servers.length}</button></Popover.Trigger>
@@ -128,7 +131,10 @@ function LspPopover({ servers }: { servers: LspServerStatus[] }) {
               <div key={s.serverId} className="flex items-center gap-2 h-6">
                 <span className={cn('size-1.5 rounded-full', s.state === 'running' ? 'bg-success' : s.state === 'starting' ? 'bg-warning' : s.state === 'error' ? 'bg-danger' : 'bg-faint')} />
                 <span className="flex-1 truncate">{s.name}</span><span className="text-muted">{s.state}</span>
-                {s.state === 'missing' && cfg?.installHint && <code className="mono text-[10px] text-faint truncate max-w-[140px]" title={cfg.installHint}>{cfg.installHint}</code>}
+                {s.state === 'missing' && entries[s.configId]?.installable && (entries[s.configId]?.installing
+                  ? <span className="flex items-center gap-1 text-muted"><Loader2 className="size-3 animate-spin" />Installing…</span>
+                  : <button onClick={() => void lspManager.install(s.configId)} className="rounded border border-border px-1.5 h-5 text-[11px] hover:bg-hover" title={`npm install ${cfg?.npm ?? ''} into ~/.caret/lsp`}>Install</button>)}
+                {s.state === 'missing' && !entries[s.configId]?.installable && cfg?.installHint && <code className="mono text-[10px] text-faint truncate max-w-[140px]" title={cfg.installHint}>{cfg.installHint}</code>}
                 {s.state === 'error' && s.error && <span className="text-danger truncate max-w-[140px]" title={s.error}>{s.error}</span>}
               </div>
             )

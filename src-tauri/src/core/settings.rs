@@ -290,15 +290,23 @@ pub struct LspServerConfig {
     #[serde(skip_serializing_if = "Option::is_none")] pub root_patterns: Option<Vec<String>>,
     #[serde(skip_serializing_if = "Option::is_none")] pub env: Option<BTreeMap<String, String>>,
     #[serde(skip_serializing_if = "Option::is_none")] pub install_hint: Option<String>,
+    /// npm package(s), space separated, that Caret can install into `~/.caret/lsp` on request (`lsp_install`).
+    #[serde(skip_serializing_if = "Option::is_none")] pub npm: Option<String>,
 }
 impl Default for LspServerConfig {
-    fn default() -> Self { Self { id: String::new(), name: String::new(), command: String::new(), args: vec![], languages: vec![], extensions: vec![], initialization_options: None, settings: None, enabled: true, root_patterns: None, env: None, install_hint: None } }
+    fn default() -> Self { Self { id: String::new(), name: String::new(), command: String::new(), args: vec![], languages: vec![], extensions: vec![], initialization_options: None, settings: None, enabled: true, root_patterns: None, env: None, install_hint: None, npm: None } }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
-pub struct LspSettings { pub enabled: bool, pub servers: Vec<LspServerConfig> }
-impl Default for LspSettings { fn default() -> Self { Self { enabled: true, servers: default_lsp_servers() } } }
+pub struct LspSettings {
+    pub enabled: bool,
+    /// Offer to install a missing npm-distributed server (TypeScript, Pyright, JSON/CSS/HTML, YAML, Bash) the first
+    /// time a file that needs it is opened.
+    pub offer_install: bool,
+    pub servers: Vec<LspServerConfig>,
+}
+impl Default for LspSettings { fn default() -> Self { Self { enabled: true, offer_install: true, servers: default_lsp_servers() } } }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
@@ -555,18 +563,22 @@ pub fn default_models() -> Vec<ModelConfig> {
 fn lsp(id: &str, name: &str, cmd: &str, args: &[&str], langs: &[&str], exts: &[&str], hint: &str) -> LspServerConfig {
     LspServerConfig { id: id.into(), name: name.into(), command: cmd.into(), args: args.iter().map(|s| s.to_string()).collect(), languages: langs.iter().map(|s| s.to_string()).collect(), extensions: exts.iter().map(|s| s.to_string()).collect(), enabled: true, install_hint: Some(hint.into()), ..Default::default() }
 }
+/// Same as [`lsp`] for a server published on npm: Caret can install it into `~/.caret/lsp` itself.
+fn lsp_npm(id: &str, name: &str, cmd: &str, args: &[&str], langs: &[&str], exts: &[&str], hint: &str, npm: &str) -> LspServerConfig {
+    LspServerConfig { npm: Some(npm.into()), ..lsp(id, name, cmd, args, langs, exts, hint) }
+}
 pub fn default_lsp_servers() -> Vec<LspServerConfig> {
     vec![
-        lsp("typescript", "TypeScript / JavaScript", "typescript-language-server", &["--stdio"], &["typescript", "typescriptreact", "javascript", "javascriptreact"], &["ts", "tsx", "js", "jsx", "mjs", "cjs", "mts", "cts"], "npm i -g typescript typescript-language-server"),
+        lsp_npm("typescript", "TypeScript / JavaScript", "typescript-language-server", &["--stdio"], &["typescript", "typescriptreact", "javascript", "javascriptreact"], &["ts", "tsx", "js", "jsx", "mjs", "cjs", "mts", "cts"], "npm i -g typescript typescript-language-server", "typescript-language-server typescript"),
         lsp("rust", "rust-analyzer", "rust-analyzer", &[], &["rust"], &["rs"], "rustup component add rust-analyzer"),
-        lsp("python", "Pyright", "pyright-langserver", &["--stdio"], &["python"], &["py", "pyi"], "npm i -g pyright"),
+        lsp_npm("python", "Pyright", "pyright-langserver", &["--stdio"], &["python"], &["py", "pyi"], "npm i -g pyright", "pyright"),
         lsp("go", "gopls", "gopls", &[], &["go"], &["go"], "go install golang.org/x/tools/gopls@latest"),
         lsp("clangd", "clangd", "clangd", &[], &["c", "cpp", "objective-c"], &["c", "h", "cc", "cpp", "hpp", "cxx", "m", "mm"], "brew install llvm"),
-        lsp("json", "JSON", "vscode-json-language-server", &["--stdio"], &["json", "jsonc"], &["json", "jsonc"], "npm i -g vscode-langservers-extracted"),
-        lsp("css", "CSS", "vscode-css-language-server", &["--stdio"], &["css", "scss", "less"], &["css", "scss", "less"], "npm i -g vscode-langservers-extracted"),
-        lsp("html", "HTML", "vscode-html-language-server", &["--stdio"], &["html"], &["html", "htm"], "npm i -g vscode-langservers-extracted"),
-        lsp("yaml", "YAML", "yaml-language-server", &["--stdio"], &["yaml"], &["yml", "yaml"], "npm i -g yaml-language-server"),
-        lsp("bash", "Bash", "bash-language-server", &["start"], &["shellscript"], &["sh", "bash", "zsh"], "npm i -g bash-language-server"),
+        lsp_npm("json", "JSON", "vscode-json-language-server", &["--stdio"], &["json", "jsonc"], &["json", "jsonc"], "npm i -g vscode-langservers-extracted", "vscode-langservers-extracted"),
+        lsp_npm("css", "CSS", "vscode-css-language-server", &["--stdio"], &["css", "scss", "less"], &["css", "scss", "less"], "npm i -g vscode-langservers-extracted", "vscode-langservers-extracted"),
+        lsp_npm("html", "HTML", "vscode-html-language-server", &["--stdio"], &["html"], &["html", "htm"], "npm i -g vscode-langservers-extracted", "vscode-langservers-extracted"),
+        lsp_npm("yaml", "YAML", "yaml-language-server", &["--stdio"], &["yaml"], &["yml", "yaml"], "npm i -g yaml-language-server", "yaml-language-server"),
+        lsp_npm("bash", "Bash", "bash-language-server", &["start"], &["shellscript"], &["sh", "bash", "zsh"], "npm i -g bash-language-server", "bash-language-server"),
         lsp("lua", "Lua", "lua-language-server", &[], &["lua"], &["lua"], "brew install lua-language-server"),
         lsp("java", "Java (jdtls)", "jdtls", &[], &["java"], &["java"], "brew install jdtls (needs JDK 21+), or unpack Eclipse JDT LS and put a `jdtls` launcher on your PATH"),
         lsp("ruby", "Ruby (solargraph)", "solargraph", &["stdio"], &["ruby"], &["rb"], "gem install solargraph"),

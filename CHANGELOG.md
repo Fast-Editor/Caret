@@ -4,6 +4,15 @@ All notable changes to Caret. The version here must match `package.json`, `src-t
 
 ## Unreleased
 
+- Fixed: Go to Definition, Type Definition, Implementation and references that land in another file now open that
+  file (Cmd+click on an import or a symbol included). Monaco can only move the caret inside the file it is showing;
+  Caret never registered an editor opener, so every cross-file jump was silently dropped.
+- Language servers install themselves. When a file needs a server that is published on npm (TypeScript/JavaScript,
+  Pyright, JSON/CSS/HTML, YAML, Bash) and none is installed, Caret offers a one-click install into `~/.caret/lsp`
+  (also from the status bar's LSP popover); `lsp.offerInstall: false` turns the prompt off. Servers are now resolved
+  from the workspace's own `node_modules/.bin` first, then `~/.caret/lsp`, then PATH, so a repository that pins its
+  language server uses that copy. A saved server path that no longer exists falls back to the built-in command instead
+  of leaving the language without a server. New command `lsp_install`; `lsp_configs` takes the workspace root.
 - Performance: opening a folder no longer freezes the window. `workspace_open` ran on the main thread and the file
   watcher walked the whole tree (node_modules included) to seed its rename cache before the command returned, which
   stalled every IPC call for 7 to 9 s on a 600 MB JavaScript checkout. The command now runs off the main thread, the

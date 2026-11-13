@@ -81,7 +81,7 @@ export const DEFAULTS: Settings = {
   privacy: { privacyMode: false, allowWebTools: true, allowRemoteEmbeddings: true },
   general: { defaultShell: undefined, openLastWorkspace: true, confirmQuitWithRunningAgents: true, gitAutoFetch: false, gitAutoFetchIntervalSecs: 180, globalIgnore: ['.DS_Store', 'Thumbs.db'], trustedWorkspaces: [], showWelcome: true, useCursorCompatDirs: true },
   userRules: '',
-  lsp: { enabled: true, servers: [] },
+  lsp: { enabled: true, offerInstall: true, servers: [] },
   mcp: { enabled: true },
   customModes: [],
   beta: { browserTools: true, voice: false, nextEditPrediction: true, backgroundAgents: true, designMode: false },

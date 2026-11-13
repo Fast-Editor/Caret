@@ -100,7 +100,10 @@ export interface LspServerConfig {
   id: string; name: string; command: string; args: string[]; languages: string[]; extensions: string[]
   initializationOptions?: unknown; settings?: unknown; enabled: boolean; rootPatterns?: string[]
   env?: Record<string, string>; installHint?: string
+  /** npm package(s) Caret can install into ~/.caret/lsp on request. */
+  npm?: string
 }
+export interface LspConfigEntry { config: LspServerConfig; installed: boolean; resolved?: string; installable: boolean }
 export interface LspServerStatus {
   serverId: string; configId: string; name: string; state: 'starting' | 'running' | 'stopped' | 'error' | 'missing'
   pid?: number; error?: string; languages: string[]; root: string
@@ -190,7 +193,7 @@ export interface Settings {
   providers: ProviderConfig[]; models: ModelConfig[]
   tab: TabSettings; agent: AgentSettings; indexing: IndexingSettings; ui: UiSettings
   privacy: PrivacySettings; general: GeneralSettings
-  userRules: string; lsp: { enabled: boolean; servers: LspServerConfig[] }
+  userRules: string; lsp: { enabled: boolean; offerInstall: boolean; servers: LspServerConfig[] }
   mcp: { enabled: boolean }; customModes: CustomMode[]; beta: BetaSettings
   keybindings: Record<string, string | null>
   verify: VerifySettings; sandbox: SandboxSettings; acp: AcpSettings; terminal: TerminalSettings; router: RouterSettings

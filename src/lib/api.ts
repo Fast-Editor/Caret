@@ -99,7 +99,9 @@ const apiBase = {
   },
 
   lsp: {
-    configs: () => invoke<{ config: T.LspServerConfig; installed: boolean }[]>('lsp_configs'),
+    configs: (root?: string | null) => invoke<T.LspConfigEntry[]>('lsp_configs', { root: root ?? null }),
+    /** `npm install` the server into ~/.caret/lsp; resolves with the refreshed entry. */
+    install: (configId: string, root?: string | null) => invoke<T.LspConfigEntry>('lsp_install', { configId, root: root ?? null }),
     start: (configId: string, root: string, onMessage: (m: T.LspRawMessage) => void) =>
       invoke<T.LspServerStatus>('lsp_start', { configId, root, onMessage: channel(onMessage) }),
     stop: (serverId: string) => invoke<void>('lsp_stop', { serverId }),
