@@ -4,52 +4,25 @@ All notable changes to Caret. The version here must match `package.json`, `src-t
 
 ## Unreleased
 
-- Windows, polish: closing a window that has unsaved files now asks once for all of them (Save All / Don't Save /
-  Cancel; a failed save keeps the window) and kills the window's terminals before it goes; "Open in New Window" on
-  explorer folders (right-click) and on recent folders (hover action; Alt-click on the Welcome tab's Recent list does
-  the opposite of `window.openFoldersIn`); new palette commands Window: Switch Window… and Window: Close Other
-  Windows; a new empty window shows the Welcome view with a "New window" link; `document.title` matches the native
-  `<folder> — Caret`. The unsaved-changes dialog is mounted at the layout root, so Close Folder with dirty tabs can
-  ask too.
-- Windows, per-folder services (phase 1A): the file watcher, the Quick Open index and workspace search are scoped
-  to the folder each window shows. Every open folder gets its own watcher and quick-open index, started when the
-  first window opens it and dropped when the last window showing it closes (two windows on one folder share them);
-  `caret://fs/changed` and `caret://git/changed` reach only the windows showing that folder. The `fs_*` commands,
-  `fs_quick_open` / `fs_list_files` / `fs_index_status` and `search_text` / `search_replace` now resolve against the
-  calling window's folder instead of the focused window's.
-- Windows: File → New Window (Cmd+Shift+N) opens a second Caret window, empty or showing a folder. Each window has
-  its own folder, title (`<folder> — Caret`), editor tabs, terminals and chat; Open Folder / Open Recent from a
-  window that already shows a folder open the new folder in a new window (`window.openFoldersIn`, `"new"` by default;
-  `"current"` replaces in place; an empty window always opens in place). The Window menu lists the open windows with
-  the focused one checked, native menu commands go to the focused window only, and on macOS closing the last window
-  keeps Caret running (Dock click, Cmd+Shift+N or `caret <path>` bring a window back). New commands `window_new`,
-  `window_list`, `window_focus`, `window_close`; `workspace_open` / `workspace_current` / `workspace_close` are per
-  window. Per-folder scoping of Quick Open, the file watcher, LSP, git status and MCP across windows lands in the
-  follow-up: in this release those background services follow the folder most recently opened in the focused
-  window. See docs/MULTI_WINDOW.md.
-- Windows: `caret <path>`, Finder "Open with" and `caret://open?…` pick a window. A folder that is already open
-  focuses its window; a file inside an open folder opens there (deepest folder first); a folder goes to the focused
-  window when that one is empty, otherwise to a new window (`window.openFoldersIn: "new"`) or in place
-  (`"current"`); loose files go to the focused window, or to one new window when Caret has none. Files named together
-  with their folder stay with it (`caret ~/proj ~/proj/a.ts:3`). Each request now reaches exactly one window (the
-  pending-open queue is per window; `cli_take_pending_opens` drains the calling window's). `caret serve --no-window`
-  hides the focused window. The dev automation bridge targets a window: `scripts/e2e.mjs --window w2 eval …` (or
-  `CARET_E2E_WINDOW`), `?window=<label>` on `/eval` and `/screenshot`, new `GET /windows` and `e2e.mjs windows`. See
-  docs/CLI.md, "Which window opens it".
-- Windows: language servers, the codebase index, MCP servers and agent worktree cleanup are per folder. Each starts
-  when the first window on a folder opens and stops when the last one leaves, so switching folders in one window no
-  longer stops the servers or cancels the index run of a folder another window still shows; two windows on one
-  folder share them. `lsp_status`, `lsp_diagnostics`, `index_*`, `mcp_*` answer for the calling window's folder
-  (an empty window sees user-scope MCP servers only), and LSP status/diagnostics, index status and MCP changes reach
-  only the windows showing that folder. Agent runs resolve MCP tools and codebase search against their thread's
-  workspace root rather than the focused window's.
-- Windows: git, terminals, Run and Debug, Verify, the sandbox classifier, rules / memories / skills / commands /
-  subagents / hooks / plans, review results and the chat commands now act on the calling window's folder instead of
-  the focused one, so two windows on different projects no longer see each other's threads, git status or knowledge.
-  Agent threads are rooted in the window that created them (a window without a folder gets a folderless thread) and
-  a run keeps that root and that folder's `.caret/settings.json` for its whole duration, even when another window is
-  focused; thread lists, message search, fan-out and plan builds are per window, and threads started elsewhere stay
-  out of a window's history. Workspace-scope settings follow window focus.
+- Multiple windows. File → New Window (Cmd+Shift+N) opens another Caret window, empty or on a folder, and every
+  window is a complete Caret for the folder it shows: explorer, editor tabs, terminals, chat threads, git, search,
+  Quick Open, language servers, codebase index and MCP servers are all scoped to that folder, and two windows on
+  different projects never see each other's threads, git status, knowledge or diagnostics. Open Folder / Open Recent
+  from a window that already shows a folder open it in a new window (`window.openFoldersIn`, `"new"` by default,
+  `"current"` replaces in place; an empty window always opens in place; "Open in New Window" on explorer folders and
+  recent entries). The Window menu lists the open windows and the palette has Window: Switch Window… and Close Other
+  Windows; native menu commands go to the focused window only; closing a window with unsaved files asks once for all
+  of them (Save All / Don't Save / Cancel); on macOS closing the last window keeps Caret running. `caret <path>`,
+  Finder "Open with" and `caret://open?…` pick a window: a folder that is already open focuses its window, a file
+  inside an open folder opens there, other folders go to the focused window when it is empty, otherwise to a new
+  window (or in place with `"current"`). Per-folder services (watcher, Quick Open index, LSP, index, MCP, worktree
+  cleanup) start when the first window opens a folder and stop when the last one leaves; two windows on one folder
+  share them. Agent threads are rooted in the window that created them and a run keeps that root and that folder's
+  `.caret/settings.json` for its whole duration even when another window is focused. New commands `window_new`,
+  `window_list`, `window_focus`, `window_close`; `workspace_*`, `fs_*`, `search_*`, `git_*`, `lsp_status`, `index_*`,
+  `mcp_*`, `chat_list_sessions` / `chat_create_session`, knowledge and verify commands act on the calling window.
+  Automation bridge: `scripts/e2e.mjs --window w2 eval …`, `?window=<label>` on `/eval` and `/screenshot`,
+  `GET /windows`. See docs/MULTI_WINDOW.md and docs/CLI.md ("Which window opens it").
 - Fixed: Go to Definition, Type Definition, Implementation and references that land in another file now open that
   file (Cmd+click on an import or a symbol included). Monaco can only move the caret inside the file it is showing;
   Caret never registered an editor opener, so every cross-file jump was silently dropped.

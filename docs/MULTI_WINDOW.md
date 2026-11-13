@@ -1,18 +1,9 @@
 # Multiple windows
 
-Status: phase 1E (frontend polish) done 2026-11-13 — closing a window with unsaved files asks Save All / Don't Save /
-Cancel, "Open in New Window" on explorer folders and recent folders (Alt-click inverts the setting), `window.switch`
-/ `window.closeOthers` palette commands, `document.title` mirrors the native title, the confirm-close dialog is
-mounted at the layout root. Phase 0 (foundation) done 2026-11-13 — window registry and `RootRefs`, `window_new/list/focus/close`,
-per-window `workspace_open/current/close`, window creation (cascaded, same options as `main`), Window menu with the
-open-window list, native menu events routed to the focused window, macOS keep-alive after the last window closes plus
-Dock-click reopen, per-window editor sessions, `window.openFoldersIn`, `events::emit_to` / `emit_for_root` /
-`on_workspace_change`, and the frontend `on()` subscribing with its own window label. Phase 1 (next) migrates each
-per-root resource onto the internal workspace event and `RootRefs` (watcher, quick-open index, codebase index, LSP,
-MCP, worktrees), makes every workspace-dependent command take `window`, scopes settings per root, routes CLI opens
-(`route_open`, per-label `OpenQueue`), and lets the automation bridge target a label. Until then the single-root Rust
-listeners follow the focused window (see "Phase 0 compatibility" below). Sections marked *done* describe shipped
-behaviour.
+Status: shipped 2026-11-13 (phase 0 foundation + phase 1 per-folder scoping). Verified live in the dev build: a
+second window on another folder opened in ~160 ms; Quick Open, the codebase index, git status, the TypeScript
+server and the thread list in each window answered for that window's folder; closing the second window stopped its
+watcher, index and MCP servers while the first window kept its own. Remaining gaps are listed under "Out of scope".
 
 ## Behaviour
 
