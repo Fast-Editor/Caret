@@ -4,6 +4,10 @@ All notable changes to Caret. The version here must match `package.json`, `src-t
 
 ## Unreleased
 
+- Markdown preview is one click away. A markdown file's tab bar shows an eye button: click opens the rendered preview
+  next to the source (splitting the editor when needed, focus stays in the source, the preview follows your typing),
+  Alt-click opens it in the same group; a preview tab shows an "Open Source" button back. New command
+  `editor.markdownPreviewSide` (⌘K V) alongside `editor.markdownPreview` (⌘⇧V); both are in the tab context menu.
 - Fixed: a new window no longer duplicates the current one. "Open last workspace on startup" ran in every window, so
   File → New Window (and a Dock-click reopen) immediately reopened the folder the existing window shows; it now runs
   only in the first window of a cold start and other windows start empty.

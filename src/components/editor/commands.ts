@@ -1,5 +1,6 @@
 /** Editor module bootstrap: registers commands, Monaco providers and the Cmd+K host. */
-import { registerCommands } from '@/lib/commands'
+import { registerCommands, runCommand } from '@/lib/commands'
+import { sideGroupIndex } from '@/lib/sideGroup'
 import { emit as busEmit } from '@/lib/bus'
 import { useSettings } from '@/store/settings'
 import { monaco, initMonaco } from '@/lib/monaco/setup'
@@ -70,6 +71,29 @@ export function initEditorModule(): void {
     { id: 'editor.openImage', title: 'Open Image', hidden: true, run: (a) => st().openSpecial('image', { path: (a as { path: string }).path }) },
     { id: 'editor.openReview', title: 'Open Review Tab', hidden: true, run: () => st().openSpecial('review') },
     { id: 'editor.markdownPreview', title: 'Open Markdown Preview', category: 'View', keybinding: 'mod+shift+v', run: (a) => { const p = (a as { path?: string } | undefined)?.path ?? activeTab()?.path; if (p && isMarkdownPath(p)) { st().openSpecial('markdown-preview', { path: p }) } } },
+    // Preview next to the source (VS Code's ⌘K V): the preview goes into the group to the right (splitting when there is
+    // only one group) and focus stays in the source editor so typing keeps updating the rendered page.
+    { id: 'editor.markdownPreviewSide', title: 'Open Markdown Preview to the Side', category: 'View', keybinding: 'mod+k v', run: (a) => {
+      const p = (a as { path?: string } | undefined)?.path ?? activeTab()?.path
+      if (!p || !isMarkdownPath(p)) return
+      const s = st(); const sourceGroup = s.activeGroupId
+      const sourceIdx = s.groups.findIndex((g) => g.id === sourceGroup)
+      const already = s.groups.find((g) => g.id !== sourceGroup && g.tabs.some((t) => t.kind === 'markdown-preview' && t.path === p))
+      if (already) { const t = already.tabs.find((x) => x.kind === 'markdown-preview' && x.path === p)!; s.setActive(already.id, t.id); s.setActiveGroup(sourceGroup); return }
+      const side = sideGroupIndex(s.groups.length, sourceIdx)
+      if (side === null) {
+        s.split() // copies the active tab into the new group; the preview replaces that copy below
+        const g = st().groups.find((x) => x.id === st().activeGroupId)!
+        const copy = g.activeTabId
+        st().openSpecial('markdown-preview', { path: p, preview: false })
+        if (copy) void st().closeTab(g.id, copy, { force: true })
+      } else {
+        s.setActiveGroup(s.groups[side].id)
+        st().openSpecial('markdown-preview', { path: p, preview: false })
+      }
+      st().setActiveGroup(sourceGroup)
+      requestAnimationFrame(() => { void runCommand('editor.focusGroup', { index: sourceIdx }) })
+    } },
     { id: 'editor.toggleBlame', title: 'Toggle Inline Git Blame', category: 'Git', run: () => st().setBlame(!st().blameEnabled) },
     { id: 'editor.nextProblem', title: 'Go to Next Problem', category: 'Go', keybinding: 'f8', run: act('editor.action.marker.nextInFiles') },
     { id: 'editor.prevProblem', title: 'Go to Previous Problem', category: 'Go', keybinding: 'shift+f8', run: act('editor.action.marker.prevInFiles') },

@@ -16,7 +16,7 @@ their own ids; nobody imports another module's components to trigger behaviour. 
 Default keybindings (mac; `mod` = ⌘): palette `mod+shift+p`, quick open `mod+p`, find in files `mod+shift+f`,
 toggle sidebar `mod+b`, toggle panel `mod+j`, toggle terminal `` ctrl+` ``, toggle chat `mod+l` (also adds selection),
 agent/new chat `mod+i`, inline edit `mod+k`, settings `mod+,`, Caret settings `mod+shift+j`, save `mod+s`, save all `mod+alt+s`,
-close tab `mod+w`, split `mod+\`, go to line `ctrl+g`, go to symbol `mod+shift+o`, explorer `mod+shift+e`, scm `ctrl+shift+g`,
+close tab `mod+w`, split `mod+\`, markdown preview `mod+shift+v` (same group) / `mod+k v` (to the side; also the eye button in the tab bar), go to line `ctrl+g`, go to symbol `mod+shift+o`, explorer `mod+shift+e`, scm `ctrl+shift+g`,
 agents `mod+shift+a`? → use `mod+e` for background agent (Cursor), accept inline `tab`, accept word `mod+right`,
 accept all chat diffs `mod+enter` (when chat focused & changes pending), reject all `mod+backspace`, new terminal `` ctrl+shift+` ``,
 toggle agents layout `mod+shift+l`? → keep `mod+alt+a`, zoom `mod+=`/`mod+-`/`mod+0`, commit message `mod+alt+g`.

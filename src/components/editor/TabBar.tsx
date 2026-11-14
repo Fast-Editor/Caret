@@ -1,5 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
-import { X, Pin, Circle, SplitSquareHorizontal, AlertTriangle, Settings2, Sparkles, FileText, Image as ImageIcon, GitCompare, Globe, ListChecks, Keyboard, Home, ShieldCheck } from 'lucide-react'
+import { X, Pin, Circle, SplitSquareHorizontal, AlertTriangle, Settings2, Sparkles, FileText, Image as ImageIcon, GitCompare, Globe, ListChecks, Keyboard, Home, ShieldCheck, Eye, FileCode2 } from 'lucide-react'
+import { isMarkdownPath } from '@/lib/languages'
 import { useEditor, type EditorGroup, type EditorTab } from '@/store/editor'
 import { relPath } from '@/store/workspace'
 import { fileIconFor } from '@/components/explorer/fileIcons'
@@ -57,6 +58,8 @@ function useLeavingTabs(tabs: EditorTab[]): { tabs: EditorTab[]; leaving: Set<st
   for (const g of [...leaving.values()].sort((a, b) => a.index - b.index)) merged.splice(Math.min(g.index, merged.length), 0, g.tab)
   return { tabs: merged, leaving: new Set(leaving.keys()) }
 }
+
+function activeTabOf(group: EditorGroup): EditorTab | undefined { return group.tabs.find((t) => t.id === group.activeTabId) }
 
 export function TabBar({ group, active }: { group: EditorGroup; active: boolean }) {
   const { setActive, closeTab, keepTab, reorderTab, moveTab, pinTab, closeOthers, closeToRight, closeAll, split } = useEditor()
@@ -127,6 +130,12 @@ export function TabBar({ group, active }: { group: EditorGroup; active: boolean 
         <div className="flex-1 min-w-[40px]" onDragOver={(e) => e.preventDefault()} onDrop={(e) => { const raw = e.dataTransfer.getData('text/caret-tab'); if (!raw) return; const { group: g, tabId } = JSON.parse(raw) as { group: string; tabId: string }; if (g === group.id) { const from = group.tabs.findIndex((t) => t.id === tabId); reorderTab(group.id, from, group.tabs.length - 1) } else moveTab(g, tabId, group.id) }} />
       </div>
       <div className="flex items-center gap-0.5 px-1">
+        {activeTabOf(group)?.kind === 'file' && activeTabOf(group)?.path && isMarkdownPath(activeTabOf(group)!.path!) && (
+          <button className="p-1 rounded hover:bg-hover text-muted" title="Open Preview to the Side (⌘K V) · ⌥-click: in this group (⌘⇧V)" aria-label="Open Markdown preview" onClick={(e) => void runCommand(e.altKey ? 'editor.markdownPreview' : 'editor.markdownPreviewSide', { path: activeTabOf(group)!.path })}><Eye size={14} /></button>
+        )}
+        {activeTabOf(group)?.kind === 'markdown-preview' && activeTabOf(group)?.path && (
+          <button className="p-1 rounded hover:bg-hover text-muted" title="Open Source" aria-label="Open Markdown source" onClick={() => void runCommand('editor.openFile', { path: activeTabOf(group)!.path, preview: false })}><FileCode2 size={14} /></button>
+        )}
         {groupsCount < 3 && <button className="p-1 rounded hover:bg-hover text-muted" title="Split editor right (⌘\)" onClick={() => split()}><SplitSquareHorizontal size={14} /></button>}
       </div>
       {menu && (
@@ -143,7 +152,8 @@ export function TabBar({ group, active }: { group: EditorGroup; active: boolean 
             { l: 'Copy Relative Path', r: () => navigator.clipboard.writeText(relPath(menu.tab.path ?? '')), hide: !menu.tab.path },
             { l: 'Reveal in Explorer', r: () => runCommand('view.explorer', { reveal: menu.tab.path }), hide: !menu.tab.path },
             { l: 'Reveal in Finder', r: () => runCommand('file.revealInFinder', { path: menu.tab.path }), hide: !menu.tab.path },
-            { l: 'Open Preview', r: () => runCommand('editor.markdownPreview', { path: menu.tab.path }), hide: !menu.tab.path?.endsWith('.md') },
+            { l: 'Open Preview', r: () => runCommand('editor.markdownPreview', { path: menu.tab.path }), hide: !(menu.tab.kind === 'file' && menu.tab.path && isMarkdownPath(menu.tab.path)) },
+            { l: 'Open Preview to the Side', r: () => runCommand('editor.markdownPreviewSide', { path: menu.tab.path }), hide: !(menu.tab.kind === 'file' && menu.tab.path && isMarkdownPath(menu.tab.path)) },
           ].filter((it) => !it.hide).map((it, i) => (
             <div key={i}>{it.sep && i > 0 && <div className="my-1 border-t border-border" />}<button className="w-full text-left px-3 h-[26px] hover:bg-hover flex items-center" onClick={() => { setMenu(null); void it.r() }}><span className="flex-1">{it.l}</span>{it.k && <span className="text-faint">{it.k}</span>}</button></div>
           ))}
