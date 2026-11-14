@@ -13,9 +13,8 @@ export function ScratchBanner({ sessionId }: { sessionId: string }) {
     if (busy) return
     setBusy(true)
     try {
-      const { open } = await import('@tauri-apps/plugin-dialog')
-      const picked = await open({ directory: true, multiple: false, title: 'Choose a folder for this project (new or empty)' })
-      const dir = Array.isArray(picked) ? picked[0] : picked
+      const { pickFolder } = await import('@/lib/dialogs')
+      const dir = await pickFolder({ title: 'Choose a folder for this project (new or empty)' })
       if (!dir) return
       await promote(sessionId, dir)
       void runCommand('app.notify', { level: 'success', title: 'Scratch thread is now a project', message: dir })

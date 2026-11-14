@@ -1,7 +1,7 @@
 /** Shell-owned commands: workspace, views, palette, app, help, settings shortcuts. */
-import { open as openDialog } from '@tauri-apps/plugin-dialog'
 import { createElement } from 'react'
 import { api } from '@/lib/api'
+import { pickFolder } from '@/lib/dialogs'
 import { registerCommands, runCommand, hasCommand, listCommands } from '@/lib/commands'
 import { listBindings, formatKeybinding, getKeybindingFor } from '@/lib/keybindings'
 import { THEMES } from '@/lib/theme'
@@ -27,7 +27,7 @@ export function registerShellCommands(): () => void {
       // `newWindow` forces the target; `invert` is the Alt gesture (the opposite of `window.openFoldersIn`).
       const a = args as { path?: string; newWindow?: boolean; invert?: boolean } | undefined
       let path = a?.path
-      if (!path) { const p = await openDialog({ directory: true, multiple: false, title: 'Open Folder' }); if (typeof p !== 'string') return; path = p }
+      if (!path) { const p = await pickFolder({ title: 'Open Folder' }); if (!p) return; path = p }
       try {
         // A window that already shows a folder opens the next one per `window.openFoldersIn`; an empty window opens in place.
         const inNewWindow = a?.newWindow ?? opensInNewWindow(!!useWorkspace.getState().workspace, useSettings.getState().settings?.window.openFoldersIn, a?.invert)
@@ -37,7 +37,7 @@ export function registerShellCommands(): () => void {
     } },
     { id: 'workspace.openInNewWindow', title: 'Open Folder in New Window…', category: 'File', hidden: true, run: async (args) => {
       let path = (args as { path?: string } | undefined)?.path
-      if (!path) { const p = await openDialog({ directory: true, multiple: false, title: 'Open Folder in New Window' }); if (typeof p !== 'string') return; path = p }
+      if (!path) { const p = await pickFolder({ title: 'Open Folder in New Window' }); if (!p) return; path = p }
       try { await api.window.new(path) } catch (e) { notify('error', 'Could not open a new window', String((e as Error).message ?? e)) }
     } },
     { id: 'workspace.closeFolder', title: 'Close Folder', category: 'File', run: async () => { await useWorkspace.getState().close() } },

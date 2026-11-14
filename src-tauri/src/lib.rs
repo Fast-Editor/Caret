@@ -137,6 +137,7 @@ pub fn run() {
             // REGISTER:commands:ports
             core::netports::ports_list, core::netports::ports_kill,
             // REGISTER:commands:cli
+            core::dialogs::dialog_pick_folder,
             core::cli::cli_take_pending_opens, core::cli::cli_status, core::cli::cli_install, core::cli::cli_uninstall,
             core::search::search_text, core::search::search_cancel, core::search::search_replace,
             // REGISTER:commands:search

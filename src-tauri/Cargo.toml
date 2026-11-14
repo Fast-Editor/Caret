@@ -88,6 +88,12 @@ tantivy = "0.27"
 # --- mcp ---
 rmcp = { version = "3.7", default-features = false, features = ["client", "transport-child-process", "transport-streamable-http-client-reqwest", "client-side-sse", "reqwest", "macros"] }
 
+[target.'cfg(target_os = "macos")'.dependencies]
+# Nil-safe native Open panel (core/dialogs.rs): AppKit can return no panel at all when its remote-view service is
+# gone, and the generated bindings used by the dialog plugin abort the process on that nil.
+objc2 = "0.6"
+objc2-foundation = { version = "0.3", features = ["NSArray", "NSEnumerator", "NSObject", "NSString", "NSURL", "NSValue"] }
+
 [profile.dev]
 opt-level = 0
 incremental = true

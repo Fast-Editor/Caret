@@ -4,6 +4,13 @@ All notable changes to Caret. The version here must match `package.json`, `src-t
 
 ## Unreleased
 
+- Fixed: Open Folder can no longer crash Caret. When macOS fails to provide the native Open panel (its view-bridge
+  service was unavailable after hours of running, logged as `NSXPCSharedListener … com.apple.view-bridge`), the
+  dialog plugin aborted the whole process with every window in it. The folder picker now creates the panel itself with
+  a nil check (`dialog_pick_folder`) and, when the system dialog is unavailable, asks for the path in a text field.
+- Fixed: two windows on the same folder no longer restart each other's language servers every second. Servers are
+  owned by the window whose client started them (one TypeScript server per window, as in VS Code); a window's servers
+  stop when it leaves the folder or closes, and the status bar and diagnostics show only that window's servers.
 - Multiple windows. File → New Window (Cmd+Shift+N) opens another Caret window, empty or on a folder, and every
   window is a complete Caret for the folder it shows: explorer, editor tabs, terminals, chat threads, git, search,
   Quick Open, language servers, codebase index and MCP servers are all scoped to that folder, and two windows on

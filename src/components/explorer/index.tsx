@@ -1,6 +1,6 @@
 import { ChevronRight, CopyMinus, Eye, EyeOff, FilePlus2, FolderOpen, FolderPlus, Locate, RefreshCw, X } from 'lucide-react'
 import { useEffect, useRef } from 'react'
-import { open as openDialog } from '@tauri-apps/plugin-dialog'
+import { pickFolder } from '@/lib/dialogs'
 import { IconButton, Input, Button, cn } from '@/components/common'
 import { registerCommands, runCommand } from '@/lib/commands'
 import { useExplorer } from '@/store/explorer'
@@ -81,6 +81,6 @@ export function registerExplorerCommands(): () => void {
     { id: 'explorer.refresh', title: 'Refresh Explorer', category: 'Explorer', run: () => { const r = useWorkspace.getState().workspace?.root; if (r) void useExplorer.getState().loadDir(r, true) } },
     { id: 'explorer.collapseAll', title: 'Collapse Folders in Explorer', category: 'Explorer', run: () => useExplorer.getState().collapseAll() },
     { id: 'explorer.toggleHidden', title: 'Toggle Hidden Files', category: 'Explorer', run: () => useExplorer.setState((s) => ({ showHidden: !s.showHidden })) },
-    { id: 'explorer.openFolderDialog', title: 'Open Folder…', category: 'File', hidden: true, run: async () => { const p = await openDialog({ directory: true, multiple: false }); if (typeof p === 'string') await useWorkspace.getState().open(p) } },
+    { id: 'explorer.openFolderDialog', title: 'Open Folder…', category: 'File', hidden: true, run: async () => { const p = await pickFolder({ title: 'Open Folder' }); if (p) await useWorkspace.getState().open(p) } },
   ])
 }

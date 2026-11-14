@@ -574,6 +574,8 @@ dependencies = [
  "mime_guess",
  "notify",
  "notify-debouncer-full",
+ "objc2",
+ "objc2-foundation",
  "once_cell",
  "parking_lot 0.13.0",
  "portable-pty",

@@ -122,6 +122,11 @@ const apiBase = {
     reportDiagnostics: (diags: T.FileDiagnostics) => invoke<void>('lsp_report_diagnostics', { diags }),
   },
 
+  dialog: {
+    /** Nil-safe native folder picker; rejects with code `dialog_unavailable` when the system panel cannot be shown. */
+    pickFolder: (options?: { title?: string; defaultPath?: string }) => invoke<string | null>('dialog_pick_folder', { options: options ?? null }),
+  },
+
   settings: {
     get: () => invoke<T.SettingsScopes>('settings_get'),
     update: (patch: T.SettingsPatch, scope: 'user' | 'workspace' = 'user') => invoke<T.Settings>('settings_update', { patch, scope }),

@@ -235,6 +235,7 @@ pub fn on_window_event(window: &tauri::Window, event: &WindowEvent) {
             if !registry.contains(label) { return; }
             // Same resource release as `workspace_close`, without touching the webview that no longer exists.
             workspace::release_workspace_for_destroyed(app, label);
+            crate::core::lsp::stop_servers_for_window(app, label);
             registry.unregister(label);
             crate::menu::rebuild_window_items(app);
             let remaining = registry.len();

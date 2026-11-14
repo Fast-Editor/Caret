@@ -12,7 +12,7 @@ pub mod shell_integration;
 pub mod lsp;
 pub mod watcher;
 pub mod generation;
-pub mod cli;
+pub mod cli; pub mod dialogs;
 pub mod netports;
 pub mod terminal_history;
 // REGISTER:core-modules (fs, search, git, pty, lsp, watcher, sessions, sysmon, ...)
