@@ -95,11 +95,9 @@ fn touch_recent(root: &Path) {
 /// Events, in order: the Rust-only `INTERNAL_WORKSPACE_CHANGED` (`WorkspaceChange`, every change of every window),
 /// then `WORKSPACE_CHANGED` with `Option<WorkspaceInfo>` for the frontend of that window.
 ///
-/// Compatibility (phase 0 of docs/MULTI_WINDOW.md): six Rust modules still `app.listen(WORKSPACE_CHANGED)` and parse
-/// `Option<WorkspaceInfo>` as "the" workspace (core/watcher, core/fs, core/lsp, mcp/manager, ai/agent/worktrees,
-/// index/manager). They keep receiving the focused window's changes app-wide exactly as before, so single-window
-/// behaviour is unchanged; a window that is not focused only tells its own frontend. Phase 1 moves each listener onto
-/// `events::on_workspace_change` and removes the app-wide emit.
+/// `WORKSPACE_CHANGED` goes to that window only (`emit_to`); an app-wide emit would switch every other window's
+/// frontend to this folder. Rust-side consumers use `events::on_workspace_change` and never see this event. The
+/// focused window additionally drives the settings workspace scope (`drives_legacy_listeners`, kept for that).
 ///
 /// The `WORKSPACE_CHANGED` listeners run inline inside `emit`, so each of them must hand its real work (watcher
 /// setup, index builds, server restarts) to a background task; the `emit_ms` figure in the log is how well they do.
@@ -127,10 +125,10 @@ pub fn open_workspace_for(app: &AppHandle, label: &str, path: &Path) -> Result<W
     events::emit_internal_workspace_changed(app, WorkspaceChange {
         label: label.to_string(), info: Some(info.clone()), prev_root: prev_root.as_ref().map(|p| p.to_string_lossy().to_string()), first_for_root, last_for_prev_root,
     });
-    if legacy { events::emit(app, events::WORKSPACE_CHANGED, Some(info.clone())); } else { events::emit_to(app, label, events::WORKSPACE_CHANGED, Some(info.clone())); }
+    events::emit_to(app, label, events::WORKSPACE_CHANGED, Some(info.clone()));
     crate::menu::rebuild_window_items(app);
     let ms = |d: std::time::Duration| d.as_millis() as u64;
-    tracing::info!(label, root = %root.display(), first_for_root, legacy, settings_ms = ms(t_settings), recent_ms = ms(t_recent - t_settings), emit_ms = ms(t_emit.elapsed()), total_ms = ms(t0.elapsed()), "workspace opened");
+    tracing::info!(label, root = %root.display(), first_for_root, focused = legacy, settings_ms = ms(t_settings), recent_ms = ms(t_recent - t_settings), emit_ms = ms(t_emit.elapsed()), total_ms = ms(t0.elapsed()), "workspace opened");
     Ok(info)
 }
 
@@ -154,9 +152,9 @@ fn close_workspace_inner(app: &AppHandle, label: &str, window_alive: bool) {
         label: label.to_string(), info: None, prev_root: prev_root.as_ref().map(|p| p.to_string_lossy().to_string()), first_for_root: false, last_for_prev_root,
     });
     // See `open_workspace_for` for why the focused window's change is still broadcast app-wide.
-    if legacy { events::emit::<Option<WorkspaceInfo>>(app, events::WORKSPACE_CHANGED, None); } else if window_alive { events::emit_to::<Option<WorkspaceInfo>>(app, label, events::WORKSPACE_CHANGED, None); }
+    if window_alive { events::emit_to::<Option<WorkspaceInfo>>(app, label, events::WORKSPACE_CHANGED, None); }
     if window_alive { crate::menu::rebuild_window_items(app); }
-    tracing::info!(label, prev_root = ?prev_root, last_for_prev_root, legacy, window_alive, "workspace closed");
+    tracing::info!(label, prev_root = ?prev_root, last_for_prev_root, focused = legacy, window_alive, "workspace closed");
 }
 
 /// Open `path` in the focused window (falls back to `main`). Thin wrapper for callers that have no window yet (CLI

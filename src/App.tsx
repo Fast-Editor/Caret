@@ -15,6 +15,7 @@ import { initCliOpen } from '@/lib/cliOpen'
 import { initWindowClose } from '@/lib/windowClose'
 import { initDebugModule } from '@/components/debug'
 import { Events, on, isTauri } from '@/lib/tauri'
+import { isMainWindow } from '@/lib/windowing'
 import { onWorkspaceChanged } from '@/lib/workspaceReload'
 import { api } from '@/lib/api'
 import { initSettingsStore, useSettings } from '@/store/settings'
@@ -69,7 +70,9 @@ function boot(): () => void {
     const wsState = useWorkspace.getState()
     await wsState.load().catch(() => {})
     const settings = useSettings.getState().settings ?? (await new Promise<ReturnType<typeof useSettings.getState>['settings']>((res) => { const u = useSettings.subscribe((s) => { if (s.loaded) { u(); res(s.settings) } }) }))
-    if (!useWorkspace.getState().workspace && settings?.general.openLastWorkspace) {
+    // "Open last workspace on startup" is a cold-start behaviour of the first window only. Every other window (File →
+    // New Window, Dock-click reopen) starts empty; restoring here would make each new window a copy of the current one.
+    if (isMainWindow() && !useWorkspace.getState().workspace && settings?.general.openLastWorkspace) {
       const r = useWorkspace.getState().recent.find((x) => x.exists)
       if (r) { try { await useWorkspace.getState().open(r.path) } catch { /* ignore */ } }
     }

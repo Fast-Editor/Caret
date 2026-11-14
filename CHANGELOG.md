@@ -4,6 +4,12 @@ All notable changes to Caret. The version here must match `package.json`, `src-t
 
 ## Unreleased
 
+- Fixed: a new window no longer duplicates the current one. "Open last workspace on startup" ran in every window, so
+  File → New Window (and a Dock-click reopen) immediately reopened the folder the existing window shows; it now runs
+  only in the first window of a cold start and other windows start empty.
+- Fixed: opening a folder in one window no longer switches the other windows to it. The workspace-changed event was
+  still broadcast app-wide when the focused window changed folder (a phase-0 compatibility path whose last consumer
+  was migrated); it now reaches only the window that changed.
 - Fixed: Open Folder can no longer crash Caret. When macOS fails to provide the native Open panel (its view-bridge
   service was unavailable after hours of running, logged as `NSXPCSharedListener … com.apple.view-bridge`), the
   dialog plugin aborted the whole process with every window in it. The folder picker now creates the panel itself with

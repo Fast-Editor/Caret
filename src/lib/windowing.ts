@@ -14,6 +14,9 @@ export function currentWindowLabel(): string {
 
 const SESSION_PREFIX = 'caret.editor.session.'
 /** Per-window editor session key: two windows on the same folder keep separate tab sets. */
+/** The first window of a cold start: the only one that restores the last folder and drains argv opens. */
+export function isMainWindow(): boolean { return currentWindowLabel() === 'main' }
+
 export function sessionKey(root: string, label: string): string { return `${SESSION_PREFIX}${root}::${label}` }
 /** The key written before multiple windows existed (one tab set per folder); still read as a fallback. */
 export function legacySessionKey(root: string): string { return `${SESSION_PREFIX}${root}` }

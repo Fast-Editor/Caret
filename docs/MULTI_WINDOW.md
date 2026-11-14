@@ -122,12 +122,9 @@ pub fn on_window_event(window: &tauri::Window, event: &WindowEvent); // Builder:
 - The frontend's `on()` (src/lib/tauri.ts) subscribes with the current window's label as target. Tauri's default
   target (`Any`) receives every targeted emit, which would make `emit_to` / `emit_for_root` reach every window.
 
-**Phase 0 compatibility.** Six Rust modules still `app.listen(WORKSPACE_CHANGED)` and parse `Option<WorkspaceInfo>`
-as "the" workspace: `core/watcher.rs`, `core/fs.rs`, `core/lsp.rs`, `mcp/manager.rs`, `ai/agent/worktrees.rs`,
-`index/manager.rs`. `open_workspace_for` / `close_workspace_for` therefore still broadcast `WORKSPACE_CHANGED` app-wide
-when the changing window is the focused one (or the only one), so single-window behaviour is unchanged and those
-services follow the folder most recently opened in the focused window. Phase 1 moves each of them onto
-`on_workspace_change` + `RootRefs` and deletes the app-wide emit.
+**Event scope.** `WORKSPACE_CHANGED` is sent only to the window whose folder changed (`emit_to`); Rust modules
+listen to the internal `WorkspaceChange` stream instead. Until 2026-11-13 the focused window's change was also
+broadcast app-wide for unmigrated listeners, which made every other window's frontend switch to the same folder.
 
 Per-root resources (`watcher`, `fs` quick-open index, `index::IndexManager`, `mcp::McpManager`, `lsp`,
 `ai::agent::worktrees`): `RootRefs` counts windows per root; the resource starts on the first window for a root
