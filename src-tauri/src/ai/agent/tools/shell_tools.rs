@@ -1,58 +1,23 @@
 //! Shell tools: run_terminal_cmd (foreground/background) and read_terminal.
+//!
+//! Commands go through `ctx.executor` (docs/WARREN.md): the local shell (optionally under the OS sandbox) or the
+//! thread's Warren instance, in which case the files the command changed come back as pending changes.
 use super::{arg_bool, arg_str, arg_u64, cap_output, s_bool, s_int, s_str, schema, Tool, ToolContext, ToolOutput};
 use crate::ai::agent::policy::ToolEffect;
 use crate::core::ports;
 use crate::error::{CaretError, Result};
+use crate::warren::binding as sandbox_binding;
+use crate::warren::executor::ExecSpec;
 use serde_json::{json, Value};
-use std::process::Stdio;
 use std::sync::Arc;
-use tokio::io::AsyncReadExt;
+
+pub use crate::warren::executor::{run_shell, run_shell_with, CmdResult};
 
 pub fn tools() -> Vec<Arc<dyn Tool>> { vec![Arc::new(RunTerminalCmd), Arc::new(ReadTerminal)] }
 
 pub fn user_shell(settings: &crate::core::settings::Settings) -> String {
     settings.general.default_shell.clone().filter(|s| !s.is_empty()).or_else(|| std::env::var("SHELL").ok()).unwrap_or_else(|| "/bin/zsh".into())
 }
-
-pub struct CmdResult { pub output: String, pub code: Option<i32>, pub timed_out: bool, pub cancelled: bool }
-
-/// Run `command` through the user's shell with a timeout; combined stdout+stderr (capped at 1 MiB). Unsandboxed.
-pub async fn run_shell(shell: &str, command: &str, cwd: &std::path::Path, timeout_secs: u64, cancel: &tokio_util::sync::CancellationToken) -> Result<CmdResult> {
-    run_shell_with(shell, command, cwd, timeout_secs, cancel, None, crate::sandbox::WrapOptions::default()).await
-}
-
-/// Like `run_shell`, optionally wrapped in the OS sandbox (`sandbox` = Some(policy)).
-pub async fn run_shell_with(shell: &str, command: &str, cwd: &std::path::Path, timeout_secs: u64, cancel: &tokio_util::sync::CancellationToken, sandbox: Option<&crate::sandbox::SandboxPolicy>, opts: crate::sandbox::WrapOptions) -> Result<CmdResult> {
-    let mut cmd = tokio::process::Command::new(shell);
-    cmd.arg("-lc").arg(command).current_dir(cwd)
-        .env("CARET", "1").env("TERM", "dumb").env("NO_COLOR", "1").env("CI", "1").env("GIT_PAGER", "cat").env("PAGER", "cat");
-    if let Some(p) = sandbox { cmd = crate::sandbox::wrap_with(cmd, p, opts); }
-    cmd.stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped()).kill_on_drop(true);
-    #[cfg(unix)] { cmd.process_group(0); }
-    let mut child = cmd.spawn().map_err(|e| CaretError::io(format!("failed to start shell {shell}: {e}")))?;
-    let mut out = child.stdout.take().unwrap(); let mut err = child.stderr.take().unwrap();
-    let buf = Arc::new(parking_lot::Mutex::new(Vec::<u8>::new()));
-    let (b1, b2) = (buf.clone(), buf.clone());
-    let cap = 1024 * 1024;
-    let t1 = tokio::spawn(async move { let mut tmp = [0u8; 8192]; loop { match out.read(&mut tmp).await { Ok(0) | Err(_) => break, Ok(n) => { let mut b = b1.lock(); if b.len() < cap { b.extend_from_slice(&tmp[..n]); } } } } });
-    let t2 = tokio::spawn(async move { let mut tmp = [0u8; 8192]; loop { match err.read(&mut tmp).await { Ok(0) | Err(_) => break, Ok(n) => { let mut b = b2.lock(); if b.len() < cap { b.extend_from_slice(&tmp[..n]); } } } } });
-    let (code, timed_out, cancelled) = tokio::select! {
-        r = child.wait() => (r.ok().and_then(|s| s.code()), false, false),
-        _ = tokio::time::sleep(std::time::Duration::from_secs(timeout_secs.max(1))) => { kill_group(&mut child).await; (None, true, false) }
-        _ = cancel.cancelled() => { kill_group(&mut child).await; (None, false, true) }
-    };
-    let _ = tokio::time::timeout(std::time::Duration::from_millis(500), async { let _ = t1.await; let _ = t2.await; }).await;
-    let bytes = std::mem::take(&mut *buf.lock());
-    Ok(CmdResult { output: String::from_utf8_lossy(&bytes).to_string(), code, timed_out, cancelled })
-}
-
-async fn kill_group(child: &mut tokio::process::Child) {
-    #[cfg(unix)]
-    if let Some(pid) = child.id() { unsafe { libc_kill(-(pid as i32), 15); } tokio::time::sleep(std::time::Duration::from_millis(300)).await; unsafe { libc_kill(-(pid as i32), 9); } }
-    let _ = child.kill().await;
-}
-#[cfg(unix)]
-unsafe fn libc_kill(pid: i32, sig: i32) { extern "C" { fn kill(pid: i32, sig: i32) -> i32; } let _ = kill(pid, sig); }
 
 /// Heuristic: output mentions a permission failure typical of a sandbox denial.
 fn looks_like_sandbox_denial(out: &str) -> bool { let o = out.to_lowercase(); o.contains("operation not permitted") || o.contains("permission denied") || o.contains("read-only file system") || o.contains("eperm") || o.contains("eacces") }
@@ -73,38 +38,46 @@ impl Tool for RunTerminalCmd {
         if command.trim().is_empty() { return Ok(ToolOutput::error("command is empty")); }
         let cwd = arg_str(&input, &["cwd"]).map(|c| ctx.resolve(c)).unwrap_or_else(|| ctx.cwd.clone());
         if !cwd.is_dir() { return Ok(ToolOutput::error(format!("cwd {} does not exist", cwd.display()))); }
-        let shell = user_shell(&ctx.settings);
-        // OS sandbox (Seatbelt / bwrap): None = run unsandboxed (mode off, or auto without a backend); Err = strict mode unmet.
-        let sandbox = crate::sandbox::policy_for(&ctx.settings, ctx.root.as_deref(), &cwd)?;
-        let wrap_opts = crate::sandbox::wrap_options(&ctx.settings);
-        let sandboxed = sandbox.is_some();
+        let executor = ctx.executor.clone();
+        let remote = executor.kind() != "local";
+        let sandboxed = executor.sandboxed();
+        let timeout = arg_u64(&input, &["timeout_secs", "timeout"]).unwrap_or(ctx.settings.agent.command_timeout_secs.max(5)).min(900);
+        let spec = ExecSpec { shell: user_shell(&ctx.settings), command: command.clone(), cwd: cwd.clone(), timeout_secs: timeout, env: Default::default() };
         let background = arg_bool(&input, &["is_background", "background"]).unwrap_or(false);
         if background {
+            if remote { return Ok(ToolOutput::error(format!("Background commands are not available in the {} sandbox: a detached process cannot be tracked or stopped through Warren's exec API. Run it in the foreground with a timeout, or ask the user to start it from the instance terminal.", executor.describe()))); }
             let log_dir = crate::paths::sub_dir("logs").join("bg"); let _ = std::fs::create_dir_all(&log_dir);
             let log = log_dir.join(format!("{}-{}.log", chrono::Local::now().format("%Y%m%d-%H%M%S"), &ctx.tool_call_id.chars().take(8).collect::<String>()));
-            let f = std::fs::File::create(&log)?; let f2 = f.try_clone()?;
-            let mut cmd = tokio::process::Command::new(&shell);
-            cmd.arg("-lc").arg(&command).current_dir(&cwd).env("CARET", "1");
-            if let Some(p) = &sandbox { cmd = crate::sandbox::wrap_with(cmd, p, wrap_opts); }
-            cmd.stdin(Stdio::null()).stdout(Stdio::from(f)).stderr(Stdio::from(f2));
-            #[cfg(unix)] { cmd.process_group(0); }
-            let child = cmd.spawn().map_err(|e| CaretError::io(format!("failed to start: {e}")))?;
-            let pid = child.id().unwrap_or(0);
-            tokio::spawn(async move { let mut c = child; let _ = c.wait().await; });
+            let pid = executor.spawn_background(&spec, &log).await?;
             tokio::time::sleep(std::time::Duration::from_millis(1200)).await;
             let head = std::fs::read_to_string(&log).unwrap_or_default();
             let (head, _) = cap_output(&head, 2000);
             return Ok(ToolOutput { text: format!("Started in background (pid {pid}){}.\nLog file: {}\nInitial output:\n{}\n\nUse `tail -n 80 {}` to check progress; `kill {pid}` to stop.", if sandboxed { " [sandboxed]" } else { "" }, log.display(), if head.trim().is_empty() { "(none yet)" } else { head.trim() }, log.display()), command: Some(command.clone()), is_background: true, sandboxed, ..Default::default() }.with_summary(format!("Background: {}", command.chars().take(60).collect::<String>())));
         }
-        let timeout = arg_u64(&input, &["timeout_secs", "timeout"]).unwrap_or(ctx.settings.agent.command_timeout_secs.max(5)).min(900);
-        let res = run_shell_with(&shell, &command, &cwd, timeout, &ctx.cancel, sandbox.as_ref(), wrap_opts).await?;
+        if remote { sandbox_binding::set_binding_status(&ctx.manager, &ctx.session_id, "running", None); }
+        let res = match executor.run(&spec, &ctx.cancel).await {
+            Ok(r) => r,
+            Err(e) => { if remote { sandbox_binding::set_binding_status(&ctx.manager, &ctx.session_id, "error", Some(e.message.clone())); } return Err(e); }
+        };
         let (text, truncated) = cap_output(&res.output, ctx.max_output());
         let mut status = if res.cancelled { "Cancelled by user".to_string() } else if res.timed_out { format!("Timed out after {timeout}s (process killed). If this is a long-running server, rerun with is_background=true.") } else { format!("Exit code: {}", res.code.map(|c| c.to_string()).unwrap_or_else(|| "signal".into())) };
-        if sandboxed && res.code.map(|c| c != 0).unwrap_or(false) && looks_like_sandbox_denial(&res.output) { status.push_str("\nNote: the command ran inside Caret's sandbox (writes limited to the workspace/temp, credentials unreadable). If this denial is expected, ask the user to add the path under Settings → Agent → Sandbox → extra writable paths."); }
-        else if sandboxed { status.push_str(" [sandboxed]"); }
+        if !remote && sandboxed && res.code.map(|c| c != 0).unwrap_or(false) && looks_like_sandbox_denial(&res.output) { status.push_str("\nNote: the command ran inside Caret's sandbox (writes limited to the workspace/temp, credentials unreadable). If this denial is expected, ask the user to add the path under Settings → Agent → Sandbox → extra writable paths."); }
+        else if !remote && sandboxed { status.push_str(" [sandboxed]"); }
+        // Remote run: files the command created/changed come back as pending changes; the card says where it ran.
+        let mut file_changes = vec![];
+        let mut tail = String::new();
+        if remote {
+            let sync = executor.take_remote_sync();
+            let pushed = sync.pushed_files;
+            let (applied, err) = match sandbox_binding::apply_pulled(ctx, sync).await { Ok(a) => (Some(a), None), Err(e) => (None, Some(e.message)) };
+            if let Some(a) = &applied { file_changes = a.changes.clone(); if let Some(d) = sandbox_binding::describe_pull(a) { tail.push_str("\n"); tail.push_str(&d); } }
+            if let Some(e) = &err { tail.push_str(&format!("\n[warren] applying the files the command changed failed: {e}")); }
+            sandbox_binding::record_run(&ctx.manager, &ctx.session_id, pushed, err);
+            tail.push_str(&format!("\n[{}]", executor.describe()));
+        }
         let body = if text.trim().is_empty() { "(no output)".to_string() } else { text };
         let is_error = res.timed_out || res.cancelled || res.code.map(|c| c != 0).unwrap_or(true);
-        Ok(ToolOutput { text: format!("$ {command}\n{body}\n\n{status}{}", if truncated { " (output truncated)" } else { "" }), command: Some(command.clone()), exit_code: res.code, is_error, sandboxed, ..Default::default() }.with_summary(format!("{} → {}", command.chars().take(50).collect::<String>(), if res.timed_out { "timeout".into() } else { res.code.map(|c| format!("exit {c}")).unwrap_or_else(|| "killed".into()) })))
+        Ok(ToolOutput { text: format!("$ {command}\n{body}\n\n{status}{}{tail}", if truncated { " (output truncated)" } else { "" }), command: Some(command.clone()), exit_code: res.code, is_error, sandboxed, executor: if remote { Some(executor.describe()) } else { None }, file_changes, ..Default::default() }.with_summary(format!("{} → {}", command.chars().take(50).collect::<String>(), if res.timed_out { "timeout".into() } else { res.code.map(|c| format!("exit {c}")).unwrap_or_else(|| "killed".into()) })))
     }
 }
 

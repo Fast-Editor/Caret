@@ -7,6 +7,9 @@
 //! the cache (`init`), and a new key misses it on its own because the key is part of the fingerprint.
 pub mod client;
 pub mod commands;
+pub mod adapter;
+pub mod executor;
+pub mod binding;
 pub mod sync;
 pub mod types;
 

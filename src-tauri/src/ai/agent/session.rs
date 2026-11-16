@@ -217,6 +217,8 @@ pub struct ToolCallRecord {
     #[serde(default, skip_serializing_if = "Option::is_none")] pub classification: Option<crate::sandbox::CommandClassification>,
     #[serde(default, skip_serializing_if = "Option::is_none")] pub locations: Option<Vec<ToolLocation>>,
     #[serde(default, skip_serializing_if = "Option::is_none")] pub raw_kind: Option<String>,
+    /// Executor a command ran on when not the local shell, e.g. `warren <instanceId>` (docs/WARREN.md).
+    #[serde(default, skip_serializing_if = "Option::is_none")] pub executor: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -224,7 +226,7 @@ pub struct ToolCallRecord {
 pub struct ToolLocation { pub path: String, #[serde(default, skip_serializing_if = "Option::is_none")] pub line: Option<u32> }
 impl ToolCallRecord {
     pub fn new(id: &str, name: &str, display_name: &str) -> Self {
-        Self { id: id.into(), name: name.into(), display_name: display_name.into(), input: Value::Null, input_text: None, status: ToolStatus::Pending, output: None, output_truncated: None, error: None, started_at: Some(now_ms()), finished_at: None, file_changes: None, mcp_server_id: None, command: None, cwd: None, exit_code: None, is_background: None, diff: None, approval: None, subagent_session_id: None, summary: None, sandboxed: None, classification: None, locations: None, raw_kind: None }
+        Self { id: id.into(), name: name.into(), display_name: display_name.into(), input: Value::Null, input_text: None, status: ToolStatus::Pending, output: None, output_truncated: None, error: None, started_at: Some(now_ms()), finished_at: None, file_changes: None, mcp_server_id: None, command: None, cwd: None, exit_code: None, is_background: None, diff: None, approval: None, subagent_session_id: None, summary: None, sandboxed: None, classification: None, locations: None, raw_kind: None, executor: None }
     }
 }
 
@@ -387,6 +389,8 @@ pub struct SessionSummary {
     /// Shared id of a multi-model fan-out batch (sessions created together by `chat_fan_out`).
     #[serde(default, skip_serializing_if = "Option::is_none")] pub fan_out_group: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")] pub scratch: Option<bool>,
+    /// Remote sandbox the thread's commands run in (docs/WARREN.md); unset = local shell.
+    #[serde(default, skip_serializing_if = "Option::is_none")] pub sandbox: Option<crate::warren::adapter::SandboxBinding>,
 }
 
 /// One hit from `chat_search_messages` (= TS `MessageSearchHit`).
@@ -430,6 +434,8 @@ pub struct ChatSessionView {
     #[serde(default, skip_serializing_if = "Option::is_none")] pub permission_mode: Option<crate::ai::agent::policy::PermissionMode>,
     /// Scratch thread living in `~/.caret/scratch/<id>` until promoted to a project.
     #[serde(default, skip_serializing_if = "Option::is_none")] pub scratch: Option<bool>,
+    /// Remote sandbox the thread's commands run in (docs/WARREN.md); unset = local shell.
+    #[serde(default, skip_serializing_if = "Option::is_none")] pub sandbox: Option<crate::warren::adapter::SandboxBinding>,
 }
 
 /// Full in-memory + on-disk session (transcript included).
@@ -488,10 +494,13 @@ pub struct Session {
     #[serde(default)] pub scratch: bool,
     /// Commit the agent worktree was created from (lets cleanup tell "no commits" from "merged").
     #[serde(default)] pub worktree_base: Option<String>,
+    /// Remote sandbox bound to this thread (docs/WARREN.md): `run_terminal_cmd` runs in that Warren instance on a
+    /// synced copy of the workspace. `None` = the local shell. Sessions saved before the field load as `None`.
+    #[serde(default)] pub sandbox: Option<crate::warren::adapter::SandboxBinding>,
 }
 impl Default for Session {
     fn default() -> Self {
-        Self { id: new_id(), title: "New chat".into(), workspace_root: String::new(), cwd: String::new(), created_at: now_ms(), updated_at: now_ms(), mode: "agent".into(), model_id: None, messages: vec![], transcript: vec![], transcript_model: None, todos: vec![], usage: Usage::default(), changes: vec![], checkpoints: vec![], worktree_path: None, branch: None, status: SessionStatus::Idle, queued: vec![], summary: None, parent_session_id: None, is_subagent: false, pinned: false, archived: false, title_generated: false, session_allow: vec![], transcript_marks: vec![], current_turn: None, context_tokens: 0, agent_id: None, last_verification_id: None, review_comments: vec![], snoozed_until: None, settled: false, archived_at: None, pinned_at: None, fork_of_message_id: None, fan_out_group: None, permission_mode: None, scratch: false, worktree_base: None }
+        Self { id: new_id(), title: "New chat".into(), workspace_root: String::new(), cwd: String::new(), created_at: now_ms(), updated_at: now_ms(), mode: "agent".into(), model_id: None, messages: vec![], transcript: vec![], transcript_model: None, todos: vec![], usage: Usage::default(), changes: vec![], checkpoints: vec![], worktree_path: None, branch: None, status: SessionStatus::Idle, queued: vec![], summary: None, parent_session_id: None, is_subagent: false, pinned: false, archived: false, title_generated: false, session_allow: vec![], transcript_marks: vec![], current_turn: None, context_tokens: 0, agent_id: None, last_verification_id: None, review_comments: vec![], snoozed_until: None, settled: false, archived_at: None, pinned_at: None, fork_of_message_id: None, fan_out_group: None, permission_mode: None, scratch: false, worktree_base: None, sandbox: None }
     }
 }
 impl Session {
@@ -500,11 +509,11 @@ impl Session {
     pub fn pending_summaries(&self) -> Vec<FileChangeSummary> { self.changes.iter().filter(|c| c.status == ChangeStatus::Pending).map(|c| c.summary()).collect() }
     pub fn touch(&mut self) { self.updated_at = now_ms(); }
     pub fn view(&self) -> ChatSessionView {
-        ChatSessionView { id: self.id.clone(), title: self.title.clone(), workspace_root: self.workspace_root.clone(), created_at: self.created_at, updated_at: self.updated_at, mode: self.mode.clone(), model_id: self.model_id.clone(), messages: self.messages.clone(), todos: self.todos.clone(), usage: self.usage.clone(), pending_changes: self.pending_summaries(), worktree_path: self.worktree_path.clone(), branch: self.branch.clone(), status: self.status, queued_messages: self.queued.clone(), summary: self.summary.clone(), parent_session_id: self.parent_session_id.clone(), is_subagent: if self.is_subagent { Some(true) } else { None }, context_tokens: self.context_tokens, pinned: if self.pinned { Some(true) } else { None }, archived: if self.archived { Some(true) } else { None }, checkpoints: self.checkpoints.clone(), agent_id: self.agent_id.clone(), agent_kind: self.agent_id.as_deref().map(|a| if a == "caret" { "caret".to_string() } else { "acp".to_string() }), last_verification_id: self.last_verification_id.clone(), review_comments: if self.review_comments.is_empty() { None } else { Some(self.review_comments.clone()) }, snoozed_until: self.snoozed_until, settled: self.settled, archived_at: self.archived_at, pinned_at: self.pinned_at, fork_of_message_id: self.fork_of_message_id.clone(), fan_out_group: self.fan_out_group.clone(), permission_mode: self.permission_mode, scratch: if self.scratch { Some(true) } else { None } }
+        ChatSessionView { id: self.id.clone(), title: self.title.clone(), workspace_root: self.workspace_root.clone(), created_at: self.created_at, updated_at: self.updated_at, mode: self.mode.clone(), model_id: self.model_id.clone(), messages: self.messages.clone(), todos: self.todos.clone(), usage: self.usage.clone(), pending_changes: self.pending_summaries(), worktree_path: self.worktree_path.clone(), branch: self.branch.clone(), status: self.status, queued_messages: self.queued.clone(), summary: self.summary.clone(), parent_session_id: self.parent_session_id.clone(), is_subagent: if self.is_subagent { Some(true) } else { None }, context_tokens: self.context_tokens, pinned: if self.pinned { Some(true) } else { None }, archived: if self.archived { Some(true) } else { None }, checkpoints: self.checkpoints.clone(), agent_id: self.agent_id.clone(), agent_kind: self.agent_id.as_deref().map(|a| if a == "caret" { "caret".to_string() } else { "acp".to_string() }), last_verification_id: self.last_verification_id.clone(), review_comments: if self.review_comments.is_empty() { None } else { Some(self.review_comments.clone()) }, snoozed_until: self.snoozed_until, settled: self.settled, archived_at: self.archived_at, pinned_at: self.pinned_at, fork_of_message_id: self.fork_of_message_id.clone(), fan_out_group: self.fan_out_group.clone(), permission_mode: self.permission_mode, scratch: if self.scratch { Some(true) } else { None }, sandbox: self.sandbox.clone() }
     }
     pub fn summary_view(&self) -> SessionSummary {
         let last = self.messages.iter().rev().find(|m| matches!(m.role, MessageRole::User | MessageRole::Assistant)).map(|m| m.preview(120)).unwrap_or_default();
-        SessionSummary { id: self.id.clone(), title: self.title.clone(), workspace_root: self.workspace_root.clone(), created_at: self.created_at, updated_at: self.updated_at, mode: self.mode.clone(), status: self.status, message_count: self.messages.len(), last_message_preview: last, worktree_path: self.worktree_path.clone(), is_subagent: if self.is_subagent { Some(true) } else { None }, pending_change_count: self.changes.iter().filter(|c| c.status == ChangeStatus::Pending).count(), pinned: if self.pinned { Some(true) } else { None }, archived: if self.archived { Some(true) } else { None }, model_id: self.model_id.clone(), parent_session_id: self.parent_session_id.clone(), agent_id: self.agent_id.clone(), risk_tier: None, snoozed_until: self.snoozed_until, settled: self.settled, archived_at: self.archived_at, pinned_at: self.pinned_at, fan_out_group: self.fan_out_group.clone(), scratch: if self.scratch { Some(true) } else { None } }
+        SessionSummary { id: self.id.clone(), title: self.title.clone(), workspace_root: self.workspace_root.clone(), created_at: self.created_at, updated_at: self.updated_at, mode: self.mode.clone(), status: self.status, message_count: self.messages.len(), last_message_preview: last, worktree_path: self.worktree_path.clone(), is_subagent: if self.is_subagent { Some(true) } else { None }, pending_change_count: self.changes.iter().filter(|c| c.status == ChangeStatus::Pending).count(), pinned: if self.pinned { Some(true) } else { None }, archived: if self.archived { Some(true) } else { None }, model_id: self.model_id.clone(), parent_session_id: self.parent_session_id.clone(), agent_id: self.agent_id.clone(), risk_tier: None, snoozed_until: self.snoozed_until, settled: self.settled, archived_at: self.archived_at, pinned_at: self.pinned_at, fan_out_group: self.fan_out_group.clone(), scratch: if self.scratch { Some(true) } else { None }, sandbox: self.sandbox.clone() }
     }
     /// Rough token estimate of the transcript (text + ~1500 per image).
     pub fn estimate_context_tokens(&self) -> u64 {

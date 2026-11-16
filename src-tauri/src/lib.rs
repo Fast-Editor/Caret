@@ -180,6 +180,7 @@ pub fn run() {
             remote::remote_status, remote::remote_pairing_code, remote::remote_revoke_device, remote::remote_executor_secret, remote::remote_is_serving, remote::remote_set_enabled, remote::remote_restart,
             // REGISTER:commands:warren
             warren::commands::warren_status, warren::commands::warren_set_key, warren::commands::warren_list_instances, warren::commands::warren_get_instance, warren::commands::warren_create_instance, warren::commands::warren_instance_action, warren::commands::warren_exec, warren::commands::warren_terminal_url, warren::commands::warren_logs,
+            warren::binding::warren_bind_thread, warren::binding::warren_unbind_thread, warren::binding::warren_sync,
         ])
         .build(tauri::generate_context!())
         .expect("error while building Caret")

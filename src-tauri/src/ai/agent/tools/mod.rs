@@ -15,6 +15,7 @@ use crate::ai::agent::session::{FileChangeSummary, ToolCatalogEntry};
 use crate::ai::llm::ToolDef;
 use crate::core::settings::Settings;
 use crate::error::Result;
+use crate::warren::executor::CommandExecutor;
 use serde_json::{json, Value};
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -34,6 +35,8 @@ pub struct ToolContext {
     pub settings: Arc<Settings>,
     pub cancel: CancellationToken,
     pub mode: Arc<ModeSpec>,
+    /// Where `run_terminal_cmd` runs this turn: the local shell, or the thread's Warren sandbox (docs/WARREN.md).
+    pub executor: Arc<dyn CommandExecutor>,
 }
 impl ToolContext {
     /// Resolve a model-supplied path against the session cwd (absolute paths pass through).
@@ -59,8 +62,10 @@ pub struct ToolOutput {
     pub subagent_session_id: Option<String>,
     pub diff: Option<String>,
     pub is_background: bool,
-    /// The command ran under the OS sandbox.
+    /// The command could not touch the user's machine: OS sandbox, or a remote executor.
     pub sandboxed: bool,
+    /// Executor a command ran on when not the local shell (`warren <instanceId>`); shown on the tool card.
+    pub executor: Option<String>,
 }
 impl ToolOutput {
     pub fn text(t: impl Into<String>) -> Self { Self { text: t.into(), ..Default::default() } }
