@@ -3,7 +3,7 @@
  * Rendered by the shell inside an editor tab: <SettingsPage page="models" query="font" />
  */
 import { useEffect, useMemo, useState } from 'react'
-import { Search, Settings as SettingsIcon, Brain, Zap, Bot, FileText, Database, Layers, Server, Webhook, Palette, FlaskConical, Keyboard, Info, ExternalLink, ChartColumn, Radio } from 'lucide-react'
+import { Search, Settings as SettingsIcon, Brain, Zap, Bot, FileText, Database, Layers, Server, Webhook, Palette, FlaskConical, Keyboard, Info, ExternalLink, ChartColumn, Radio, Cloud } from 'lucide-react'
 import { SETTINGS_PAGES, searchFields, type SettingsPageId } from '@/lib/settingsSchema'
 import { initSettingsStore, useSettings } from '@/store/settings'
 import { initWorkspaceStore, useWorkspace } from '@/store/workspace'
@@ -28,13 +28,14 @@ import { KeybindingsPage } from './pages/Keybindings'
 import { AboutPage } from './pages/About'
 import { UsagePage } from './pages/Usage'
 import { RemotePage } from './pages/Remote'
+import { SandboxesPage } from './pages/Sandboxes'
 
 const ICONS: Record<string, React.ComponentType<{ size?: number; className?: string }>> = {
   settings: SettingsIcon, brain: Brain, zap: Zap, bot: Bot, 'file-text': FileText, database: Database, layers: Layers, server: Server, webhook: Webhook, palette: Palette, flask: FlaskConical, keyboard: Keyboard, info: Info, chart: ChartColumn,
-  radio: Radio,
+  radio: Radio, cloud: Cloud,
 }
 
-const PAGE_ALIASES: Record<string, SettingsPageId> = { model: 'models', providers: 'models', apikeys: 'models', autocomplete: 'tab', agents: 'agent', mcp: 'mcp', index: 'indexing', docs: 'indexing', theme: 'appearance', editor: 'appearance', shortcuts: 'keybindings', keyboard: 'keybindings', cost: 'usage', costs: 'usage', tokens: 'usage', billing: 'usage', serve: 'remote', lan: 'remote', tailscale: 'remote', browser: 'remote' }
+const PAGE_ALIASES: Record<string, SettingsPageId> = { model: 'models', providers: 'models', apikeys: 'models', autocomplete: 'tab', agents: 'agent', mcp: 'mcp', index: 'indexing', docs: 'indexing', theme: 'appearance', editor: 'appearance', shortcuts: 'keybindings', keyboard: 'keybindings', cost: 'usage', costs: 'usage', tokens: 'usage', billing: 'usage', serve: 'remote', lan: 'remote', tailscale: 'remote', browser: 'remote', warren: 'sandboxes', sandbox: 'sandboxes' }
 
 export function SettingsPage({ page, query }: { page?: string; query?: string }) {
   const [active, setActive] = useState<SettingsPageId>(() => resolvePage(page))
@@ -148,6 +149,7 @@ function PageBody({ page }: { page: SettingsPageId }) {
     case 'hooks': return <HooksPage />
     case 'appearance': return <AppearancePage />
     case 'remote': return <RemotePage />
+    case 'sandboxes': return <SandboxesPage />
     case 'beta': return <BetaPage />
     case 'keybindings': return <KeybindingsPage />
     case 'about': return <AboutPage />

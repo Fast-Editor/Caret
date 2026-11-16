@@ -5,7 +5,7 @@
 import type { Settings, DeepPartial } from '@/types'
 
 export type SettingsPageId =
-  | 'general' | 'models' | 'tab' | 'agent' | 'agents' | 'rules' | 'memories' | 'indexing' | 'mcp' | 'hooks' | 'appearance' | 'beta' | 'keybindings' | 'about' | 'usage' | 'remote'
+  | 'general' | 'models' | 'tab' | 'agent' | 'agents' | 'rules' | 'memories' | 'indexing' | 'mcp' | 'hooks' | 'appearance' | 'beta' | 'keybindings' | 'about' | 'usage' | 'remote' | 'sandboxes'
 
 export interface SettingsPageMeta { id: SettingsPageId; title: string; icon: string; description: string }
 
@@ -23,6 +23,7 @@ export const SETTINGS_PAGES: SettingsPageMeta[] = [
   { id: 'usage', title: 'Usage', icon: 'chart', description: 'Tokens, cost and subscription windows across Caret and your external agents' },
   { id: 'appearance', title: 'Appearance & Editor', icon: 'palette', description: 'Theme, fonts and editor behaviour' },
   { id: 'remote', title: 'Remote', icon: 'radio', description: 'Use Caret from a browser on your LAN or over Tailscale' },
+  { id: 'sandboxes', title: 'Sandboxes', icon: 'cloud', description: 'Run agent commands in Warren cloud instances instead of on this Mac' },
   { id: 'beta', title: 'Beta', icon: 'flask', description: 'Experimental features' },
   { id: 'keybindings', title: 'Keybindings', icon: 'keyboard', description: 'Keyboard shortcuts' },
   { id: 'about', title: 'About', icon: 'info', description: 'Version, diagnostics and config folder' },
@@ -275,6 +276,20 @@ export const SETTINGS_FIELDS: SettingField[] = [
   // remote access (`caret serve`)
   { id: 'remote.host', page: 'remote', type: 'select', title: 'Bind address', description: '127.0.0.1 serves this Mac only (pair through an SSH tunnel); 0.0.0.0 serves every interface: LAN and Tailscale.', group: 'Server', keywords: ['serve', 'lan', 'tailscale', 'host', 'bind', 'browser'], options: [{ value: '127.0.0.1', label: '127.0.0.1 (this Mac only)' }, { value: '0.0.0.0', label: '0.0.0.0 (LAN and Tailscale)' }] },
   { id: 'remote.port', page: 'remote', type: 'number', title: 'Port', description: 'TCP port for the HTTP and WebSocket server. Restart the server after changing it.', group: 'Server', min: 1024, max: 65535, step: 1, keywords: ['serve', 'remote', 'port'] },
+  // ── Sandboxes (Warren, docs/WARREN.md; rendered by settings/pages/Sandboxes.tsx) ──
+  { id: 'warren.enabled', page: 'sandboxes', type: 'boolean', title: 'Enable Warren sandboxes', description: 'Lets threads run their commands in a Warren instance (composer Sandbox picker) and shows the instance view below.', group: 'Connection', keywords: ['warren', 'sandbox', 'remote', 'cloud', 'executor'] },
+  { id: 'warren.apiUrl', page: 'sandboxes', type: 'string', title: 'API URL', description: "Warren's Sandbox API base, e.g. http://api.warren.localhost:7337/v1.", group: 'Connection', placeholder: 'http://api.warren.localhost:7337/v1', keywords: ['warren', 'url', 'endpoint'] },
+  { id: 'warren.connectVia', page: 'sandboxes', type: 'string', title: 'Connect via', description: 'host:port to open TCP connections to instead of the URL host, keeping the logical Host header. For an SSH tunnel: 127.0.0.1:7337. Empty connects directly.', group: 'Connection', placeholder: '127.0.0.1:7337', optional: true, keywords: ['warren', 'ssh', 'tunnel', 'proxy'] },
+  { id: 'warren.template', page: 'sandboxes', type: 'string', title: 'Template', description: 'Image for new instances (warren-base ships a shell, git and common toolchains).', group: 'Defaults for new instances', placeholder: 'warren-base', keywords: ['warren', 'image'] },
+  { id: 'warren.shape.cpu', page: 'sandboxes', type: 'number', title: 'vCPUs', group: 'Defaults for new instances', min: 1, max: 16, step: 1, unit: 'vCPU', keywords: ['warren', 'shape', 'cpu'] },
+  { id: 'warren.shape.memory', page: 'sandboxes', type: 'number', title: 'Memory', group: 'Defaults for new instances', min: 1, max: 64, step: 1, unit: 'GB', keywords: ['warren', 'shape', 'ram'] },
+  { id: 'warren.shape.disk', page: 'sandboxes', type: 'number', title: 'Disk', description: 'Disk can only grow later.', group: 'Defaults for new instances', min: 1, max: 100, step: 1, unit: 'GB', keywords: ['warren', 'shape', 'storage'] },
+  { id: 'warren.autoSleep', page: 'sandboxes', type: 'boolean', title: 'Sleep when idle', description: 'New instances sleep after the idle timeout; the first command after that wakes them (a few seconds).', group: 'Defaults for new instances', keywords: ['warren', 'idle', 'auto sleep'] },
+  { id: 'warren.idleTimeoutSeconds', page: 'sandboxes', type: 'number', title: 'Idle timeout', description: 'Seconds without activity before an instance sleeps (Warren allows 300 to 86,400; 5 in dev mode).', group: 'Defaults for new instances', min: 5, max: 86400, step: 60, unit: 's', dependsOn: 'warren.autoSleep', keywords: ['warren', 'idle', 'timeout'] },
+  { id: 'warren.remoteRoot', page: 'sandboxes', type: 'string', title: 'Remote root', description: 'Parent of synced workspaces inside an instance; a thread works in <remote root>/<folder name>.', group: 'Defaults for new instances', placeholder: '/home/agent/work', keywords: ['warren', 'path', 'sync'] },
+  { id: 'warren.syncExcludes', page: 'sandboxes', type: 'stringList', title: 'Sync excludes', description: 'Directory names never pushed or pulled, on top of .gitignore. .git is pushed so git works remotely, but never pulled back.', group: 'Defaults for new instances', keywords: ['warren', 'sync', 'ignore', 'exclude'] },
+  { id: 'warren.autoApproveCommands', page: 'sandboxes', type: 'boolean', title: 'Auto-approve sandboxed commands', description: "Commands that run in an instance skip Caret's destructive-command prompt; the denylist still blocks.", group: 'Defaults for new instances', keywords: ['warren', 'approve', 'permission', 'destructive'] },
+  { id: 'warren.defaultForNewThreads', page: 'sandboxes', type: 'boolean', title: 'Default for new threads', description: 'New threads start bound to a fresh Warren instance instead of running commands on this Mac.', group: 'Defaults for new instances', dependsOn: 'warren.enabled', keywords: ['warren', 'default', 'thread'] },
 ]
 
 export function getPath(obj: unknown, path: string): unknown {
