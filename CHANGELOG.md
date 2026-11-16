@@ -4,25 +4,22 @@ All notable changes to Caret. The version here must match `package.json`, `src-t
 
 ## Unreleased
 
-- Warren sandboxes, backend: `warren.*` settings (API URL, key in `secrets.json`, `connectVia` for SSH tunnels,
-  instance defaults, `remoteRoot`, `syncExcludes`), a Rust client for Warren's Sandbox API and the per-instance files
-  API (tunnel-aware: every request keeps the logical `Host`), gitignore-aware workspace sync that pushes changed files
-  as one tarball and pulls back what a command created or changed, and the `warren_status`, `warren_set_key`,
+- Warren sandboxes: agent commands can run in a persistent Linux computer instead of on this Mac. Warren
+  (https://github.com/veerareddyvishal144/warren) gives every thread a gVisor instance with a shell, a home directory
+  that survives sleep, and exec/files APIs behind one key. Settings → Sandboxes configures the connection (API URL, key
+  in `secrets.json`, a connect-via address for SSH tunnels, Test connection), the defaults for new instances, and lists
+  every instance with start / stop / sleep / restart / delete, Open terminal (signed ttyd URL in a Caret browser tab)
+  and a Run-a-command box. The composer's Sandbox picker binds a thread to a new or existing instance; from then on
+  `run_terminal_cmd` pushes the workspace files that changed (gitignore-aware, `warren.syncExcludes`), runs the command
+  in the synced copy under `warren.remoteRoot/<folder>`, and pulls back what the command created, changed or deleted
+  as pending changes, so the review list stays the source of truth while installs, builds and `rm -rf` never touch
+  this machine. Sandboxed commands skip the destructive-command prompt (`warren.autoApproveCommands`; the denylist still
+  blocks) and tool cards show `[warren <id>]`. New settings section `warren`, commands `warren_status`, `warren_set_key`,
   `warren_list_instances`, `warren_get_instance`, `warren_create_instance`, `warren_instance_action`, `warren_exec`,
-  `warren_terminal_url`, `warren_logs` commands (`caret://warren/changed` when the instance list changes). See
-  docs/WARREN.md.
-- Warren sandboxes, thread side (docs/WARREN.md): `run_terminal_cmd` now runs through a per-turn command executor —
-  the local shell as before, or the thread's Warren instance once a thread is bound (`warren_bind_thread`,
-  `warren_unbind_thread`, `warren_sync`). In a sandbox the workspace is pushed first, the command runs in the synced
-  copy, files it created or changed come back as pending changes, the tool card shows `[warren <id>]`, and the
-  approval prompt is skipped (`warren.autoApproveCommands`; the denylist and safety policy still block).
-- Warren sandboxes (frontend). Settings → Sandboxes configures the Warren connection (API URL, connect-via for SSH
-  tunnels, API key stored in secrets.json, Test connection), the defaults for new instances, and shows every instance
-  in the workspace with start / stop / sleep / restart / delete, Open terminal and a Run-a-command box (live: 5 s poll
-  plus `caret://warren/changed`). The composer gains a Sandbox picker (Local or Warren, new or existing instance) with
-  sync, terminal and unbind actions for a bound thread, also reachable through the palette command "Sandbox: Choose
-  where commands run…"; tool cards show `[warren <id>]` where a command ran. `api.warren.*` wraps the `warren_*`
-  commands; pure helpers in `src/lib/warren.ts`. See docs/WARREN.md.
+  `warren_terminal_url`, `warren_logs`, `warren_bind_thread`, `warren_unbind_thread`, `warren_sync`, event
+  `caret://warren/changed`, palette command "Sandbox: Choose where commands run…". Verified end to end against a Warren
+  development daemon: bind in 1.3 s, 44-file push, command in the instance, pulled file and deletion shown as pending
+  changes. See docs/WARREN.md.
 - Fixed: editing a message in a Claude Code (or any external agent) thread resent it through Caret's built-in agent with
   the default model instead of the thread's agent. Edited messages now take the same route as new ones and keep the
   thread's model.

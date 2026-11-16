@@ -1,11 +1,11 @@
 # Warren sandboxes
 
-Status: in progress (2026-11-16). Warren (https://github.com/veerareddyvishal144/warren) gives every agent thread a
-persistent Linux computer: a gVisor container (or microVM) with a shell, a home directory that survives sleep, exec and
-files APIs behind one API key. Caret uses it as a **remote command executor**: the files you edit stay on your Mac and
-go through the usual pending-changes review, but the commands the agent runs (installs, builds, tests, scripts,
-`rm -rf`) run inside the thread's Warren instance on a synced copy of the workspace. That is how "full access" can be
-safe: nothing the agent runs touches the machine Caret is on.
+Status: shipped 2026-11-16. Verified end to end in the dev build against the Warren development daemon (Azure VM
+`azvm`, SSH tunnel): a thread on `~/caret-demo` bound to a fresh instance in 1.3 s; the first `run_terminal_cmd`
+pushed 44 files, ran `uname -a && … > sandbox-note.txt` inside the gVisor instance as user `agent` in
+`/home/agent/work/caret-demo`, and pulled `sandbox-note.txt` back as a pending change; `rm -rf tests` ran without an
+approval prompt and came back as a pending deletion; manual push/pull, the signed terminal URL, instance logs, the
+Sandboxes page and the composer picker all worked; unbind-and-delete removed the instance.
 
 ## Behaviour
 
