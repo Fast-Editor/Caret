@@ -172,6 +172,26 @@ fn inside(root: &Path, p: &Path) -> bool { crate::paths::normalize(p).starts_wit
 
 pub struct PolicyInput<'a> { pub settings: &'a Settings, pub session: &'a Session, pub tool_name: &'a str, pub mode_auto_run: Option<bool> }
 
+/// Verdict of `shell_gate`.
+#[derive(Debug, Clone, PartialEq)]
+pub enum ShellGate { Allow, Ask, Block(String) }
+
+/// Executor-aware gate for a shell command (docs/WARREN.md), layered over `decide`: `Block` when the denylist or the
+/// safety classifier blocks it — that holds on every executor; `Allow` when the command runs in a remote sandbox
+/// (`executor_kind == "warren"`) and `warren.autoApproveCommands` is on, so `decide`'s Ask is skipped; `Ask`
+/// otherwise, meaning "keep `decide`'s mode-based verdict". Non-shell effects always defer.
+pub fn shell_gate(effect: &ToolEffect, executor_kind: &str, settings: &Settings) -> ShellGate {
+    let ToolEffect::Shell(cmd) = effect else { return ShellGate::Ask };
+    if let Some(d) = matches_denylist(cmd, &settings.agent.command_denylist) { return ShellGate::Block(format!("Command blocked by denylist entry `{d}`")); }
+    let class = crate::sandbox::classify(cmd, &settings.agent.command_allowlist, &settings.agent.command_denylist);
+    if class.blocked {
+        let why = if class.reasons.is_empty() { class.labels.join(", ") } else { class.reasons.join("; ") };
+        return ShellGate::Block(format!("Command blocked by safety policy [{}]: {why}", class.labels.join(", ")));
+    }
+    if executor_kind == "warren" && settings.warren.auto_approve_commands { return ShellGate::Allow; }
+    ShellGate::Ask
+}
+
 pub fn resolve_path(session: &Session, p: &str) -> PathBuf { crate::paths::resolve(Some(&session.cwd_path()), p) }
 
 pub fn decide(input: &PolicyInput, effect: &ToolEffect) -> Decision {
@@ -496,5 +516,26 @@ mod tests {
         let input = PolicyInput { settings: &st, session: &sess, tool_name: "run_terminal_cmd", mode_auto_run: Some(false) };
         assert!(is_ask(&decide(&input, &ToolEffect::Shell("ls".into()))));
         assert!(is_ask(&decide(&input, &ToolEffect::FileEdit(vec!["src/main.rs".into()]))));
+    }
+
+    // ───────── sandbox executors (docs/WARREN.md) ─────────
+    #[test]
+    fn shell_gate_skips_ask_in_warren_and_keeps_block_everywhere() {
+        let st = Settings::default(); // warren.autoApproveCommands defaults to true
+        let sh = |c: &str| ToolEffect::Shell(c.into());
+        // remote sandbox: safe, caution and destructive commands all run without asking
+        for c in ["ls", "npm install left-pad", "rm -rf dist", "git push origin main"] { assert_eq!(shell_gate(&sh(c), "warren", &st), ShellGate::Allow, "{c}"); }
+        // local: the gate defers to decide()
+        for c in ["ls", "rm -rf dist"] { assert_eq!(shell_gate(&sh(c), "local", &st), ShellGate::Ask, "{c}"); }
+        // Block holds on every executor: denylist and safety classifier
+        for c in ["sudo ls", "echo hi && sudo rm -rf /", "git push --force origin main"] { assert!(matches!(shell_gate(&sh(c), "warren", &st), ShellGate::Block(ref m) if m.contains("denylist")), "{c}"); }
+        for c in ["rm -rf /", "sh -c 'rm -rf ~'", "echo $(mkfs.ext4 /dev/sda1)"] { assert!(matches!(shell_gate(&sh(c), "warren", &st), ShellGate::Block(_)), "{c}"); assert!(matches!(shell_gate(&sh(c), "local", &st), ShellGate::Block(_)), "{c}"); }
+        // the setting turns auto-approval off
+        let mut st2 = st.clone(); st2.warren.auto_approve_commands = false;
+        assert_eq!(shell_gate(&sh("rm -rf dist"), "warren", &st2), ShellGate::Ask);
+        assert!(matches!(shell_gate(&sh("sudo ls"), "warren", &st2), ShellGate::Block(_)));
+        // non-shell effects are not the gate's business
+        assert_eq!(shell_gate(&ToolEffect::FileEdit(vec!["x".into()]), "warren", &st), ShellGate::Ask);
+        assert_eq!(shell_gate(&ToolEffect::ReadOnly, "warren", &st), ShellGate::Ask);
     }
 }

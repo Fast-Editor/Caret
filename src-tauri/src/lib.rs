@@ -19,6 +19,7 @@ pub mod browser;
 pub mod debug;
 pub mod orchestrator;
 pub mod remote;
+pub mod warren;
 // REGISTER:modules (index, mcp, browser)
 
 #[global_allocator]
@@ -175,6 +176,8 @@ pub fn run() {
             orchestrator::orchestrator_status, orchestrator::orchestrator_rotate_token, orchestrator::orchestrator_snippets,
             // REGISTER:commands:remote
             remote::remote_status, remote::remote_pairing_code, remote::remote_revoke_device, remote::remote_executor_secret, remote::remote_is_serving, remote::remote_set_enabled, remote::remote_restart,
+            // REGISTER:commands:warren
+            warren::binding::warren_bind_thread, warren::binding::warren_unbind_thread, warren::binding::warren_sync,
         ])
         .build(tauri::generate_context!())
         .expect("error while building Caret")

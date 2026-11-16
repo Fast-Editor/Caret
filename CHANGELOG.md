@@ -4,6 +4,11 @@ All notable changes to Caret. The version here must match `package.json`, `src-t
 
 ## Unreleased
 
+- Warren sandboxes, thread side (docs/WARREN.md): `run_terminal_cmd` now runs through a per-turn command executor —
+  the local shell as before, or the thread's Warren instance once a thread is bound (`warren_bind_thread`,
+  `warren_unbind_thread`, `warren_sync`). In a sandbox the workspace is pushed first, the command runs in the synced
+  copy, files it created or changed come back as pending changes, the tool card shows `[warren <id>]`, and the
+  approval prompt is skipped (`warren.autoApproveCommands`; the denylist and safety policy still block).
 - Fixed: editing a message in a Claude Code (or any external agent) thread resent it through Caret's built-in agent with
   the default model instead of the thread's agent. Edited messages now take the same route as new ones and keep the
   thread's model.

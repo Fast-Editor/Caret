@@ -8,6 +8,7 @@ use crate::ai::agent::testutil::{temp_workspace, test_home};
 use crate::ai::agent::tools::{Tool, ToolContext, ToolOutput};
 use crate::core::sessions::{workspace_key, SessionStore};
 use crate::core::settings::Settings;
+use crate::warren::executor::{CmdResult, CommandExecutor, ExecSpec, LocalExecutor, RemoteSync};
 use serde_json::{json, Value};
 use std::sync::Arc;
 use tokio_util::sync::CancellationToken;
@@ -15,8 +16,21 @@ use tokio_util::sync::CancellationToken;
 fn mode_all() -> Arc<ModeSpec> { Arc::new(ModeSpec { id: "agent".into(), name: "Agent".into(), description: String::new(), icon: None, instructions: String::new(), tools: ToolFilter::All, builtin: true, auto_run: None, model_id: None }) }
 
 fn ctx(mgr: &Arc<AgentManager>, h: &SessionHandle, settings: Settings, message_id: &str, call_id: &str) -> ToolContext {
+    ctx_with(mgr, h, settings, message_id, call_id, Arc::new(LocalExecutor::default()))
+}
+fn ctx_with(mgr: &Arc<AgentManager>, h: &SessionHandle, settings: Settings, message_id: &str, call_id: &str, executor: Arc<dyn CommandExecutor>) -> ToolContext {
     let s = h.session.lock();
-    ToolContext { app: None, manager: mgr.clone(), session_id: s.id.clone(), message_id: message_id.into(), tool_call_id: call_id.into(), turn_id: "t1".into(), root: s.root(), cwd: s.cwd_path(), settings: Arc::new(settings), cancel: CancellationToken::new(), mode: mode_all() }
+    ToolContext { app: None, manager: mgr.clone(), session_id: s.id.clone(), message_id: message_id.into(), tool_call_id: call_id.into(), turn_id: "t1".into(), root: s.root(), cwd: s.cwd_path(), settings: Arc::new(settings), cancel: CancellationToken::new(), mode: mode_all(), executor }
+}
+
+/// A remote executor that never runs anything: enough for the approval gate, which only looks at `kind()`.
+struct FakeWarren;
+#[async_trait::async_trait]
+impl CommandExecutor for FakeWarren {
+    async fn run(&self, _spec: &ExecSpec, _cancel: &CancellationToken) -> crate::error::Result<CmdResult> { Ok(CmdResult { output: "remote".into(), code: Some(0), timed_out: false, cancelled: false }) }
+    fn kind(&self) -> &'static str { "warren" }
+    fn describe(&self) -> String { "warren inst_test".into() }
+    fn sandboxed(&self) -> bool { true }
 }
 
 /// Session with a user message + streaming assistant message holding a pending tool record.
@@ -123,6 +137,97 @@ async fn denylisted_command_is_denied_without_prompt() {
     let (_, out) = execute_one(mgr.clone(), h.clone(), c, ToolRun { id: "c1".into(), name: "run_terminal_cmd".into(), input: json!({"command": "sudo rm -rf /"}), tool: Some(Arc::new(EchoShell)) }).await;
     assert!(out.is_error); assert!(out.text.contains("denylist"));
     assert!(!mgr.test_events.lock().iter().any(|e| matches!(e, AgentEvent::ApprovalRequest { .. })));
+}
+
+// ───────── Warren sandbox (docs/WARREN.md) ─────────
+
+#[tokio::test]
+async fn warren_executor_skips_the_approval_prompt_but_denylist_still_blocks() {
+    let ws = temp_workspace();
+    let (mgr, h) = new_mgr(ws.path()).await;
+    // supervised mode would ask for every command locally…
+    let mid = seed(&h, "c1", "run_terminal_cmd");
+    let mut settings = Settings::default(); settings.agent.auto_run = "off".into();
+    let c = ctx_with(&mgr, &h, settings.clone(), &mid, "c1", Arc::new(FakeWarren));
+    let (_, out) = execute_one(mgr.clone(), h.clone(), c, ToolRun { id: "c1".into(), name: "run_terminal_cmd".into(), input: json!({"command": "rm -rf build"}), tool: Some(Arc::new(EchoShell)) }).await;
+    assert!(!out.is_error, "{}", out.text); assert!(out.text.contains("ran"));
+    assert!(!mgr.test_events.lock().iter().any(|e| matches!(e, AgentEvent::ApprovalRequest { .. })), "sandboxed commands skip Ask");
+    assert_eq!(h.session.lock().find_tool_mut(&mid, "c1").unwrap().status, ToolStatus::Done);
+    // …the denylist holds in the sandbox, and the output says so
+    let mid2 = seed(&h, "c2", "run_terminal_cmd");
+    let c2 = ctx_with(&mgr, &h, settings.clone(), &mid2, "c2", Arc::new(FakeWarren));
+    let (_, out2) = execute_one(mgr.clone(), h.clone(), c2, ToolRun { id: "c2".into(), name: "run_terminal_cmd".into(), input: json!({"command": "sudo apt install x"}), tool: Some(Arc::new(EchoShell)) }).await;
+    assert!(out2.is_error); assert!(out2.text.contains("denylist") && out2.text.contains("warren inst_test"), "{}", out2.text);
+    assert_eq!(h.session.lock().find_tool_mut(&mid2, "c2").unwrap().status, ToolStatus::Rejected);
+    // with auto-approval off the sandbox asks like any executor
+    let mid3 = seed(&h, "c3", "run_terminal_cmd");
+    settings.warren.auto_approve_commands = false;
+    let c3 = ctx_with(&mgr, &h, settings, &mid3, "c3", Arc::new(FakeWarren));
+    let m2 = mgr.clone();
+    tokio::spawn(async move { for _ in 0..100 { tokio::time::sleep(std::time::Duration::from_millis(20)).await; let req = m2.test_events.lock().iter().rev().find_map(|e| if let AgentEvent::ApprovalRequest { request, .. } = e { Some(request.clone()) } else { None }); if let Some(r) = req { assert_eq!(r.sandboxed, Some(true)); m2.resolve_approval(&r.approval_id, ApprovalOption::Deny).unwrap(); return; } } });
+    let (_, out3) = execute_one(mgr.clone(), h.clone(), c3, ToolRun { id: "c3".into(), name: "run_terminal_cmd".into(), input: json!({"command": "rm -rf build"}), tool: Some(Arc::new(EchoShell)) }).await;
+    assert!(out3.is_error && out3.text.contains("denied"));
+}
+
+#[tokio::test]
+async fn warren_pull_becomes_pending_changes() {
+    use crate::warren::binding::apply_pulled;
+    let ws = temp_workspace();
+    let (mgr, h) = new_mgr(ws.path()).await;
+    let mid = seed(&h, "c1", "run_terminal_cmd");
+    let mut settings = Settings::default(); settings.agent.auto_apply_edits = false;
+    let c = ctx(&mgr, &h, settings, &mid, "c1");
+    let sync = RemoteSync { local_root: ws.path().to_path_buf(), pushed_files: 3, changed: vec![
+        ("main.rs".into(), b"fn main() {}\n".to_vec()),                  // modified text file
+        ("gen/new.txt".into(), b"hello\n".to_vec()),                      // created text file in a new directory
+        ("src/lib.rs".into(), std::fs::read(ws.path().join("src/lib.rs")).unwrap()), // identical → nothing
+        ("img.bin".into(), vec![0x89, 0x50, 0x4e, 0x47, 0, 0, 1, 2]),      // binary → written directly
+        ("../escape.txt".into(), b"x".to_vec()),                          // refused
+        (".git/config".into(), b"x".to_vec()),                            // refused
+    ], deleted: vec!["main.rs".into(), "missing.txt".into()] };
+    let applied = apply_pulled(&c, sync).await.unwrap();
+    let kinds: Vec<(String, ChangeKind)> = applied.changes.iter().map(|c| (c.path.clone(), c.kind)).collect();
+    assert_eq!(kinds, vec![("main.rs".to_string(), ChangeKind::Modify), ("gen/new.txt".to_string(), ChangeKind::Create), ("main.rs".to_string(), ChangeKind::Delete)]);
+    assert_eq!(applied.binaries, vec!["img.bin".to_string()]);
+    assert_eq!(applied.unchanged, 1);
+    assert_eq!(applied.skipped, vec!["../escape.txt".to_string(), ".git/config".to_string()]);
+    assert_eq!(std::fs::read(ws.path().join("img.bin")).unwrap(), vec![0x89, 0x50, 0x4e, 0x47, 0, 0, 1, 2]);
+    // staged, not applied: the local text files are untouched and the thread lists the pending changes
+    assert!(std::fs::read_to_string(ws.path().join("main.rs")).unwrap().contains("hello"));
+    assert!(!ws.path().join("gen/new.txt").exists());
+    assert!(!ws.path().join("escape.txt").exists() && !ws.path().parent().unwrap().join("escape.txt").exists());
+    let s = h.session.lock();
+    assert_eq!(s.pending_summaries().len(), 3);
+    assert!(s.changes.iter().all(|c| c.tool_call_id.as_deref() == Some("c1") && c.turn_id.as_deref() == Some("t1")));
+    assert!(mgr.test_events.lock().iter().filter(|e| matches!(e, AgentEvent::FileChange { .. })).count() == 3);
+}
+
+#[test]
+fn session_sandbox_binding_round_trips_and_old_files_load() {
+    use crate::warren::adapter;
+    let mut s = Session::default();
+    assert!(s.sandbox.is_none());
+    let json = serde_json::to_string(&s).unwrap();
+    assert!(serde_json::from_str::<Session>(&json).unwrap().sandbox.is_none());
+    // a session file written before the field existed
+    let mut v: serde_json::Value = serde_json::from_str(&json).unwrap();
+    v.as_object_mut().unwrap().remove("sandbox");
+    assert!(serde_json::from_value::<Session>(v).unwrap().sandbox.is_none());
+    // bound thread
+    let mut b = adapter::new_binding("inst_1", "proj-abc123", "/home/agent/work/proj".into());
+    adapter::record_push(&mut b, 12);
+    s.sandbox = Some(b.clone());
+    let json = serde_json::to_string(&s).unwrap();
+    assert!(json.contains(r#""instanceId":"inst_1""#) && json.contains(r#""remoteRoot":"/home/agent/work/proj""#) && json.contains(r#""provider":"warren""#), "{json}");
+    let back: Session = serde_json::from_str(&json).unwrap();
+    assert_eq!(back.sandbox.as_ref(), Some(&b));
+    assert_eq!(back.view().sandbox.as_ref(), Some(&b));
+    assert_eq!(back.summary_view().sandbox.as_ref(), Some(&b));
+    assert!(!serde_json::to_string(&Session::default().view()).unwrap().contains("sandbox"), "unbound views omit the field");
+    // the tool record carries the executor label
+    let mut rec = ToolCallRecord::new("c", "run_terminal_cmd", "Run"); rec.executor = Some("warren inst_1".into());
+    assert!(serde_json::to_string(&rec).unwrap().contains(r#""executor":"warren inst_1""#));
+    assert!(!serde_json::to_string(&ToolCallRecord::new("c", "x", "X")).unwrap().contains("executor"));
 }
 
 #[tokio::test]

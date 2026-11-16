@@ -600,6 +600,22 @@ export interface ChatSession {
   fanOutGroup?: string
 }
 export interface ChatSessionSummary { fanOutGroup?: string }
+// ───────────────────────────── Warren sandboxes, thread side (docs/WARREN.md) ─────────────────────────────
+/** Per-thread sandbox binding (Rust `SandboxBinding`). The Sandboxes UI's declaration has the same shape; keep one. */
+export interface SandboxBinding {
+  provider: 'warren'; instanceId: string; instanceName: string; remoteRoot: string
+  lastPushAt?: number; lastPullAt?: number; pushedFiles: number
+  status: 'ready' | 'syncing' | 'running' | 'error'; error?: string
+}
+export interface ChatSession {
+  /** Remote sandbox this thread's commands run in; unset = local shell. */
+  sandbox?: SandboxBinding
+}
+export interface ChatSessionSummary { sandbox?: SandboxBinding }
+export interface ToolCallRecord {
+  /** Executor a command ran on when not the local shell, e.g. `warren inst_abc`; tool cards show it as `[warren inst_abc]`. */
+  executor?: string
+}
 /** `chat_fan_out` arguments (camelCase of the Rust command parameters). */
 export interface FanOutRequest {
   sessionId?: string; text: string; modelIds: string[]; useWorktree?: boolean; mode?: ModeId

@@ -3,7 +3,7 @@ use crate::ai::agent::context::{self, ContextEnv};
 use crate::ai::agent::hooks::{self, HookEvent, HookPermission};
 use crate::ai::agent::manager::{AgentManager, SessionHandle};
 use crate::ai::agent::modes::{self, ModeSpec};
-use crate::ai::agent::policy::{self, Decision, PolicyInput, ToolEffect};
+use crate::ai::agent::policy::{self, Decision, PolicyInput, ShellGate, ToolEffect};
 use crate::ai::agent::prompt::{self, PromptContext};
 use crate::ai::agent::session::*;
 use crate::ai::agent::tools::{self, cap_output, Tool, ToolContext, ToolOutput};
@@ -139,12 +139,15 @@ pub(crate) async fn execute_one(mgr: Arc<AgentManager>, h: Arc<SessionHandle>, c
     // Deterministic risk classification for shell commands (shown on the card whether or not approval is needed).
     let shell_class = if let ToolEffect::Shell(c) = &effect { Some(crate::sandbox::classify_with(c, Some(&ctx.cwd), ctx.root.as_deref(), &ctx.settings.agent.command_allowlist, &ctx.settings.agent.command_denylist)) } else { None };
     let (decision, pmode) = { let s = h.session.lock(); let input = PolicyInput { settings: &ctx.settings, session: &s, tool_name: tool.name(), mode_auto_run: ctx.mode.auto_run }; (policy::decide(&input, &effect), policy::mode_for(&input)) };
+    // Sandboxed executor (docs/WARREN.md): with `warren.autoApproveCommands` the Ask step is skipped; Block holds.
+    let remote_exec = ctx.executor.kind() != "local";
+    let decision = match (&decision, policy::shell_gate(&effect, ctx.executor.kind(), &ctx.settings)) { (Decision::NeedsApproval { .. }, ShellGate::Allow) => Decision::Allow, _ => decision };
     match decision {
-        Decision::Deny(reason) => { update_tool(&mgr, &h, &ctx.message_id, &run.id, |r| { r.status = ToolStatus::Rejected; r.error = Some(reason.clone()); r.finished_at = Some(now_ms()); }); return (run.id, ToolOutput::error(format!("Denied by policy: {reason}"))); }
+        Decision::Deny(reason) => { update_tool(&mgr, &h, &ctx.message_id, &run.id, |r| { r.status = ToolStatus::Rejected; r.error = Some(reason.clone()); r.finished_at = Some(now_ms()); }); return (run.id, ToolOutput::error(format!("Denied by policy: {reason}{}", if remote_exec && matches!(effect, ToolEffect::Shell(_)) { format!(" (the denylist and safety policy also apply to commands in the {} sandbox)", ctx.executor.describe()) } else { String::new() }))); }
         Decision::NeedsApproval { kind, title, detail, allow_always_pattern, classification } => {
             let options = match kind { ApprovalKind::Command => vec![ApprovalOption::Allow, ApprovalOption::AllowSession, ApprovalOption::AllowAlways, ApprovalOption::Deny, ApprovalOption::DenyAlways], ApprovalKind::Mcp => vec![ApprovalOption::Allow, ApprovalOption::AllowSession, ApprovalOption::AllowAlways, ApprovalOption::Deny], _ => vec![ApprovalOption::Allow, ApprovalOption::AllowSession, ApprovalOption::Deny] };
             let (command, cwd) = if let ToolEffect::Shell(c) = &effect { (Some(c.clone()), Some(ctx.cwd.to_string_lossy().to_string())) } else { (None, None) };
-            let req = ApprovalRequest { approval_id: new_id(), session_id: ctx.session_id.clone(), tool_call_id: run.id.clone(), kind, title, detail, command, cwd, options, allow_always_pattern: allow_always_pattern.clone(), classification: classification.clone().or_else(|| shell_class.clone()), risk_tier: classification.as_ref().or(shell_class.as_ref()).map(|c| c.risk_tier()), sandboxed: if matches!(effect, ToolEffect::Shell(_)) { Some(crate::sandbox::will_sandbox(&ctx.settings, ctx.root.as_deref())) } else { None }, agent_id: None, permission_mode: Some(pmode) };
+            let req = ApprovalRequest { approval_id: new_id(), session_id: ctx.session_id.clone(), tool_call_id: run.id.clone(), kind, title, detail, command, cwd, options, allow_always_pattern: allow_always_pattern.clone(), classification: classification.clone().or_else(|| shell_class.clone()), risk_tier: classification.as_ref().or(shell_class.as_ref()).map(|c| c.risk_tier()), sandboxed: if matches!(effect, ToolEffect::Shell(_)) { Some(ctx.executor.sandboxed()) } else { None }, agent_id: None, permission_mode: Some(pmode) };
             match mgr.request_approval(&h, &ctx.message_id, req, &ctx.cancel).await {
                 Ok(ApprovalOption::Allow) => {}
                 Ok(ApprovalOption::AllowSession) => { let pats = session_allow_pattern(kind, allow_always_pattern.as_deref()); let mut s = h.session.lock(); for p in pats { if !s.session_allow.contains(&p) { s.session_allow.push(p); } } }
@@ -177,6 +180,7 @@ pub(crate) async fn execute_one(mgr: Arc<AgentManager>, h: Arc<SessionHandle>, c
         r.command = out.command.clone(); r.exit_code = out.exit_code; r.diff = out.diff.clone(); r.subagent_session_id = out.subagent_session_id.clone(); r.summary = out.summary.clone().or_else(|| tool.label(&run.input));
         if out.is_background { r.is_background = Some(true); }
         if out.command.is_some() { r.sandboxed = Some(out.sandboxed); }
+        if out.executor.is_some() { r.executor = out.executor.clone(); }
     });
     (run.id, ToolOutput { text: capped, ..out })
 }
@@ -184,7 +188,7 @@ pub(crate) async fn execute_one(mgr: Arc<AgentManager>, h: Arc<SessionHandle>, c
 /// Run one user turn to completion (may span many LLM round-trips). Returns the final assistant text.
 pub async fn run_turn(mgr: Arc<AgentManager>, h: Arc<SessionHandle>, mut req: SendMessageRequest, mode_override: Option<ModeSpec>, cancel: CancellationToken) -> Result<String> {
     let app = mgr.app_opt();
-    let (session_id, root, cwd, is_subagent) = { let s = h.session.lock(); (s.id.clone(), s.root(), s.cwd_path(), s.is_subagent) };
+    let (session_id, root, cwd, is_subagent, first_turn) = { let s = h.session.lock(); (s.id.clone(), s.root(), s.cwd_path(), s.is_subagent, s.messages.is_empty()) };
     // Settings of the session's folder (user + its `.caret/settings.json`), not of whichever window is focused.
     let settings = mgr.settings_for(root.as_deref());
     let mode: Arc<ModeSpec> = Arc::new(match &mode_override { Some(m) => m.clone(), None => { let id = if req.mode.is_empty() { h.session.lock().mode.clone() } else { req.mode.clone() }; { let mut s = h.session.lock(); s.mode = id.clone(); } modes::resolve(&settings, &id) } });
@@ -247,6 +251,10 @@ pub async fn run_turn(mgr: Arc<AgentManager>, h: Arc<SessionHandle>, mut req: Se
     mgr.emit(AgentEvent::MessageStart { session_id: session_id.clone(), message: user_msg });
     mgr.emit(AgentEvent::Checkpoint { session_id: session_id.clone(), checkpoint_id: turn_id.clone(), message_id: user_msg_id.clone() });
     mgr.persist(&h);
+
+    // Command executor for the turn (docs/WARREN.md): the thread's Warren sandbox, else the local shell. One per
+    // turn, shared by every tool context; a first turn with `warren.defaultForNewThreads` binds an instance here.
+    let executor = crate::warren::binding::executor_for_turn(&mgr, &h, &settings, root.as_deref(), &cwd, first_turn).await;
 
     // Tools
     let active = tools::active_tools(&mgr.registry, &mode, &settings, is_subagent, root.as_deref()).await;
@@ -414,7 +422,7 @@ pub async fn run_turn(mgr: Arc<AgentManager>, h: Arc<SessionHandle>, mut req: Se
 
         // ── execute tools ──
         let runs: Vec<ToolRun> = tool_uses.iter().map(|(id, name, input)| ToolRun { id: id.clone(), name: name.clone(), input: input.clone(), tool: tool_map.get(name).cloned() }).collect();
-        let make_ctx = |call_id: &str| ToolContext { app: app.clone(), manager: mgr.clone(), session_id: session_id.clone(), message_id: message_id.clone(), tool_call_id: call_id.to_string(), turn_id: turn_id.clone(), root: root.clone(), cwd: cwd.clone(), settings: settings.clone(), cancel: cancel.clone(), mode: mode.clone() };
+        let make_ctx = |call_id: &str| ToolContext { app: app.clone(), manager: mgr.clone(), session_id: session_id.clone(), message_id: message_id.clone(), tool_call_id: call_id.to_string(), turn_id: turn_id.clone(), root: root.clone(), cwd: cwd.clone(), settings: settings.clone(), cancel: cancel.clone(), mode: mode.clone(), executor: executor.clone() };
         let mut results: HashMap<String, ToolOutput> = HashMap::new();
         let (ro, rw): (Vec<ToolRun>, Vec<ToolRun>) = runs.into_iter().partition(|r| r.tool.as_ref().map(|t| t.readonly()).unwrap_or(true));
         if !ro.is_empty() {
