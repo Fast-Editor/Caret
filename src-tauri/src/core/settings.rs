@@ -490,6 +490,55 @@ pub struct WindowSettings {
 }
 impl Default for WindowSettings { fn default() -> Self { Self { open_folders_in: "new".into() } } }
 
+/// vCPU, GB RAM and GB disk of a Warren instance (`resources` on Warren's instance object).
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", default)]
+pub struct WarrenShape { pub cpu: u32, pub memory: u32, pub disk: u32 }
+impl Default for WarrenShape { fn default() -> Self { Self { cpu: 2, memory: 4, disk: 4 } } }
+
+/// Warren sandboxes (see `warren`, docs/WARREN.md): a thread's commands run in a persistent Linux instance on a
+/// synced copy of the workspace. The API key lives in `secrets.json` under `api_key_ref`.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase", default)]
+pub struct WarrenSettings {
+    /// Master switch; the Sandbox picker and the Sandboxes page's instance view need it.
+    pub enabled: bool,
+    /// Sandbox API base (Warren's `WARREN_API_URL`), e.g. `http://api.warren.localhost:7337/v1`.
+    pub api_url: String,
+    /// `host:port` to open TCP connections to instead of the URL's host (an SSH tunnel: `127.0.0.1:7337`); the
+    /// logical `Host` header is kept, and instance hosts (`<id>.<base>`) go through the same address.
+    #[serde(skip_serializing_if = "Option::is_none")] pub connect_via: Option<String>,
+    /// Secret id in `secrets.json` holding the `sk_live_…` key.
+    pub api_key_ref: String,
+    /// Template for new instances.
+    pub template: String,
+    /// Shape for new instances.
+    pub shape: WarrenShape,
+    /// New instances sleep when idle.
+    pub auto_sleep: bool,
+    /// Idle timeout for new instances (seconds).
+    pub idle_timeout_seconds: u32,
+    /// Parent of synced workspaces inside an instance.
+    pub remote_root: String,
+    /// Directory names never pushed or pulled, on top of `.gitignore`. `.git` is pushed but never pulled.
+    pub sync_excludes: Vec<String>,
+    /// Sandboxed commands bypass Caret's Ask gate (Block still holds).
+    pub auto_approve_commands: bool,
+    /// New threads start bound to a fresh Warren instance.
+    pub default_for_new_threads: bool,
+}
+impl Default for WarrenSettings {
+    fn default() -> Self {
+        Self {
+            enabled: false, api_url: "http://api.warren.localhost:7337/v1".into(), connect_via: None, api_key_ref: "warren".into(),
+            template: "warren-base".into(), shape: WarrenShape::default(), auto_sleep: true, idle_timeout_seconds: 900,
+            remote_root: "/home/agent/work".into(),
+            sync_excludes: ["node_modules", "target", "dist", "build", ".next", ".venv", "__pycache__", ".cache"].iter().map(|s| s.to_string()).collect(),
+            auto_approve_commands: true, default_for_new_threads: false,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
 pub struct Settings {
@@ -519,10 +568,11 @@ pub struct Settings {
     pub orchestrator: OrchestratorSettings,
     pub remote: RemoteSettings,
     pub window: WindowSettings,
+    pub warren: WarrenSettings,
 }
 impl Default for Settings {
     fn default() -> Self {
-        Self { providers: default_providers(), models: default_models(), tab: Default::default(), agent: Default::default(), indexing: Default::default(), ui: Default::default(), privacy: Default::default(), general: Default::default(), user_rules: String::new(), lsp: Default::default(), mcp: Default::default(), custom_modes: vec![], beta: Default::default(), keybindings: BTreeMap::new(), verify: Default::default(), sandbox: Default::default(), acp: Default::default(), terminal: Default::default(), router: Default::default(), notifications: Default::default(), chat: Default::default(), usage: Default::default(), worktrees: Default::default(), orchestrator: Default::default(), remote: Default::default(), window: Default::default() }
+        Self { providers: default_providers(), models: default_models(), tab: Default::default(), agent: Default::default(), indexing: Default::default(), ui: Default::default(), privacy: Default::default(), general: Default::default(), user_rules: String::new(), lsp: Default::default(), mcp: Default::default(), custom_modes: vec![], beta: Default::default(), keybindings: BTreeMap::new(), verify: Default::default(), sandbox: Default::default(), acp: Default::default(), terminal: Default::default(), router: Default::default(), notifications: Default::default(), chat: Default::default(), usage: Default::default(), worktrees: Default::default(), orchestrator: Default::default(), remote: Default::default(), window: Default::default(), warren: Default::default() }
     }
 }
 

@@ -19,6 +19,7 @@ pub mod browser;
 pub mod debug;
 pub mod orchestrator;
 pub mod remote;
+pub mod warren;
 // REGISTER:modules (index, mcp, browser)
 
 #[global_allocator]
@@ -79,6 +80,7 @@ pub fn run() {
         .manage(ai::tab::TabState::default())
         .manage(ai::review::ReviewState::default())
         .manage(orchestrator::OrchestratorState::default())
+        .manage(warren::WarrenState::default())
         .menu(|app| menu::build(app))
         .on_menu_event(|app, ev| menu::on_menu_event(app, ev.id().0.as_str()))
         .on_window_event(|window, event| core::windows::on_window_event(window, event))
@@ -103,6 +105,7 @@ pub fn run() {
             orchestrator::init(&handle);
             { let s = app.state::<core::settings::SettingsState>().effective(); std::thread::spawn(move || { ai::usage::backfill_once(&s, false); }); }
             remote::init(&handle);
+            warren::init(&handle);
             if let Some(w) = app.get_webview_window("main") {
                 #[cfg(debug_assertions)]
                 if std::env::var("CARET_DEVTOOLS").ok().as_deref() == Some("1") { w.open_devtools(); }
@@ -175,6 +178,8 @@ pub fn run() {
             orchestrator::orchestrator_status, orchestrator::orchestrator_rotate_token, orchestrator::orchestrator_snippets,
             // REGISTER:commands:remote
             remote::remote_status, remote::remote_pairing_code, remote::remote_revoke_device, remote::remote_executor_secret, remote::remote_is_serving, remote::remote_set_enabled, remote::remote_restart,
+            // REGISTER:commands:warren
+            warren::commands::warren_status, warren::commands::warren_set_key, warren::commands::warren_list_instances, warren::commands::warren_get_instance, warren::commands::warren_create_instance, warren::commands::warren_instance_action, warren::commands::warren_exec, warren::commands::warren_terminal_url, warren::commands::warren_logs,
         ])
         .build(tauri::generate_context!())
         .expect("error while building Caret")

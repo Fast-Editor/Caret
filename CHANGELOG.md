@@ -4,6 +4,13 @@ All notable changes to Caret. The version here must match `package.json`, `src-t
 
 ## Unreleased
 
+- Warren sandboxes, backend: `warren.*` settings (API URL, key in `secrets.json`, `connectVia` for SSH tunnels,
+  instance defaults, `remoteRoot`, `syncExcludes`), a Rust client for Warren's Sandbox API and the per-instance files
+  API (tunnel-aware: every request keeps the logical `Host`), gitignore-aware workspace sync that pushes changed files
+  as one tarball and pulls back what a command created or changed, and the `warren_status`, `warren_set_key`,
+  `warren_list_instances`, `warren_get_instance`, `warren_create_instance`, `warren_instance_action`, `warren_exec`,
+  `warren_terminal_url`, `warren_logs` commands (`caret://warren/changed` when the instance list changes). See
+  docs/WARREN.md.
 - Fixed: editing a message in a Claude Code (or any external agent) thread resent it through Caret's built-in agent with
   the default model instead of the thread's agent. Edited messages now take the same route as new ones and keep the
   thread's model.

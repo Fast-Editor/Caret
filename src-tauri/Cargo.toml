@@ -85,6 +85,9 @@ local-ip-address = "0.6"
 sha2 = "0.10"
 # --- indexing ---
 tantivy = "0.27"
+# --- warren sandboxes (workspace sync tarballs; both crates are already in the lockfile via the updater plugin) ---
+tar = "0.4"
+flate2 = "1"
 # --- mcp ---
 rmcp = { version = "3.7", default-features = false, features = ["client", "transport-child-process", "transport-streamable-http-client-reqwest", "client-side-sse", "reqwest", "macros"] }
 
