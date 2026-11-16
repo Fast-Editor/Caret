@@ -1,5 +1,5 @@
 import { memo, useState } from 'react'
-import { Brain, CircleX, FileText, Hammer, ListChecks, RotateCcw, Undo2 } from 'lucide-react'
+import { Brain, CircleX, Cloud, FileText, Hammer, ListChecks, RotateCcw, Undo2 } from 'lucide-react'
 import { Chevron, Collapse } from '../Collapse'
 import type { AgentQuestion, ImageAttachment, MessagePart, RoutingInfo, Usage } from '@/types'
 import { Markdown } from '@/lib/markdown'
@@ -8,6 +8,7 @@ import { modelLabel, routingLabel, routingTooltip } from '@/lib/routingLabel'
 import { api } from '@/lib/api'
 import { runCommand, hasCommand } from '@/lib/commands'
 import { fmtCost, fmtDuration, fmtTokens } from '../util'
+import { executorLabel } from '@/lib/warren'
 
 export const ThinkingPart = memo(function ThinkingPart({ text, streaming, durationMs }: { text: string; streaming: boolean; durationMs?: number }) {
   const [open, setOpen] = useState(false)
@@ -128,6 +129,13 @@ export const ImageThumb = memo(function ImageThumb({ image, onRemove, size = 72 
       {big && <div className="fixed inset-0 z-50 bg-black/70 flex items-center justify-center cursor-zoom-out animate-fade" onClick={() => setBig(false)}><img src={src} alt={image.name} className="max-w-[90vw] max-h-[90vh] rounded shadow-lg animate-pop" /></div>}
     </>
   )
+})
+
+/** Tool-card footer badge naming the remote executor a command ran in, e.g. `[warren ab12cd34ef]`. Nothing for local runs. */
+export const ExecutorBadge = memo(function ExecutorBadge({ executor, className }: { executor?: string; className?: string }) {
+  const label = executorLabel(executor)
+  if (!label) return null
+  return <span className={`inline-flex items-center gap-1 h-[16px] px-1 rounded bg-info/10 text-info mono text-[10px] ${className ?? ''}`} title={`This command ran in the thread's sandbox (${executor})`} data-testid="executor-badge"><Cloud size={9} />[{label}]</span>
 })
 
 export function partKey(p: MessagePart, i: number): string {

@@ -651,3 +651,48 @@ export interface RemoteStatus {
   devices: RemoteDevice[]; executorConnected: boolean; clients: number; error?: string
 }
 export interface RemotePairingCode { code: string; expiresAt: number }
+// ───────────────────────────── Warren sandboxes (docs/WARREN.md) ─────────────────────────────
+/** Warren instance lifecycle states (open-ended: a newer daemon may add one). */
+export type WarrenInstanceStatus =
+  | 'provisioning' | 'running' | 'starting' | 'restarting' | 'updating' | 'stopping' | 'stopped' | 'sleeping' | 'waking'
+  | 'deleting' | 'deleted' | 'failed' | (string & {})
+/** `warren_status`: is a key stored, does the daemon answer, and what the workspace looks like. Money is in micro-dollars. */
+export interface WarrenStatus {
+  configured: boolean; reachable: boolean; version?: string; devMode?: boolean
+  workspace?: { id: string; name: string; walletMicros: number; awakeLimit: number; awakeCount: number }
+  error?: string
+}
+/** camelCase subset of Warren's instance object. Timestamps are unix seconds; zero-valued ones are omitted. */
+export interface WarrenInstance {
+  id: string; name: string; template: string; templateRevision?: number; status: WarrenInstanceStatus; statusReason?: string
+  resources: { cpu: number; memory: number; disk: number }
+  url?: string; defaultPort?: number; mountPath?: string; autoSleep?: boolean; idleTimeoutSeconds?: number
+  createdAt?: number; updatedAt?: number; lastActivityAt?: number; diskUsedBytes?: number; runtime?: string
+}
+/** `warren_create_instance` options; unset fields fall back to `settings.warren.*`. */
+export interface WarrenCreateInstanceOpts { name?: string; template?: string; shape?: { cpu: number; memory: number; disk: number }; autoSleep?: boolean; idleTimeoutSeconds?: number }
+export type WarrenInstanceAction = 'start' | 'stop' | 'sleep' | 'restart' | 'delete'
+export interface WarrenExecResult { exitCode: number; stdout: string; stderr: string; durationMs: number; truncated: boolean }
+/** Signed URL for the instance's browser terminal (ttyd on port 7681); `expiresAt` is unix seconds. */
+export interface WarrenTerminalUrl { url: string; expiresAt: number }
+/** A thread's remote executor: every `run_terminal_cmd` of the thread runs in this instance on a synced copy of the workspace. */
+export interface SandboxBinding {
+  provider: 'warren'; instanceId: string; instanceName: string; remoteRoot: string
+  lastPushAt?: number; lastPullAt?: number; pushedFiles: number
+  status: 'ready' | 'syncing' | 'running' | 'error'; error?: string
+}
+export interface SyncReport { direction: 'push' | 'pull'; files: number; bytes: number; deleted: number; ms: number }
+
+// ═══════════════════════════ TEMP until parts A/B land — integrator: delete this block ═══════════════════════════
+// Part A adds `Settings.warren` (+ its `WarrenSettings` interface); part B adds `sandbox?` on ChatSession /
+// ChatSessionSummary and `executor?` on the tool call record. Declared here by interface merging so part C typechecks alone.
+export interface WarrenSettings {
+  enabled: boolean; apiUrl: string; connectVia?: string | null; apiKeyRef: string; template: string
+  shape: { cpu: number; memory: number; disk: number }; autoSleep: boolean; idleTimeoutSeconds: number; remoteRoot: string
+  syncExcludes: string[]; autoApproveCommands: boolean; defaultForNewThreads: boolean
+}
+export interface Settings { warren: WarrenSettings }
+export interface ChatSession { sandbox?: SandboxBinding }
+export interface ChatSessionSummary { sandbox?: SandboxBinding }
+export interface ToolCallRecord { executor?: string }
+// ═══════════════════════════ end TEMP ═══════════════════════════

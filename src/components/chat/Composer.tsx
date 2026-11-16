@@ -14,6 +14,7 @@ import { AgentPicker, CARET_AGENT } from './composer/AgentPicker'
 import { AgentOptions } from './composer/AgentOptions'
 import { SendModeControl, type SendMode } from './composer/SendMode'
 import { PermissionPicker } from './composer/PermissionPicker'
+import { SandboxPicker } from './composer/SandboxPicker'
 import { ImageThumb } from './messages/Parts'
 import { detectTrigger, parseSlashCommand, replaceTrigger, type Trigger } from './mentions'
 import { baseName, fmtTokens, uid, MOD } from './util'
@@ -199,6 +200,7 @@ export function Composer({ sessionId, autoFocusNonce }: { sessionId: string; aut
       <div className="flex items-center gap-0.5 px-1.5 pb-1.5">
         <AgentPicker sessionId={sessionId} />
         <PermissionPicker sessionId={sessionId} />
+        <SandboxPicker sessionId={sessionId} />
         {(draft.agentId ?? CARET_AGENT) === CARET_AGENT ? (
           <>
             <ModeSelector sessionId={sessionId} />

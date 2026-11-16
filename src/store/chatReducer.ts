@@ -208,7 +208,7 @@ export function applyAgentEvent(state: ChatCoreState, ev: AgentEvent): ChatCoreS
       const sessions = state.sessions.some((s) => s.id === sv.id) ? updateSummary(state.sessions, sv.id, sv) : state.sessions
       const session = state.loaded[sv.id]
       // `permissionMode` also arrives here when an agent-side choice (Claude Code "Bypass permissions") mirrors into the thread.
-      const loaded = session ? { ...state.loaded, [sv.id]: { ...session, title: sv.title, pinned: sv.pinned, archived: sv.archived, snoozedUntil: sv.snoozedUntil, settled: sv.settled, archivedAt: sv.archivedAt, pinnedAt: sv.pinnedAt, permissionMode: sv.permissionMode ?? session.permissionMode } } : state.loaded
+      const loaded = session ? { ...state.loaded, [sv.id]: { ...session, title: sv.title, pinned: sv.pinned, archived: sv.archived, snoozedUntil: sv.snoozedUntil, settled: sv.settled, archivedAt: sv.archivedAt, pinnedAt: sv.pinnedAt, permissionMode: sv.permissionMode ?? session.permissionMode, sandbox: sv.sandbox } } : state.loaded
       if (sessions === state.sessions && loaded === state.loaded) return state
       return { ...state, sessions, loaded }
     }

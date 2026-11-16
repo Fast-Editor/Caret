@@ -9,18 +9,39 @@ safe: nothing the agent runs touches the machine Caret is on.
 
 ## Behaviour
 
-- **Settings → Sandboxes**: the Warren API URL, the API key (stored in `secrets.json`), an optional *connect via*
-  address for SSH tunnels, instance defaults (template, shape, auto-sleep, idle timeout) and a live view of the
-  workspace: wallet, awake limit, every instance with status, template, shape, last activity, and actions (start, stop,
-  sleep, restart, delete, open terminal, run a command).
-- **Per-thread sandbox**: the composer has a Sandbox picker: *Local* (default) or *Warren*. Choosing Warren binds the
-  thread to an instance: a new one named after the folder (default) or an existing one. From then on every
-  `run_terminal_cmd` of that thread runs in the instance: Caret pushes the workspace files that changed since the last
-  push (gitignore-aware, plus `warren.syncExcludes`), runs the command in the synced copy under
+- **Settings → Sandboxes** (nav id `sandboxes`, aliases `warren` and `sandbox`), three sections:
+  - *Connection*: Enable toggle, API URL, *Connect via* (hint: `127.0.0.1:7337` for an SSH tunnel), an API key field
+    that calls `warren_set_key` and never shows the stored key (the row only says whether one is stored), and *Test
+    connection* → `warren_status`, shown as `Warren <version> · dev mode · wallet $5.00 · 1/3 awake` or the error. The
+    section badge reads Off / No key / Connected / Unreachable.
+  - *Defaults for new instances*: template, vCPUs / memory / disk, sleep when idle, idle timeout, remote root, sync
+    excludes (one comma-separated line; stored as the `syncExcludes` list), auto-approve sandboxed commands, default
+    for new threads. All bound to `settings.warren.*` through the settings store, so User/Workspace scope and
+    "modified" dots work like everywhere else.
+  - *Instances*: every instance in the workspace (name + id, status badge toned by state, template, shape as
+    `2 vCPU · 4 GB · 4 GB`, last activity as relative time, disk used) with a per-row terminal button and a menu with
+    Start / Stop / Sleep / Restart (greyed out when the state does not allow them), Open terminal and Delete (confirm).
+    *New instance* creates one with the defaults (optional name). The list refreshes every 5 s while the page is on
+    screen and on `caret://warren/changed`. Below it, *Run a command* picks an instance, runs one command through
+    `warren_exec` and shows stdout, stderr, exit code and duration. With Warren disabled or no key stored the section
+    shows an empty state instead.
+- **Per-thread sandbox**: the composer has a Sandbox picker (cloud icon, `Local` or `Warren · <id>`) next to the
+  permission picker; the palette command *Sandbox: Choose where commands run…* (`sandbox.pick`) opens it for the active
+  thread. It is disabled with the tooltip "Enable Warren in Settings → Sandboxes" until `warren.enabled` is on. The menu
+  offers *Local (this Mac)*, *Warren: new instance* (named after the folder, defaults from Settings) and *Warren:
+  existing instance…* (sub-list, running and waking first, then sleeping and stopped). Binding shows a spinner until the
+  instance is running. A bound thread also shows a status line (`ready · pushed 2m ago · pulled never`, or the error),
+  *Sync now (push)*, *Pull changes*, *Open terminal*, *Unbind (keep instance)* and *Unbind and delete instance* (confirm).
+  From then on every `run_terminal_cmd` of that thread runs in the instance: Caret pushes the workspace files that
+  changed since the last push (gitignore-aware, plus `warren.syncExcludes`), runs the command in the synced copy under
   `<remoteRoot>/<folder>`, then pulls back files the command created or changed as pending changes (so `npm install`
   output stays remote, but a generated file or a formatter's rewrite shows up in the review list like any other edit).
+  The chat store keeps the binding on the loaded thread (`ChatSession.sandbox`); `session-updated` events carry the
+  binding's status and sync times while a command runs remotely.
 - **Commands in a sandbox skip Caret's destructive-command prompt** (`warren.autoApproveCommands`, default on). The
-  denylist still blocks. Tool cards show `[warren <id>]` where the command ran.
+  denylist still blocks. Tool cards show where a command ran: a small cloud icon in the collapsed header and a
+  `[warren <id>]` badge in the expanded card's footer, both from the tool call's `executor` field (`warren:<id>`;
+  nothing is shown for local runs).
 - **Open terminal** opens the instance's browser terminal (ttyd on port 7681) in a Caret browser tab through a signed URL.
 - A thread's instance sleeps on its own (`autoSleep`); the first command after that wakes it. Unbinding a thread
   offers to delete the instance; threads that are deleted with a bound instance leave the instance in place (it is

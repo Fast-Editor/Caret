@@ -1,7 +1,7 @@
 import { create } from 'zustand'
 import type {
   AgentEvent, ApprovalOption, ChatSession, ChatSessionSummary, ContextItem, Effort, ImageAttachment, ModeId, SendMessageRequest,
-  SlashCommandInfo, ThinkingPref, TodoItem, PendingChange, Checkpoint, ModelConfig, MessageSearchHit, FanOutRequest, PermissionMode,
+  SlashCommandInfo, ThinkingPref, TodoItem, PendingChange, Checkpoint, ModelConfig, MessageSearchHit, FanOutRequest, PermissionMode, SandboxBinding,
 } from '@/types'
 import { useWorkspace } from '@/store/workspace'
 import { api } from '@/lib/api'
@@ -150,6 +150,8 @@ export interface ChatState extends ChatCoreState {
   clearCompare: (sessionId: string) => void
   // permission modes / scratch threads
   setPermissionMode: (sessionId: string, mode: PermissionMode | null) => Promise<void>
+  /** Mirror a Warren binding (or its removal) onto the loaded thread and its summary; the backend view is the source of truth. */
+  setSandbox: (sessionId: string, binding: SandboxBinding | null) => void
   createScratchSession: (opts?: { mode?: ModeId; modelId?: string; title?: string; agentId?: string }) => Promise<ChatSession>
   /** Move a scratch thread into `targetDir`, open it as the workspace and keep the thread selected. */
   promoteScratch: (sessionId: string, targetDir: string) => Promise<void>
@@ -542,6 +544,10 @@ export const useChat = create<ChatState>((set, get) => ({
     const session = await api.chat.setPermissionMode(sessionId, mode)
     set((s) => ({ loaded: s.loaded[sessionId] ? { ...s.loaded, [sessionId]: { ...s.loaded[sessionId], permissionMode: session.permissionMode } } : s.loaded }))
   },
+  setSandbox: (sessionId, binding) => set((s) => ({
+    loaded: s.loaded[sessionId] ? { ...s.loaded, [sessionId]: { ...s.loaded[sessionId], sandbox: binding ?? undefined } } : s.loaded,
+    sessions: s.sessions.map((x) => (x.id === sessionId ? { ...x, sandbox: binding ?? undefined } : x)),
+  })),
   createScratchSession: async (opts) => {
     const session = await api.chat.createScratchSession({ mode: opts?.mode, modelId: opts?.modelId === AUTO_MODEL ? undefined : opts?.modelId, title: opts?.title, agentId: opts?.agentId })
     set((s) => ({

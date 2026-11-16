@@ -1,5 +1,5 @@
 import { memo, useState } from 'react'
-import { BookOpen, Bot, Brain, Check, CircleX, FileDiff, Globe, ListChecks, LoaderCircle, Pencil, Search, Server, ShieldCheck, ShieldAlert, ShieldOff, SquareTerminal, Ban, Globe as Browser, FileText } from 'lucide-react'
+import { BookOpen, Bot, Brain, Check, CircleX, Cloud, FileDiff, Globe, ListChecks, LoaderCircle, Pencil, Search, Server, ShieldCheck, ShieldAlert, ShieldOff, SquareTerminal, Ban, Globe as Browser, FileText } from 'lucide-react'
 import type { ApprovalOption, CommandClassification, CommandRisk, PermissionMode, ToolCallRecord } from '@/types'
 import { permissionModeLabel } from '@/lib/permissionModes'
 import { toolGroup, toolTitle, fmtDuration } from '../util'
@@ -8,6 +8,8 @@ import { useChat } from '@/store/chat'
 import { runCommand, hasCommand } from '@/lib/commands'
 import { Markdown } from '@/lib/markdown'
 import { Chevron, Collapse } from '../Collapse'
+import { ExecutorBadge } from './Parts'
+import { executorLabel } from '@/lib/warren'
 
 const ICONS: Record<string, typeof Bot> = { read: FileText, search: Search, edit: Pencil, shell: SquareTerminal, web: Globe, plan: ListChecks, memory: Brain, mcp: Server, browser: Browser, agent: Bot, other: BookOpen }
 
@@ -122,6 +124,7 @@ export const ToolCallCard = memo(function ToolCallCard({ call, sessionId }: { ca
         </span>
         {call.classification && call.classification.overallRisk !== 'safe' && call.status !== 'awaiting-approval' && <RiskPill risk={call.classification.overallRisk} />}
         {call.sandboxed && call.status !== 'awaiting-approval' && <ShieldCheck size={11} className="text-info" aria-label="sandboxed" />}
+        {executorLabel(call.executor) && <Cloud size={11} className="text-info" aria-label={executorLabel(call.executor) ?? undefined} />}
         {call.exitCode !== undefined && call.exitCode !== null && <span className={`mono text-[10.5px] px-1 rounded ${call.exitCode === 0 ? 'text-success bg-success/10' : 'text-danger bg-danger/10'}`}>exit {call.exitCode}</span>}
         {call.fileChanges && call.fileChanges.length > 0 && <span className="text-[10.5px] text-muted">{call.fileChanges.reduce((a, c) => a + c.additions, 0) > 0 && <span className="text-diff-add-fg">+{call.fileChanges.reduce((a, c) => a + c.additions, 0)} </span>}{call.fileChanges.reduce((a, c) => a + c.deletions, 0) > 0 && <span className="text-diff-del-fg">−{call.fileChanges.reduce((a, c) => a + c.deletions, 0)}</span>}</span>}
         {dur && <span className="text-[10.5px] text-faint">{dur}</span>}
@@ -157,6 +160,7 @@ export const ToolCallCard = memo(function ToolCallCard({ call, sessionId }: { ca
           {call.error && <div className="mt-1.5 text-danger text-[11.5px] whitespace-pre-wrap break-words">{call.error}</div>}
           {call.subagentSessionId && <button type="button" onClick={() => void useChat.getState().selectSession(call.subagentSessionId!)} className="mt-1.5 text-[11px] text-accent hover:underline">Open subagent transcript →</button>}
           {call.summary && <div className="mt-1.5 text-muted text-[11.5px]">{call.summary}</div>}
+          {executorLabel(call.executor) && <div className="mt-1.5 flex items-center gap-1.5 text-[10.5px] text-faint"><ExecutorBadge executor={call.executor} /><span>ran in the thread's sandbox</span></div>}
         </div>
       </Collapse>
     </div>

@@ -4,6 +4,13 @@ All notable changes to Caret. The version here must match `package.json`, `src-t
 
 ## Unreleased
 
+- Warren sandboxes (frontend). Settings → Sandboxes configures the Warren connection (API URL, connect-via for SSH
+  tunnels, API key stored in secrets.json, Test connection), the defaults for new instances, and shows every instance
+  in the workspace with start / stop / sleep / restart / delete, Open terminal and a Run-a-command box (live: 5 s poll
+  plus `caret://warren/changed`). The composer gains a Sandbox picker (Local or Warren, new or existing instance) with
+  sync, terminal and unbind actions for a bound thread, also reachable through the palette command "Sandbox: Choose
+  where commands run…"; tool cards show `[warren <id>]` where a command ran. `api.warren.*` wraps the `warren_*`
+  commands; pure helpers in `src/lib/warren.ts`. See docs/WARREN.md.
 - Fixed: editing a message in a Claude Code (or any external agent) thread resent it through Caret's built-in agent with
   the default model instead of the thread's agent. Edited messages now take the same route as new ones and keep the
   thread's model.

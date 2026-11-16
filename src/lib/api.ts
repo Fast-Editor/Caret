@@ -427,9 +427,31 @@ export const apiRemote = {
     restart: () => invoke<T.RemoteStatus>('remote_restart'),
   },
 }
+// ═══════════════════════════ Warren sandboxes (docs/WARREN.md) ═══════════════════════════
+export const apiWarren = {
+  /** Remote command executor: per-thread Linux instances behind one API key (Rust `warren_*`). */
+  warren: {
+    status: () => invoke<T.WarrenStatus>('warren_status'),
+    /** Store the `sk_live_…` key under `settings.warren.apiKeyRef` in secrets.json; answers with a fresh status. */
+    setKey: (key: string) => invoke<T.WarrenStatus>('warren_set_key', { key }),
+    listInstances: () => invoke<T.WarrenInstance[]>('warren_list_instances'),
+    getInstance: (id: string) => invoke<T.WarrenInstance>('warren_get_instance', { id }),
+    /** Returns the instance in `provisioning`; poll `getInstance` until `running`. */
+    createInstance: (opts: T.WarrenCreateInstanceOpts = {}) => invoke<T.WarrenInstance>('warren_create_instance', { opts }),
+    instanceAction: (id: string, action: T.WarrenInstanceAction) => invoke<{ id: string; status: T.WarrenInstanceStatus }>('warren_instance_action', { id, action }),
+    exec: (id: string, command: string, timeoutSecs?: number) => invoke<T.WarrenExecResult>('warren_exec', { id, command, timeoutSecs }),
+    /** Signed URL for the browser terminal (ttyd, port 7681). */
+    terminalUrl: (id: string, ttlSecs?: number) => invoke<T.WarrenTerminalUrl>('warren_terminal_url', { id, ttlSecs }),
+    logs: (id: string, tail?: number) => invoke<{ logs: string }>('warren_logs', { id, tail }),
+    /** Bind a thread to an instance; `null` creates one named after the folder. Resolves once the instance is running. */
+    bindThread: (sessionId: string, instanceId: string | null) => invoke<T.SandboxBinding>('warren_bind_thread', { sessionId, instanceId }),
+    unbindThread: (sessionId: string, deleteInstance: boolean) => invoke<T.ChatSession>('warren_unbind_thread', { sessionId, deleteInstance }),
+    sync: (sessionId: string, direction: 'push' | 'pull') => invoke<T.SyncReport>('warren_sync', { sessionId, direction }),
+  },
+}
 /** Full command surface: base domains plus wave-1 additions. */
 export const api = {
-  ...apiBase, ...apiWave1, ...apiRemote, pty: { ...apiBase.pty, ...apiWave1.pty },
+  ...apiBase, ...apiWave1, ...apiRemote, ...apiWarren, pty: { ...apiBase.pty, ...apiWave1.pty },
   /** Usage ledger (`~/.caret/usage/YYYY-MM.jsonl`) and external agent histories; see docs/USAGE.md. */
   usage: {
     /** `workspace` limits the ledger to requests recorded in that folder (the Workspace scope on the Usage page). */
