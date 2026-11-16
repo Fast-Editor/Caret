@@ -4,6 +4,14 @@ All notable changes to Caret. The version here must match `package.json`, `src-t
 
 ## Unreleased
 
+- Fixed: editing a message in a Claude Code (or any external agent) thread resent it through Caret's built-in agent with
+  the default model instead of the thread's agent. Edited messages now take the same route as new ones and keep the
+  thread's model.
+- Fixed: Claude Code's "Bypass permissions" (and Gemini's yolo, Codex's never) did not stick. Picking it on the agent
+  side left Caret's thread permission mode untouched, so Caret's own prompts kept coming and the next session pulled
+  the agent back to the settings default. An agent-side mode choice now mirrors into the thread's permission mode
+  (clamped by `agent.maxPermissionMode`), the permission picker follows it, and a remembered agent mode is honoured
+  when a new session starts.
 - Markdown preview is one click away. A markdown file's tab bar shows an eye button: click opens the rendered preview
   next to the source (splitting the editor when needed, focus stays in the source, the preview follows your typing),
   Alt-click opens it in the same group; a preview tab shows an "Open Source" button back. New command

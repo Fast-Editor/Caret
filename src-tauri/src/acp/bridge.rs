@@ -239,6 +239,26 @@ pub async fn ensure_session(inner: &Arc<AcpInner>, mgr: &Arc<AgentManager>, app:
             }
         }
     }
+    // A remembered agent-side permission choice (the user picked "Bypass permissions" for Claude Code last time, and
+    // it was saved as this agent's session default) becomes the thread's permission mode when the thread has none of
+    // its own; otherwise the settings default would pull the agent back to acceptEdits on every new session.
+    if h.session.lock().permission_mode.is_none() {
+        if let Some(defaults) = settings.acp.session_defaults.get(&conn.agent_id) {
+            let remembered = link.config_options.lock().as_ref().and_then(|opts| defaults.iter().find_map(|(cid, val)| {
+                let o = opts.iter().find(|o| o.id == *cid)?;
+                if !crate::acp::permission_map::is_permission_option(o) { return None; }
+                val.as_str().and_then(crate::acp::permission_map::permission_mode_for_choice)
+            }));
+            if let Some(pm) = remembered {
+                let clamped = crate::ai::agent::policy::clamp_permission_mode(pm, settings.agent.max_permission_mode);
+                { let mut s = h.session.lock(); s.permission_mode = Some(clamped); s.touch(); }
+                mgr.persist_now(&h);
+                let sv = h.session.lock().summary_view();
+                mgr.emit(AgentEvent::SessionUpdated { session: sv });
+                inner.log(&conn.agent_id, format!("[acp] remembered agent mode -> thread permission mode {}", clamped.id()));
+            }
+        }
+    }
     // Mirror the thread's effective permission mode onto the agent (Claude Code / Gemini modes, Codex approval policy).
     let pmode = { let s = h.session.lock(); crate::ai::agent::policy::effective_permission_mode(&settings, &s) };
     apply_permission_mode(inner, &link, conn, pmode).await;

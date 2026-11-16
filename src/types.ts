@@ -307,6 +307,8 @@ export interface ChatSessionSummary {
   pendingChangeCount: number; pinned?: boolean; archived?: boolean; modelId?: string; agentId?: string; riskTier?: RiskTier
   /** Thread lifecycle (docs/THREADS.md): snoozed until (unix ms), settled flag, timestamps for archive and pin. */
   snoozedUntil?: number; settled?: boolean; archivedAt?: number; pinnedAt?: number
+  /** Per-thread permission mode override; also set when an agent-side mode (Claude Code "Bypass permissions") is picked. */
+  permissionMode?: PermissionMode
   scratch?: boolean
 }
 export type AgentEvent =

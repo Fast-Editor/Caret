@@ -75,15 +75,20 @@ pub fn chat_export_session(mgr: Mgr<'_>, session_id: String, format: String) -> 
 #[tauri::command]
 pub async fn chat_send(app: AppHandle, mgr: Mgr<'_>, req: SendMessageRequest) -> Result<()> {
     if req.session_id.is_empty() { return Err(CaretError::invalid("sessionId is required")); }
-    // Route to an external ACP agent when the session (or this request) is bound to one.
+    dispatch(&app, &mgr, req).await
+}
+
+/// Hand a message to whoever drives the thread: the external ACP agent the session (or this request) is bound to,
+/// otherwise Caret's own agent. Every path that (re)sends a user message goes through here, so an edited message in a
+/// Claude Code thread stays with Claude Code instead of silently falling back to the built-in agent and default model.
+async fn dispatch(app: &AppHandle, mgr: &Mgr<'_>, req: SendMessageRequest) -> Result<()> {
     let h = mgr.handle(&req.session_id)?;
     let agent = {
         let mut s = h.session.lock();
         if let Some(a) = req.agent_id.as_deref().filter(|a| !a.is_empty()) { let next = if a == "caret" { None } else { Some(a.to_string()) }; if s.agent_id != next { s.agent_id = next; } }
         s.agent_id.clone()
     };
-    if let Some(a) = agent.filter(|a| a != "caret") {
-        let _ = a;
+    if agent.as_deref().map(|a| a != "caret").unwrap_or(false) {
         let st = app.state::<crate::acp::AcpState>();
         return crate::acp::bridge::submit(st.inner.clone(), mgr.inner().clone(), Some(app.clone()), req).await;
     }
@@ -190,12 +195,14 @@ pub async fn chat_regenerate(mgr: Mgr<'_>, session_id: String, message_id: Strin
 }
 
 #[tauri::command]
-pub async fn chat_edit_message(mgr: Mgr<'_>, session_id: String, message_id: String, text: String) -> Result<()> {
+pub async fn chat_edit_message(app: AppHandle, mgr: Mgr<'_>, session_id: String, message_id: String, text: String) -> Result<()> {
     let h = mgr.handle(&session_id)?;
     if h.is_running() { return Err(CaretError::invalid("Stop the agent first")); }
     let Some((_, context, images, mode)) = truncate_to(&h, &message_id, true)? else { return Ok(()) };
+    // Resend with what the thread was using: its model (not the settings default) and, via `dispatch`, its agent.
+    let model_id = h.session.lock().model_id.clone();
     mgr.persist_now(&h); mgr.emit(AgentEvent::SessionReset { session_id: session_id.clone() });
-    mgr.inner().submit(SendMessageRequest { session_id, text, context, images, mode, ..Default::default() }).await
+    dispatch(&app, &mgr, SendMessageRequest { session_id, text, context, images, mode, model_id, ..Default::default() }).await
 }
 
 #[tauri::command(async)]

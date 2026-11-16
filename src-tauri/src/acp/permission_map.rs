@@ -49,6 +49,26 @@ pub fn pick_config_value(mode: PermissionMode, options: &[ConfigOption]) -> Opti
     None
 }
 
+/// The Caret permission mode an agent-side choice stands for (the reverse of `pick_mode_id` / `pick_config_value`):
+/// picking Claude Code's `bypassPermissions` or Gemini's `yolo` means Full access, `acceptEdits` means Auto-accept edits,
+/// `auto` means Auto, `default` / `plan` / `untrusted` mean Supervised. `None` for values that say nothing about
+/// permissions (a model name, an effort level).
+pub fn permission_mode_for_choice(value: &str) -> Option<PermissionMode> {
+    let n = norm(value);
+    if n.is_empty() { return None; }
+    if n.contains("bypass") || n.contains("yolo") || n.contains("full-access") || n.contains("fullaccess") || n.contains("danger") || n == "never" { return Some(PermissionMode::FullAccess); }
+    if n.contains("acceptedit") || n.contains("accept-edit") || n.contains("autoedit") || n.contains("auto-edit") || n == "on-request" { return Some(PermissionMode::AutoAcceptEdits); }
+    if n == "auto" || n == "on-failure" || (n.contains("auto") && !n.contains("edit")) { return Some(PermissionMode::Auto); }
+    if n == "default" || n == "plan" || n == "supervised" || n == "ask" || n == "normal" || n == "manual" || n == "untrusted" { return Some(PermissionMode::Supervised); }
+    None
+}
+
+/// Whether a config option is the agent's permission/approval/mode switch (as opposed to model, effort, …).
+pub fn is_permission_option(opt: &ConfigOption) -> bool {
+    let k = norm(&format!("{} {} {}", opt.id, opt.name, opt.category.clone().unwrap_or_default()));
+    k.contains("approval") || k.contains("permission") || k == "mode-mode-mode" || opt.id == "mode" || opt.category.as_deref() == Some("mode")
+}
+
 /// Session modes win over config options; `None` when the agent exposes nothing comparable.
 pub fn plan(mode: PermissionMode, modes: Option<&SessionModeState>, options: Option<&[ConfigOption]>) -> AcpPermissionAction {
     if let Some(ms) = modes { if let Some(id) = pick_mode_id(mode, ms) { return AcpPermissionAction::SetMode(id); } }
@@ -71,6 +91,26 @@ mod tests {
         assert_eq!(pick_mode_id(PermissionMode::AutoAcceptEdits, &m).as_deref(), Some("acceptEdits"));
         assert_eq!(pick_mode_id(PermissionMode::Auto, &m).as_deref(), Some("acceptEdits"), "no auto id: falls back to acceptEdits");
         assert_eq!(pick_mode_id(PermissionMode::FullAccess, &m).as_deref(), Some("bypassPermissions"));
+    }
+
+    #[test]
+    fn agent_choices_map_back_to_permission_modes() {
+        assert_eq!(permission_mode_for_choice("bypassPermissions"), Some(PermissionMode::FullAccess));
+        assert_eq!(permission_mode_for_choice("yolo"), Some(PermissionMode::FullAccess));
+        assert_eq!(permission_mode_for_choice("never"), Some(PermissionMode::FullAccess), "Codex approval policy");
+        assert_eq!(permission_mode_for_choice("acceptEdits"), Some(PermissionMode::AutoAcceptEdits));
+        assert_eq!(permission_mode_for_choice("autoEdit"), Some(PermissionMode::AutoAcceptEdits));
+        assert_eq!(permission_mode_for_choice("auto"), Some(PermissionMode::Auto));
+        assert_eq!(permission_mode_for_choice("default"), Some(PermissionMode::Supervised));
+        assert_eq!(permission_mode_for_choice("plan"), Some(PermissionMode::Supervised));
+        assert_eq!(permission_mode_for_choice("claude-fable-5-1"), None, "a model name says nothing about permissions");
+        assert_eq!(permission_mode_for_choice("high"), None);
+        let mode_opt = opt("mode", "Mode", &["default", "bypassPermissions"]);
+        assert!(is_permission_option(&mode_opt));
+        let mut model_opt = opt("model", "Model", &["a", "b"]); model_opt.category = Some("model".into());
+        assert!(!is_permission_option(&model_opt), "the model picker is not a permission switch");
+        let mut effort = opt("effort", "Effort", &["low", "high"]); effort.category = Some("thought_level".into());
+        assert!(!is_permission_option(&effort));
     }
 
     #[test]

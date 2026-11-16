@@ -103,9 +103,24 @@ pub async fn acp_set_mode(app: AppHandle, st: State<'_, AcpState>, session_id: S
     let conn = inner.conns.get(&link.conn_key).map(|c| c.clone()).filter(|c| c.alive()).ok_or_else(|| CaretError::provider("agent is not connected"))?;
     conn.set_mode(&link.acp_id, &mode_id).await?;
     if let Some(ms) = link.modes.lock().as_mut() { ms.current_mode_id = mode_id.clone(); }
+    mirror_permission_mode(&app, &session_id, &mode_id);
     let s = bridge::status_for_link(&conn, &link);
     mgr(&app).emit(AgentEvent::AgentStatus { session_id, agent_id: link.agent_id.clone(), status: s.clone() });
     Ok(s)
+}
+
+/// An agent-side mode or approval choice (Claude Code "Bypass permissions", Gemini "yolo", Codex "never") also sets the
+/// thread's Caret permission mode, so Caret's own gates (destructive-command prompts, approval dialogs) follow it and
+/// the next session of this thread starts in the same mode instead of being pulled back to the settings default.
+fn mirror_permission_mode(app: &AppHandle, session_id: &str, choice: &str) {
+    let Some(pm) = crate::acp::permission_map::permission_mode_for_choice(choice) else { return };
+    let m = mgr(app);
+    let Ok(h) = m.handle(session_id) else { return };
+    let settings = m.settings();
+    let clamped = crate::ai::agent::policy::clamp_permission_mode(pm, settings.agent.max_permission_mode);
+    if clamped != pm { tracing::warn!(session = %session_id, requested = pm.id(), cap = clamped.id(), "agent mode exceeds agent.maxPermissionMode; Caret's gates stay at the cap"); }
+    let changed = { let mut s = h.session.lock(); if s.permission_mode == Some(clamped) { false } else { s.permission_mode = Some(clamped); s.touch(); true } };
+    if changed { m.persist_now(&h); let sv = h.session.lock().summary_view(); m.emit(AgentEvent::SessionUpdated { session: sv }); }
 }
 
 /// Change a session config option (model, effort, …) via `session/set_config_option` and remember it as the default
@@ -120,6 +135,9 @@ pub async fn acp_set_config_option(app: AppHandle, st: State<'_, AcpState>, sess
         let mut g = link.config_options.lock();
         if let Some(u) = updated { *g = Some(u); }
         else if let Some(opts) = g.as_mut() { if let Some(o) = opts.iter_mut().find(|o| o.id == config_id) { o.current_value = value.clone(); } }
+    }
+    if link.config_options.lock().as_ref().map(|o| o.iter().any(|x| x.id == config_id && crate::acp::permission_map::is_permission_option(x))).unwrap_or(false) {
+        if let Some(v) = value.as_str() { mirror_permission_mode(&app, &session_id, v); }
     }
     if let Err(e) = registry::remember_session_default(&app.state::<SettingsState>(), &link.agent_id, &config_id, value) { inner.log(&link.agent_id, format!("[acp] could not persist option default: {e:?}")); }
     let s = bridge::status_for_link(&conn, &link);
