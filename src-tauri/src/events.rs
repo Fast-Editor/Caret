@@ -26,6 +26,8 @@ pub const REVIEW_CHANGED: &str = "caret://review/changed";
 pub const RULES_CHANGED: &str = "caret://rules/changed";
 pub const MENU: &str = "caret://menu";
 pub const DOCS_CHANGED: &str = "caret://docs/changed";
+/// The Warren instance list changed (created, lifecycle action, deleted); payload `{ id?: string }`.
+pub const WARREN_CHANGED: &str = "caret://warren/changed";
 /// Rust-only (never reaches a webview): a window opened, switched or closed its folder. Payload: [`WorkspaceChange`].
 pub const INTERNAL_WORKSPACE_CHANGED: &str = "caret-internal://workspace/changed";
 

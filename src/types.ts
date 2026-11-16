@@ -206,6 +206,7 @@ export interface Settings {
   orchestrator: OrchestratorSettings
   remote: RemoteSettings
   window: WindowSettings
+  warren: WarrenSettings
 }
 /** Mirrors `WindowSettings` in src-tauri/src/core/settings.rs (docs/MULTI_WINDOW.md). */
 export interface WindowSettings {
@@ -645,6 +646,17 @@ export interface OrchestratorSnippets { claudeCode: string; codexToml: string; c
 // ───────────────────────────── remote access (`caret serve`) ─────────────────────────────
 /** Mirrors `RemoteSettings` in src-tauri/src/core/settings.rs. */
 export interface RemoteSettings { enabled: boolean; host: string; port: number }
+// ───────────────────────────── Warren sandboxes ─────────────────────────────
+/** vCPU, GB RAM and GB disk of a Warren instance. */
+export interface WarrenShape { cpu: number; memory: number; disk: number }
+/** Mirrors `WarrenSettings` in src-tauri/src/core/settings.rs (docs/WARREN.md). The API key lives in secrets.json under `apiKeyRef`. */
+export interface WarrenSettings {
+  enabled: boolean; apiUrl: string
+  /** `host:port` to open TCP connections to instead of the URL's host (an SSH tunnel); the logical `Host` header is kept. */
+  connectVia?: string
+  apiKeyRef: string; template: string; shape: WarrenShape; autoSleep: boolean; idleTimeoutSeconds: number
+  remoteRoot: string; syncExcludes: string[]; autoApproveCommands: boolean; defaultForNewThreads: boolean
+}
 export interface RemoteDevice { id: string; name: string; createdAt: number; lastSeen: number; userAgent: string }
 export interface RemoteStatus {
   enabled: boolean; running: boolean; serving: boolean; host: string; port: number; urls: string[]

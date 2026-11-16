@@ -98,6 +98,7 @@ export const DEFAULTS: Settings = {
   orchestrator: { enabled: false, port: 17431 },
   remote: { enabled: false, host: '127.0.0.1', port: 17430 },
   window: { openFoldersIn: 'new' },
+  warren: { enabled: false, apiUrl: 'http://api.warren.localhost:7337/v1', connectVia: undefined, apiKeyRef: 'warren', template: 'warren-base', shape: { cpu: 2, memory: 4, disk: 4 }, autoSleep: true, idleTimeoutSeconds: 900, remoteRoot: '/home/agent/work', syncExcludes: ['node_modules', 'target', 'dist', 'build', '.next', '.venv', '__pycache__', '.cache'], autoApproveCommands: true, defaultForNewThreads: false },
 }
 
 const PERMISSION_MODE_OPTIONS: SelectOption[] = [
