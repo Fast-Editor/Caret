@@ -112,6 +112,26 @@ instanceId, instanceName, remoteRoot, lastPushAt?, lastPullAt?, pushedFiles, sta
 - Vitest: settings defaults mirror, picker state helpers, table formatting.
 - End to end in the dev build against the development daemon (see "Development setup").
 
+## Deployment used today (Azure VM `azvm`)
+
+Warren is not tied to Azure; the VM is simply the Linux host that runs it. Since 2026-11-17 it runs as a boot-time
+service there and this Mac keeps a self-healing SSH tunnel to it, so Caret finds Warren whenever both machines are up:
+
+- **VM**: `/etc/systemd/system/warrend.service` runs `/data/warren/target/release/warrend --dev --listen [::]:7337
+  --public-port 7337 --data-dir /data/warren/data --base-domain warren.localhost --image-tag dev --gateway-bin
+  /data/warren/target/x86_64-unknown-linux-musl/release/warren-gateway` as `azureuser` (`Restart=always`, after Docker).
+  `systemctl status warrend`, `sudo journalctl -u warrend -f`. Dev mode is intentional for a single-user deployment: it
+  is the only mode in which the wallet can be topped up (`POST /v1/billing/top-up` with `provider: "dev"`), and signup
+  is loopback-only. Data (SQLite, instance homes, backups) lives in `/data/warren/data`.
+- **Mac**: `~/Library/LaunchAgents/dev.caret.warren-tunnel.plist` runs `autossh -N -L 7337:127.0.0.1:7337 azvm`
+  (`KeepAlive`, log `~/Library/Logs/warren-tunnel.log`). Caret settings: `warren.apiUrl` default,
+  `warren.connectVia = 127.0.0.1:7337`, key under secret id `warren`.
+- **Updating Warren**: on the VM, `cd /data/warren && git pull && source scripts/env.sh && cargo build --release
+  --locked -p warrend && make gateway && make images && sudo systemctl restart warrend`.
+- **Going public later** (no tunnel): give the VM a DNS name with a wildcard (`*.warren.example.com`), put Caddy or
+  nginx with TLS in front of port 7337, open the port in the Azure network security group, set `--base-domain` and
+  `--public-port` accordingly, and point Caret's `apiUrl` at `https://api.warren.example.com/v1` with `connectVia` empty.
+
 ## Development setup
 
 The Warren development host is the Azure VM `azvm` (`ssh azvm`), checkout `/data/warren`, daemon started with
