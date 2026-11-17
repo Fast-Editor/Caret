@@ -126,10 +126,14 @@ Warren's own CLI and tests live on the VM (`/data/warren/target/release/warren`,
 Warren is not tied to Azure; the VM is simply the Linux host that runs it. Since 2026-11-17 it runs as a boot-time
 service there and this Mac keeps a self-healing SSH tunnel to it, so Caret finds Warren whenever both machines are up:
 
-- **VM**: `/etc/systemd/system/warrend.service` runs `/data/warren/target/release/warrend --dev --listen [::]:7337
+- **VM**: `/etc/systemd/system/warrend.service` runs `/data/warren/target/release/warrend --dev --listen 127.0.0.1:7337
   --public-port 7337 --data-dir /data/warren/data --base-domain warren.localhost --image-tag dev --gateway-bin
   /data/warren/target/x86_64-unknown-linux-musl/release/warren-gateway` as `azureuser` (`Restart=always`, after Docker).
-  `systemctl status warrend`, `sudo journalctl -u warrend -f`. Dev mode is intentional for a single-user deployment: it
+  `systemctl status warrend`, `sudo journalctl -u warrend -f`. The daemon binds `127.0.0.1` only (changed on 2026-11-17: Warren's dev
+  script binds `[::]`, and the VM's network security group lets port 7337 through, so for a day the API was reachable
+  from the internet; the database shows only our own workspace, key and instances, no outside use). Everything reaches
+  it through SSH. If you ever bind a public address, put TLS and an allowlist in front and disable signup
+  (`--signup-enabled false`); tightening the Azure NSG to ports 22 and 443 only is worth doing regardless. Dev mode is intentional for a single-user deployment: it
   is the only mode in which the wallet can be topped up (`POST /v1/billing/top-up` with `provider: "dev"`), and signup
   is loopback-only. Data (SQLite, instance homes, backups) lives in `/data/warren/data`.
 - **Mac**: `~/Library/LaunchAgents/dev.caret.warren-tunnel.plist` runs `autossh -N -L 7337:127.0.0.1:7337 azvm`
