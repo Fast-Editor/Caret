@@ -112,6 +112,15 @@ instanceId, instanceName, remoteRoot, lastPushAt?, lastPullAt?, pushedFiles, sta
 - Vitest: settings defaults mirror, picker state helpers, table formatting.
 - End to end in the dev build against the development daemon (see "Development setup").
 
+## Testing Warren by itself
+
+`bash scripts/warren-smoke.sh` exercises the daemon without Caret: health, wallet, create an instance and wait for
+it, run a command, write and list a file on the instance host, print a signed terminal URL, delete the instance
+(`--keep` leaves it running). It reads the key Caret stored (`warren` in `~/.caret/secrets.json`) and talks to the
+tunnel at `127.0.0.1:7337` with the logical `Host` headers; `WARREN_CONNECT`, `WARREN_BASE` and `WARREN_API_KEY`
+override that for another deployment. The dashboard is `http://warren.localhost:7337/` in Chrome (paste the key);
+Warren's own CLI and tests live on the VM (`/data/warren/target/release/warren`, `cargo test --workspace --locked`).
+
 ## Deployment used today (Azure VM `azvm`)
 
 Warren is not tied to Azure; the VM is simply the Linux host that runs it. Since 2026-11-17 it runs as a boot-time
